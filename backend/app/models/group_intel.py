@@ -18,6 +18,7 @@ from typing import Optional
 from sqlalchemy import (
     BigInteger,
     Boolean,
+    Computed,
     DateTime,
     Float,
     ForeignKey,
@@ -28,7 +29,7 @@ from sqlalchemy import (
     UniqueConstraint,
     func,
 )
-from sqlalchemy.dialects.postgresql import JSONB, UUID
+from sqlalchemy.dialects.postgresql import JSONB, TSVECTOR, UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.models.base import Base, TimestampMixin, uuid_pk
@@ -75,6 +76,16 @@ class GroupProfile(Base, TimestampMixin):
     kind: Mapped[str] = mapped_column(String(16), nullable=False, default="group")
     member_count: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     about: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    # 本地全文检索：名称 + 用户名 + 简介，生成列由 PostgreSQL 维护。
+    search_vector: Mapped[Optional[str]] = mapped_column(
+        TSVECTOR,
+        Computed(
+            "to_tsvector('simple', coalesce(title, '') || ' ' || coalesce(username, '') "
+            "|| ' ' || coalesce(about, ''))",
+            persisted=True,
+        ),
+        nullable=True,
+    )
     invite_link: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     is_public: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     is_restricted: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)

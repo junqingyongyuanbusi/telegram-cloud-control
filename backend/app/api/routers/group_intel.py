@@ -29,6 +29,7 @@ from app.api.routers.campaigns import _submit_campaign
 from app.api.routers import build_order_by, enum_value, publish_task_safely
 from app.api.routers.accounts_bulk import scope_clause
 from app.services.account_label import account_label
+from app.services.local_group_search import SEARCH_TEXT, search_local_profiles
 from app.api.routers.accounts_bulk import _empty, _item, _resolve_accounts, _response
 from app.config import settings
 from app.core.audit import write_audit
@@ -695,9 +696,14 @@ async def group_library(
     """
     conditions: list = []
     if keyword.strip():
-        like = f"%{keyword.strip()}%"
+        term = keyword.strip()
+        like = f"%{term}%"
+        tsquery = func.websearch_to_tsquery("simple", term)
         conditions.append(
-            or_(GroupProfile.title.ilike(like), GroupProfile.username.ilike(like), GroupProfile.about.ilike(like))
+            or_(
+                GroupProfile.search_vector.op("@@")(tsquery),
+                SEARCH_TEXT.ilike(like),
+            )
         )
     if min_members:
         conditions.append(GroupProfile.member_count >= min_members)
@@ -786,8 +792,15 @@ async def list_profiles(
     if account_id is not None:
         conditions.append(GroupProfile.account_id == account_id)
     if q:
-        pattern = f"%{q.strip()}%"
-        conditions.append(or_(GroupProfile.title.ilike(pattern), GroupProfile.username.ilike(pattern)))
+        term = q.strip()
+        pattern = f"%{term}%"
+        tsquery = func.websearch_to_tsquery("simple", term)
+        conditions.append(
+            or_(
+                GroupProfile.search_vector.op("@@")(tsquery),
+                SEARCH_TEXT.ilike(pattern),
+            )
+        )
     if min_members is not None:
         conditions.append(GroupProfile.member_count >= min_members)
     if public_only:
@@ -832,6 +845,37 @@ async def list_profiles(
             "events_today": int(events_today or 0),
         },
     )
+
+
+@router.get("/search/local", summary="本地群库检索（全文 + 子串）")
+async def search_local_library(
+    keyword: str = Query(min_length=1, max_length=64, description="群名/用户名/简介关键词"),
+    limit: int = Query(default=30, ge=1, le=100),
+    session: AsyncSession = Depends(get_session),
+    user: User = Depends(get_current_user),
+) -> dict:
+    """不访问 Telegram，直接查本地群档案：tsvector 相关度 + pg_trgm 子串。"""
+
+    ids = await visible_account_ids(session, user)
+    matches = await search_local_profiles(
+        session,
+        keyword,
+        limit=limit,
+        account_ids=ids,
+        only_public=False,
+    )
+    return {
+        "keyword": keyword,
+        "total": len(matches),
+        "items": [
+            {
+                "profile": GroupProfileOut.model_validate(match.profile),
+                "rank": round(match.rank, 6),
+                "similarity": round(match.similarity, 6),
+            }
+            for match in matches
+        ],
+    }
 
 
 @router.get("/profiles/{profile_id}", summary="群档案详情（含概览统计）")

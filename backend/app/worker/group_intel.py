@@ -51,6 +51,7 @@ from app.services.group_intel import (
     upsert_profile,
 )
 from app.services.group_search import SearchQuery, expand_queries
+from app.services.local_group_search import search_local_profiles
 from app.worker.entities import resolve_chat_entity, resolve_entity
 from app.worker.campaign_tasks import _invite_hash_of, _username_from_target
 from app.worker.humanize import sleep_human
@@ -1309,45 +1310,71 @@ class GroupIntelMixin:
 
         # 2) messages.searchGlobal：只搜群消息，补 contacts.search 召回不到的长尾。
         if search_messages and message_queries:
+            fallback_done: set[str] = set()
             for index, item in enumerate(queries[:message_queries]):
-                try:
-                    res = await client(
-                        functions.messages.SearchGlobalRequest(
-                            q=item.query,
-                            filter=tl_types.InputMessagesFilterEmpty(),
-                            min_date=None,
-                            max_date=None,
-                            offset_rate=0,
-                            offset_peer=tl_types.InputPeerEmpty(),
-                            offset_id=0,
-                            limit=min(per_query, 50),
-                            groups_only=True,
-                        )
-                    )
-                except BaseException as exc:  # noqa: BLE001
-                    metrics["message_errors"] += 1
-                    await record_keyword(
-                        item.query,
-                        "message_search",
-                        status="error",
-                        raw=0,
-                        found=0,
-                        error=f"{type(exc).__name__}: {str(exc)[:160]}",
-                    )
-                    continue
+                # 组合查询命中 0 时回退到基础词/首词：SearchGlobal 默认所有词都要命中，
+                # 「Forex Thailand」这类组合常因地区词而整条落空。
+                attempts = [item.query]
+                for candidate in (item.keyword, item.query.split()[0] if item.query.split() else ""):
+                    candidate = str(candidate or "").strip()
+                    if candidate and all(candidate.casefold() != seen.casefold() for seen in attempts):
+                        attempts.append(candidate)
 
-                chats = list(getattr(res, "chats", []) or [])
-                metrics["message_raw_chats"] += len(chats)
-                found = 0
-                for chat in chats:
-                    if add_candidate(chat, source="message_search", query=item.query, keyword=item.keyword):
-                        found += 1
-                await record_keyword(item.query, "message_search", status="ok", raw=len(chats), found=found)
+                raw_total = 0
+                used_queries: list[str] = []
+                for attempt in attempts:
+                    if attempt != item.query and attempt in fallback_done:
+                        continue
+                    try:
+                        res = await client(
+                            functions.messages.SearchGlobalRequest(
+                                q=attempt,
+                                filter=tl_types.InputMessagesFilterEmpty(),
+                                min_date=None,
+                                max_date=None,
+                                offset_rate=0,
+                                offset_peer=tl_types.InputPeerEmpty(),
+                                offset_id=0,
+                                limit=min(per_query, 50),
+                                groups_only=True,
+                            )
+                        )
+                    except BaseException as exc:  # noqa: BLE001
+                        metrics["message_errors"] += 1
+                        await record_keyword(
+                            attempt,
+                            "message_search",
+                            status="error",
+                            raw=0,
+                            found=0,
+                            error=f"{type(exc).__name__}: {str(exc)[:160]}",
+                        )
+                        if attempt != item.query:
+                            fallback_done.add(attempt)
+                        continue
+
+                    chats = list(getattr(res, "chats", []) or [])
+                    raw_total += len(chats)
+                    found = 0
+                    for chat in chats:
+                        if add_candidate(chat, source="message_search", query=attempt, keyword=item.keyword):
+                            found += 1
+                    used_queries.append(attempt)
+                    await record_keyword(attempt, "message_search", status="ok", raw=len(chats), found=found)
+                    if attempt != item.query:
+                        fallback_done.add(attempt)
+                    if chats:
+                        break
+
+                metrics["message_raw_chats"] += raw_total
                 await self._report_progress(
                     session,
                     task,
                     stage="searching",
-                    detail=f"消息搜索「{item.query}」返回 {len(chats)} 个实体（候选 {len(candidates)}）",
+                    detail=(
+                        f"消息搜索「{item.query}」返回 {raw_total} 个实体"
+                        f"（回退 {', '.join(used_queries[1:]) or '无'}；候选 {len(candidates)}）"
+                    ),
                     scanned=index + 1,
                     found=len(candidates),
                     total=message_queries,
@@ -1355,28 +1382,28 @@ class GroupIntelMixin:
                 if index < message_queries - 1:
                     await sleep_human(3.0, 6.0, rng)
 
-        # 2b) 本地历史群档案：已经采过的公开群，按标题/简介命中后复核用户名再加入候选。
-        local_profiles = list(
-            await session.scalars(
-                select(GroupProfile)
-                .where(
-                    GroupProfile.account_id == account.id,
-                    GroupProfile.username.is_not(None),
-                    or_(
-                        *[
-                            GroupProfile.title.ilike(f"%{keyword}%")
-                            for keyword in keywords
-                        ],
-                        *[
-                            GroupProfile.about.ilike(f"%{keyword}%")
-                            for keyword in keywords
-                        ],
-                    ),
+        # 2b) 本地历史群档案：tsvector + pg_trgm 检索，标题/用户名/简介都能命中。
+        local_profiles: list[GroupProfile] = []
+        local_seen: set[int] = set()
+        for keyword in keywords:
+            try:
+                matches = await search_local_profiles(
+                    session,
+                    keyword,
+                    limit=20,
+                    account_ids=[account.id],
                 )
-                .order_by(GroupProfile.updated_at.desc())
-                .limit(20)
-            )
-        )
+            except BaseException as exc:  # noqa: BLE001
+                metrics["local_errors"] += 1
+                self.log.debug("本地群库检索失败 keyword=%s error=%s", keyword, exc)
+                continue
+            for match in matches:
+                profile = match.profile
+                chat_id = int(profile.tg_chat_id or 0)
+                if not chat_id or chat_id in local_seen:
+                    continue
+                local_seen.add(chat_id)
+                local_profiles.append(profile)
         for index, profile in enumerate(local_profiles):
             username = str(profile.username or "").lstrip("@")
             if not username or int(profile.tg_chat_id or 0) in candidates:
