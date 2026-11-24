@@ -347,6 +347,11 @@ export const groupIntelApi = {
     min_members?: number;
     kind?: 'any' | 'group' | 'channel';
     limit?: number;
+    regions?: string[];
+    languages?: string[];
+    max_queries?: number;
+    expand_linked_chats?: boolean;
+    max_linked_chats?: number;
   }) => api.post<BulkResultOut>('/api/group-intel/search-groups', payload),
   // 关键词监听：规则 CRUD + 命中流水
   keywordWatches: () => api.get<{ items: KeywordWatchOut[]; total: number }>('/api/group-intel/keyword-watches'),

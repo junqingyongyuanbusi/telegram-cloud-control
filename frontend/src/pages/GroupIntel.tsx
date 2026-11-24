@@ -76,6 +76,10 @@ export default function GroupIntel() {
   const [findPer, setFindPer] = useState(50);
   const [findMinMembers, setFindMinMembers] = useState(500);
   const [findKind, setFindKind] = useState<'any' | 'group' | 'channel'>('group');
+  // 查询扩展：地区 + 语言 + linked_chat；留空则保持旧行为（只搜原始关键词）
+  const [findRegions, setFindRegions] = useState<string[]>([]);
+  const [findLanguages, setFindLanguages] = useState<string[]>([]);
+  const [findExpandLinked, setFindExpandLinked] = useState(true);
   const [memberScope, setMemberScope] = useState<'all' | 'human' | 'bot'>('all');
   const [collectOpen, setCollectOpen] = useState(false);
   const [collectBusy, setCollectBusy] = useState(false);
@@ -779,6 +783,11 @@ export default function GroupIntel() {
               per_keyword: findPer,
               min_members: findMinMembers,
               kind: findKind,
+              regions: findRegions,
+              languages: findLanguages,
+              max_queries: 120,
+              expand_linked_chats: findExpandLinked,
+              max_linked_chats: 50,
             });
             setFindOpen(false);
             setCollectResult(res);
@@ -796,7 +805,7 @@ export default function GroupIntel() {
             type="info"
             showIcon
             message="用 Telegram 原生搜索找群，不依赖第三方目录站"
-            description="输入关键词，系统直接调 Telegram 的公开搜索，实时返回匹配的群/频道（连成员数一起给），找到的群会落进下面的群档案——之后可以接着用「筛群」判断值不值得投。全程只读：不加群、不发言。"
+            description="输入关键词，系统直接调 Telegram 的公开搜索（可选按地区/语言扩展成多组查询），连成员数一起返回；找到的群会落进下面的群档案，之后可以接着用「筛群」判断值不值得投。全程只读：不加群、不发言。"
           />
           <div className="tg-stack" style={{ gap: 2 }}>
             <span>关键词（逗号或换行分隔，最多 20 个）</span>
@@ -807,6 +816,46 @@ export default function GroupIntel() {
               value={findKeywords}
               onChange={(e) => setFindKeywords(e.target.value)}
             />
+          </div>
+          <div className="tg-stack" style={{ gap: 6 }}>
+            <span>地区扩展（可选；不选则只搜原始关键词）</span>
+            <Space wrap>
+              <Select
+                mode="multiple"
+                allowClear
+                value={findRegions}
+                onChange={setFindRegions}
+                style={{ minWidth: 220 }}
+                placeholder="选择地区，例如马来西亚"
+                options={[
+                  { label: '马来西亚 MY', value: 'MY' },
+                  { label: '新加坡 SG', value: 'SG' },
+                  { label: '印度尼西亚 ID', value: 'ID' },
+                  { label: '泰国 TH', value: 'TH' },
+                ]}
+              />
+              <Select
+                mode="multiple"
+                allowClear
+                value={findLanguages}
+                onChange={setFindLanguages}
+                style={{ minWidth: 200 }}
+                placeholder="群组后缀语言（默认按地区）"
+                options={[
+                  { label: '马来语 ms', value: 'ms' },
+                  { label: '英语 en', value: 'en' },
+                  { label: '中文 zh', value: 'zh' },
+                  { label: '印尼语 id', value: 'id' },
+                  { label: '泰语 th', value: 'th' },
+                ]}
+              />
+            </Space>
+            <Checkbox checked={findExpandLinked} onChange={(e) => setFindExpandLinked(e.target.checked)}>
+              顺着公开频道的讨论群继续找（linked_chat，只读）
+            </Checkbox>
+            <span className="tg-muted">
+              选了地区后，会把「主题词 × 地区 / 城市 / 群组后缀」展开成多组查询（最多 120 条），比单词搜索覆盖更全；频道也会作为种子落档。
+            </span>
           </div>
           <Space size="large" wrap>
             <span>
