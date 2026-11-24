@@ -1224,6 +1224,35 @@ export interface GroupProfileOut {
   member_synced_at?: ISODateTime | null;
   member_sampled: number;
   source: string;
+  language?: string | null;
+  country?: string | null;
+  topic?: string | null;
+  relevance_score?: number | null;
+  send_permission?: string | null;
+  join_request?: boolean | null;
+  verification_status?: string | null;
+}
+
+export interface GroupSearchMatchOut {
+  id: UUID;
+  task_id: UUID;
+  profile_id?: UUID | null;
+  tg_chat_id: number;
+  title: string;
+  username?: string | null;
+  member_count?: number | null;
+  source: string;
+  query: string;
+  relevance_score: number;
+  breakdown: Record<string, number>;
+  matched_keywords: string[];
+  discovery_sources: string[];
+  language?: string | null;
+  country?: string | null;
+  topic?: string | null;
+  status: 'accepted' | 'needs_review' | 'rejected';
+  reasons: string[];
+  created_at?: ISODateTime | null;
 }
 
 export interface GroupProfileListResponse {

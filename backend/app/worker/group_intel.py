@@ -15,15 +15,32 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Awaitable, Callable, Optional
 
 import httpx
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from telethon import functions
 from telethon.tl import types as tl_types
 
 from app.config import settings
 from app.db import session_scope
-from app.models import Dialog, DialogChannel, DiscoveryLead, DiscoveryQueryStat, GroupProfile, Task, TgAccount
+from app.models import (
+    Dialog,
+    DialogChannel,
+    DiscoveryLead,
+    DiscoveryQueryStat,
+    GroupProfile,
+    GroupSearchKeyword,
+    GroupSearchMatch,
+    Task,
+    TgAccount,
+)
 from app.services.group_discovery import extract_links, invite_url, parse_tme_page, tme_url
+from app.services.group_precision import (
+    classify,
+    canonical_topics,
+    discussion_verdict,
+    score_group,
+    verification_flags,
+)
 from app.services.group_intel import (
     describe_chat_action,
     display_name_of,
@@ -767,6 +784,8 @@ class GroupIntelMixin:
         assert account is not None
         self._ensure_sendable(account)
         payload = dict(task.payload or {})
+        if str(payload.get("mode") or "") == "precise":
+            return await self._search_groups_precise(session, task, account, payload)
         keywords = [str(item).strip() for item in (payload.get("keywords") or []) if str(item).strip()][:20]
         if not keywords:
             raise TaskFailure("找群任务缺少关键词", retryable=False)
@@ -1128,6 +1147,455 @@ class GroupIntelMixin:
                 f"linked_chat 额外 {len(linked_hits)} 个讨论群；"
                 f"消息链接发现 {metrics['message_profiles']} 个公开实体、{metrics['invite_leads']} 个私群线索；"
                 f"相似推荐 {metrics['recommendation_profiles']} 个；t.me 富化 {metrics['tme_enriched']} 个"
+            ),
+        }
+
+    async def _search_groups_precise(
+        self,
+        session: Any,
+        task: Task,
+        account: TgAccount,
+        payload: dict,
+    ) -> dict:
+        """多语言精准检索：多源召回 → 严格类型/权限校验 → 相关性评分 → 匹配快照。
+
+        与旧 `_search_groups` 的区别：
+        - 召回源不只 contacts.search，还支持 messages.searchGlobal、频道 linked_chat；
+        - 搜索阶段不提前过滤频道，频道只作为 linked_chat/图扩散种子；
+        - 每个群必须通过「超级群 + 非广播/非 gigagroup/非 monoforum」硬校验；
+        - 评分满分 100，按名称/简介/地区/讨论意图/语言五项落库，便于解释排序。
+        """
+
+        self._ensure_sendable(account)
+        keywords = [str(item).strip() for item in (payload.get("keywords") or []) if str(item).strip()][:20]
+        if not keywords:
+            raise TaskFailure("精准检索缺少关键词", retryable=False)
+
+        country = str(payload.get("country") or "").strip().upper() or None
+        languages = [str(item).strip() for item in (payload.get("languages") or []) if str(item).strip()][:6]
+        per_query = max(1, min(int(payload.get("limit") or 50), 100))
+        min_members = max(0, int(payload.get("min_members") or 0))
+        max_queries = max(1, min(int(payload.get("max_queries") or 120), 300))
+        group_only = bool(payload.get("group_only", True))
+        public_only = bool(payload.get("public_only", True))
+        exclude_readonly = bool(payload.get("exclude_readonly", True))
+        include_linked = bool(payload.get("include_linked_groups", True))
+        max_linked = max(0, min(int(payload.get("max_linked_chats") or 50), 200))
+        search_messages = bool(payload.get("search_messages", True))
+        message_queries = max(0, min(int(payload.get("message_search_queries") or 3), 20))
+        full_check_limit = max(0, min(int(payload.get("full_check_limit") or 40), 100))
+        min_score = max(0, min(int(payload.get("min_relevance_score") or 60), 100))
+
+        disabled_queries = list(
+            await session.scalars(select(DiscoveryQueryStat.query).where(DiscoveryQueryStat.enabled.is_(False)))
+        )
+        queries = expand_queries(
+            keywords,
+            regions=[country] if country else [],
+            languages=languages,
+            max_queries=max_queries,
+            exclude=disabled_queries,
+        )
+        if not queries:
+            raise TaskFailure("精准检索没有生成可用查询", retryable=False)
+
+        client = self._client(account.id)
+        rng = self._campaign_rng(task, payload)
+        metrics = {
+            "queries": len(queries),
+            "raw_chats": 0,
+            "candidates": 0,
+            "message_raw_chats": 0,
+            "message_errors": 0,
+            "query_errors": 0,
+            "local_found": 0,
+            "local_errors": 0,
+            "linked_found": 0,
+            "linked_errors": 0,
+            "full_checked": 0,
+            "full_errors": 0,
+            "accepted": 0,
+            "needs_review": 0,
+            "rejected": 0,
+            "channels": 0,
+            "readonly": 0,
+            "dropped_members": 0,
+            "score_sum": 0,
+        }
+        candidates: dict[int, dict[str, Any]] = {}
+
+        def add_candidate(chat: Any, *, source: str, query: str, keyword: str) -> Optional[int]:
+            chat_id = int(getattr(chat, "id", 0) or 0)
+            if not chat_id:
+                return None
+            entry = candidates.get(chat_id)
+            if entry is None:
+                entry = {
+                    "chat": chat,
+                    "sources": [],
+                    "query": query,
+                    "keyword": keyword,
+                    "full": None,
+                }
+                candidates[chat_id] = entry
+                metrics["candidates"] += 1
+            if source not in entry["sources"]:
+                entry["sources"].append(source)
+            return chat_id
+
+        async def record_keyword(query: str, source: str, *, status: str, raw: int, found: int, error: str = "") -> None:
+            await session.execute(
+                pg_insert(GroupSearchKeyword)
+                .values(
+                    id=uuid.uuid4(),
+                    task_id=task.id,
+                    account_id=account.id,
+                    query=query[:255],
+                    source=source,
+                    status=status,
+                    raw_count=raw,
+                    found_count=found,
+                    error=error[:1000],
+                )
+                .on_conflict_do_update(
+                    index_elements=["task_id", "source", "query"],
+                    set_={
+                        "status": status,
+                        "raw_count": raw,
+                        "found_count": found,
+                        "error": error[:1000],
+                        "updated_at": _now(),
+                    },
+                )
+            )
+
+        # 1) contacts.search：全局实体搜索，原始关键词和地区扩展都跑。
+        for index, item in enumerate(queries):
+            try:
+                res = await client(functions.contacts.SearchRequest(q=item.query, limit=per_query))
+            except BaseException as exc:  # noqa: BLE001 - 单条失败不影响整批
+                metrics["query_errors"] += 1
+                err = f"{type(exc).__name__}: {str(exc)[:160]}"
+                await record_keyword(item.query, "contacts", status="error", raw=0, found=0, error=err)
+                try:
+                    await _record_query_stat(session, item, raw_count=0, found_count=0, error=err)
+                except BaseException:  # noqa: BLE001
+                    pass
+                continue
+
+            chats = list(getattr(res, "chats", []) or [])
+            metrics["raw_chats"] += len(chats)
+            found = 0
+            for chat in chats:
+                if add_candidate(chat, source="contacts", query=item.query, keyword=item.keyword):
+                    found += 1
+            await record_keyword(item.query, "contacts", status="ok", raw=len(chats), found=found)
+            try:
+                await _record_query_stat(session, item, raw_count=len(chats), found_count=found)
+            except BaseException:  # noqa: BLE001
+                self.log.debug("查询绩效记录失败 query=%s", item.query)
+
+            await self._report_progress(
+                session,
+                task,
+                stage="searching",
+                detail=f"联系人搜索「{item.query}」返回 {len(chats)} 个实体（候选 {len(candidates)}）",
+                scanned=index + 1,
+                found=len(candidates),
+                total=len(queries),
+            )
+            if index < len(queries) - 1:
+                await sleep_human(2.0, 5.0, rng)
+
+        # 2) messages.searchGlobal：只搜群消息，补 contacts.search 召回不到的长尾。
+        if search_messages and message_queries:
+            for index, item in enumerate(queries[:message_queries]):
+                try:
+                    res = await client(
+                        functions.messages.SearchGlobalRequest(
+                            q=item.query,
+                            filter=tl_types.InputMessagesFilterEmpty(),
+                            min_date=None,
+                            max_date=None,
+                            offset_rate=0,
+                            offset_peer=tl_types.InputPeerEmpty(),
+                            offset_id=0,
+                            limit=min(per_query, 50),
+                            groups_only=True,
+                        )
+                    )
+                except BaseException as exc:  # noqa: BLE001
+                    metrics["message_errors"] += 1
+                    await record_keyword(
+                        item.query,
+                        "message_search",
+                        status="error",
+                        raw=0,
+                        found=0,
+                        error=f"{type(exc).__name__}: {str(exc)[:160]}",
+                    )
+                    continue
+
+                chats = list(getattr(res, "chats", []) or [])
+                metrics["message_raw_chats"] += len(chats)
+                found = 0
+                for chat in chats:
+                    if add_candidate(chat, source="message_search", query=item.query, keyword=item.keyword):
+                        found += 1
+                await record_keyword(item.query, "message_search", status="ok", raw=len(chats), found=found)
+                await self._report_progress(
+                    session,
+                    task,
+                    stage="searching",
+                    detail=f"消息搜索「{item.query}」返回 {len(chats)} 个实体（候选 {len(candidates)}）",
+                    scanned=index + 1,
+                    found=len(candidates),
+                    total=message_queries,
+                )
+                if index < message_queries - 1:
+                    await sleep_human(3.0, 6.0, rng)
+
+        # 2b) 本地历史群档案：已经采过的公开群，按标题/简介命中后复核用户名再加入候选。
+        local_profiles = list(
+            await session.scalars(
+                select(GroupProfile)
+                .where(
+                    GroupProfile.account_id == account.id,
+                    GroupProfile.username.is_not(None),
+                    or_(
+                        *[
+                            GroupProfile.title.ilike(f"%{keyword}%")
+                            for keyword in keywords
+                        ],
+                        *[
+                            GroupProfile.about.ilike(f"%{keyword}%")
+                            for keyword in keywords
+                        ],
+                    ),
+                )
+                .order_by(GroupProfile.updated_at.desc())
+                .limit(20)
+            )
+        )
+        for index, profile in enumerate(local_profiles):
+            username = str(profile.username or "").lstrip("@")
+            if not username or int(profile.tg_chat_id or 0) in candidates:
+                continue
+            try:
+                resolved = await client(functions.contacts.ResolveUsernameRequest(username=username))
+                chats = list(getattr(resolved, "chats", []) or [])
+                if chats and add_candidate(chats[0], source="local_index", query="", keyword=keywords[0]):
+                    metrics["local_found"] += 1
+            except BaseException:  # noqa: BLE001
+                metrics["local_errors"] += 1
+            if index < len(local_profiles) - 1:
+                await sleep_human(1.0, 2.0, rng)
+
+        # 3) 频道 linked_chat：只读，不需要入群。
+        if include_linked and max_linked:
+            seeds = [
+                entry["chat"]
+                for entry in candidates.values()
+                if bool(getattr(entry["chat"], "broadcast", False)) and getattr(entry["chat"], "username", None)
+            ][:max_linked]
+            for index, seed in enumerate(seeds):
+                seed_id = int(getattr(seed, "id", 0) or 0)
+                try:
+                    full = await client(functions.channels.GetFullChannelRequest(channel=seed))
+                    linked_id = int(getattr(getattr(full, "full_chat", None), "linked_chat_id", 0) or 0)
+                    if not linked_id:
+                        continue
+                    linked = next(
+                        (
+                            chat
+                            for chat in (getattr(full, "chats", []) or [])
+                            if int(getattr(chat, "id", 0) or 0) == linked_id
+                        ),
+                        None,
+                    )
+                    if linked is None:
+                        linked = await client.get_entity(tl_types.PeerChannel(linked_id))
+                    if add_candidate(linked, source="linked_chat", query="", keyword=keywords[0]):
+                        metrics["linked_found"] += 1
+                except BaseException:  # noqa: BLE001
+                    metrics["linked_errors"] += 1
+                if index < len(seeds) - 1:
+                    await sleep_human(2.0, 4.0, rng)
+                if (index + 1) % 10 == 0:
+                    await self._report_progress(
+                        session,
+                        task,
+                        stage="expanding",
+                        detail=f"已检查 {index + 1}/{len(seeds)} 个频道，找到 {metrics['linked_found']} 个讨论群",
+                        scanned=index + 1,
+                        found=len(candidates),
+                        total=len(seeds),
+                    )
+
+        # 4) 只对讨论组候选拉 GetFullChannel（拿 about/权限），频道不浪费配额。
+        full_targets = [
+            cid
+            for cid, entry in candidates.items()
+            if discussion_verdict(entry["chat"])[0]
+        ][:full_check_limit]
+        for index, chat_id in enumerate(full_targets):
+            entry = candidates[chat_id]
+            try:
+                entry["full"] = await client(functions.channels.GetFullChannelRequest(channel=entry["chat"]))
+                metrics["full_checked"] += 1
+            except BaseException:  # noqa: BLE001
+                metrics["full_errors"] += 1
+            if index < len(full_targets) - 1:
+                await sleep_human(1.0, 2.5, rng)
+
+        # 5) 校验 + 评分 + 落库。
+        for chat_id, entry in candidates.items():
+            chat = entry["chat"]
+            full = entry.get("full")
+            full_chat = getattr(full, "full_chat", None) if full is not None else None
+            title = str(getattr(chat, "title", "") or "")
+            about = str(getattr(full_chat, "about", "") or "") if full_chat is not None else ""
+            username = getattr(chat, "username", None)
+            members = (
+                getattr(full_chat, "participants_count", None)
+                if full_chat is not None
+                else None
+            ) or getattr(chat, "participants_count", None)
+            if min_members and (members or 0) < min_members:
+                metrics["dropped_members"] += 1
+                continue
+
+            type_ok, type_reason = discussion_verdict(chat)
+            flags = verification_flags(chat, full)
+            score = score_group(
+                title=title,
+                about=about,
+                username=username,
+                keywords=keywords,
+                country=country,
+                languages=languages,
+            )
+            reasons = list(score.reasons)
+            status = classify(score.score, min_score=min_score)
+            if group_only and not type_ok:
+                status = "rejected"
+                reasons.append(f"类型不合格：{type_reason}")
+                metrics["channels"] += 1
+            if public_only and not flags["is_public"]:
+                status = "rejected"
+                reasons.append("没有公开用户名")
+            if exclude_readonly and flags["readonly"]:
+                status = "rejected"
+                reasons.append("默认权限为只读")
+                metrics["readonly"] += 1
+
+            metrics[status] += 1
+            metrics["score_sum"] += score.score
+
+            try:
+                profile = await upsert_profile(
+                    session,
+                    account_id=account.id,
+                    tg_chat_id=chat_id,
+                    source="precise_search",
+                    touch_collected_at=False,
+                    raw={
+                        "precise": True,
+                        "type_reason": type_reason,
+                        "sources": entry["sources"],
+                        "query": entry["query"],
+                        "keyword": entry["keyword"],
+                    },
+                    **profile_fields_from_entity(chat, full),
+                    language=score.language,
+                    country=score.country,
+                    topic=score.topic,
+                    relevance_score=score.score,
+                    send_permission=flags["send_permission"],
+                    join_request=flags["join_request"],
+                    linked_channel_id=flags["linked_channel_id"],
+                    verification_status=flags["verification_status"],
+                    last_verified_at=_now(),
+                    discovery_sources=entry["sources"],
+                    matched_keywords=score.matched_keywords,
+                )
+            except BaseException:  # noqa: BLE001 - 单个群落档失败不影响整批
+                self.log.debug("精准检索落档失败 tg_chat_id=%s", chat_id)
+                continue
+
+            await session.execute(
+                pg_insert(GroupSearchMatch)
+                .values(
+                    id=uuid.uuid4(),
+                    task_id=task.id,
+                    account_id=account.id,
+                    profile_id=profile.id,
+                    tg_chat_id=chat_id,
+                    title=title[:255],
+                    username=username,
+                    member_count=int(members) if members is not None else None,
+                    source=str(entry["sources"][0] if entry["sources"] else "contacts"),
+                    query=str(entry["query"] or "")[:255],
+                    keywords=keywords,
+                    relevance_score=score.score,
+                    breakdown=score.breakdown,
+                    matched_keywords=score.matched_keywords,
+                    discovery_sources=entry["sources"],
+                    language=score.language,
+                    country=score.country,
+                    topic=score.topic,
+                    status=status,
+                    reasons=reasons,
+                    raw={"type_reason": type_reason, **flags},
+                )
+                .on_conflict_do_update(
+                    index_elements=["task_id", "tg_chat_id"],
+                    set_={
+                        "profile_id": profile.id,
+                        "title": title[:255],
+                        "username": username,
+                        "member_count": int(members) if members is not None else None,
+                        "relevance_score": score.score,
+                        "breakdown": score.breakdown,
+                        "matched_keywords": score.matched_keywords,
+                        "discovery_sources": entry["sources"],
+                        "status": status,
+                        "reasons": reasons,
+                        "raw": {"type_reason": type_reason, **flags},
+                        "updated_at": _now(),
+                    },
+                )
+            )
+
+        await self._report_progress(
+            session,
+            task,
+            stage="done",
+            detail=(
+                f"精准检索完成：{len(candidates)} 个候选，{metrics['accepted']} 个保留，"
+                f"{metrics['needs_review']} 个待确认，{metrics['rejected']} 个排除"
+            ),
+            scanned=len(queries),
+            found=metrics["accepted"],
+            total=len(queries),
+        )
+        average = round(metrics["score_sum"] / max(metrics["accepted"] + metrics["needs_review"] + metrics["rejected"], 1), 1)
+        return {
+            "mode": "precise",
+            "keywords": keywords,
+            "country": country,
+            "languages": languages,
+            "queries_run": len(queries),
+            "min_relevance_score": min_score,
+            "candidates": len(candidates),
+            "accepted": metrics["accepted"],
+            "needs_review": metrics["needs_review"],
+            "rejected": metrics["rejected"],
+            "average_score": average,
+            "metrics": metrics,
+            "summary": (
+                f"精准检索：{len(queries)} 条查询，{len(candidates)} 个候选，"
+                f"保留 {metrics['accepted']} 个、待确认 {metrics['needs_review']} 个、排除 {metrics['rejected']} 个"
             ),
         }
 

@@ -27,6 +27,7 @@ import type {
   GroupMemberListResponse,
   GroupProfileListResponse,
   GroupProfileOut,
+  GroupSearchMatchOut,
   BulkPmRequest,
   BulkProbeRequest,
   BulkWarmupRequest,
@@ -361,6 +362,32 @@ export const groupIntelApi = {
     tme_limit?: number;
     max_links?: number;
   }) => api.post<BulkResultOut>('/api/group-intel/search-groups', payload),
+  /** 精准检索公开讨论组：多语言扩展 + 类型/权限校验 + 相关性评分 */
+  preciseSearch: (payload: {
+    scope?: string;
+    account_ids?: string[];
+    keywords: string[];
+    country?: string | null;
+    languages?: string[];
+    per_keyword?: number;
+    min_members?: number;
+    max_queries?: number;
+    group_only?: boolean;
+    public_only?: boolean;
+    include_linked_groups?: boolean;
+    max_linked_chats?: number;
+    exclude_readonly?: boolean;
+    search_messages?: boolean;
+    message_search_queries?: number;
+    full_check_limit?: number;
+    min_relevance_score?: number;
+  }) => api.post<BulkResultOut>('/api/group-intel/search/precise', payload),
+  preciseMatches: (taskId: string, status?: string) =>
+    api.get<GroupSearchMatchOut[]>(`/api/group-intel/search/tasks/${taskId}/matches`, status ? { status } : undefined),
+  preciseKeywords: (taskId: string) =>
+    api.get<{ query: string; source: string; raw_count: number; found_count: number; status: string }[]>(
+      `/api/group-intel/search/tasks/${taskId}/keywords`,
+    ),
   // 关键词监听：规则 CRUD + 命中流水
   keywordWatches: () => api.get<{ items: KeywordWatchOut[]; total: number }>('/api/group-intel/keyword-watches'),
   createKeywordWatch: (payload: {

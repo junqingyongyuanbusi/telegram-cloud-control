@@ -70,6 +70,13 @@ class GroupProfileOut(ORMModel):
     member_synced_at: Optional[datetime] = None
     member_sampled: int = 0
     source: str = "profile_sync"
+    language: Optional[str] = None
+    country: Optional[str] = None
+    topic: Optional[str] = None
+    relevance_score: Optional[int] = None
+    send_permission: Optional[str] = None
+    join_request: Optional[bool] = None
+    verification_status: Optional[str] = None
 
 
 class GroupProfileListResponse(BaseModel):
@@ -268,6 +275,60 @@ class SearchGroupsRequest(BulkScopeRequest):
     )
     tme_limit: int = Field(default=50, ge=0, le=200, description="每轮最多富化多少个公开实体")
     max_links: int = Field(default=100, ge=0, le=300, description="每轮最多验证多少个消息里发现的链接")
+
+
+class PreciseSearchRequest(BulkScopeRequest):
+    """多语言关键词精准检索讨论组（多源召回 + 严格校验 + 评分）。"""
+
+    keywords: List[str] = Field(default_factory=list, min_length=1, max_length=20, description="关键词，最多 20 个")
+    country: Optional[str] = Field(default=None, max_length=8, description="目标地区代码，如 TH / MY / SG / ID")
+    languages: List[str] = Field(default_factory=list, max_length=6, description="目标语言，如 th/en/zh/ms")
+    per_keyword: int = Field(default=50, ge=1, le=100, description="每条查询最多取多少个实体")
+    min_members: int = Field(default=0, ge=0, le=1000000, description="成员数门槛")
+    max_queries: int = Field(default=120, ge=1, le=300, description="最多执行多少条查询")
+    group_only: bool = Field(default=True, description="只保留讨论组（超级群），排除广播频道")
+    public_only: bool = Field(default=True, description="只保留有公开用户名的实体")
+    include_linked_groups: bool = Field(default=True, description="是否从频道展开 linked_chat 讨论组")
+    max_linked_chats: int = Field(default=50, ge=0, le=200, description="最多检查多少个频道的 linked_chat")
+    exclude_readonly: bool = Field(default=True, description="排除默认权限为只读的群")
+    search_messages: bool = Field(default=True, description="是否用 messages.searchGlobal 补充召回")
+    message_search_queries: int = Field(default=3, ge=0, le=20, description="用前几条查询做消息搜索")
+    full_check_limit: int = Field(default=40, ge=0, le=100, description="最多对多少个讨论组拉 GetFullChannel")
+    min_relevance_score: int = Field(default=60, ge=0, le=100, description="保留门槛；低于它但 ≥40 的进待确认")
+
+
+class GroupSearchKeywordOut(ORMModel):
+    id: uuid.UUID
+    task_id: uuid.UUID
+    query: str
+    source: str
+    status: str
+    raw_count: int = 0
+    found_count: int = 0
+    error: str = ""
+    created_at: Optional[datetime] = None
+
+
+class GroupSearchMatchOut(ORMModel):
+    id: uuid.UUID
+    task_id: uuid.UUID
+    profile_id: Optional[uuid.UUID] = None
+    tg_chat_id: int
+    title: str = ""
+    username: Optional[str] = None
+    member_count: Optional[int] = None
+    source: str = "contacts"
+    query: str = ""
+    relevance_score: int = 0
+    breakdown: Dict[str, int] = Field(default_factory=dict)
+    matched_keywords: List[str] = Field(default_factory=list)
+    discovery_sources: List[str] = Field(default_factory=list)
+    language: Optional[str] = None
+    country: Optional[str] = None
+    topic: Optional[str] = None
+    status: str = "needs_review"
+    reasons: List[str] = Field(default_factory=list)
+    created_at: Optional[datetime] = None
 
 
 class DiscoveryQueryStatOut(ORMModel):

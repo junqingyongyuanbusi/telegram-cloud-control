@@ -42,8 +42,9 @@ REGION_PROFILES: dict[str, dict[str, tuple[str, ...]]] = {
         "languages": ("id", "en"),
     },
     "TH": {
-        "names": ("thailand",),
-        "cities": ("bangkok", "chiang mai", "phuket"),
+        # 泰语是主语言，地区名把 ไทย 放前面；英文 Thailand 仍保留。
+        "names": ("ไทย", "thailand", "thai", "ประเทศไทย"),
+        "cities": ("bangkok", "chiang mai", "phuket", "กรุงเทพ", "เชียงใหม่", "ภูเก็ต"),
         "languages": ("th", "en"),
     },
 }
@@ -81,6 +82,17 @@ TOPIC_NAMES_ZH: dict[str, str] = {
     "crypto": "加密货币",
     "property": "房产",
     "jobs": "招聘",
+}
+# 泰语主题词：泰国群名常用「กลุ่ม + 主题」「พูดคุย + 主题」，不像英文那样用空格分隔。
+TOPIC_NAMES_TH: dict[str, str] = {
+    "forex": "ฟอเร็กซ์",
+    "trading": "เทรด",
+    "gold": "ทองคำ",
+    "stock": "หุ้น",
+    "stocks": "หุ้น",
+    "crypto": "คริปโต",
+    "property": "อสังหา",
+    "jobs": "รับสมัครงาน",
 }
 REGION_NAMES_ZH: dict[str, str] = {
     "MY": "马来西亚",
@@ -232,6 +244,7 @@ def expand_queries(
             langs = language_override or {item.casefold() for item in profile["languages"]}
             region_name_zh = REGION_NAMES_ZH.get(code)
             topic_zh = TOPIC_NAMES_ZH.get(lowered)
+            topic_th = TOPIC_NAMES_TH.get(lowered)
 
             # 2. 主题词 + 地区名（每个关键词都先拿到，再进入城市）。
             for variant in variants[keyword]:
@@ -239,7 +252,7 @@ def expand_queries(
                     push(keyword, f"{variant} {name}", "region", code)
 
             # 3. 主题词 + 城市（MY 城市已补到东马，全部跑；其他地区先取前 4 个）。
-            city_list = profile["cities"] if code == "MY" else profile["cities"][:4]
+            city_list = profile["cities"] if code in {"MY", "TH"} else profile["cities"][:4]
             for variant in variants[keyword]:
                 for city in city_list:
                     push(keyword, f"{variant} {city}", "city", code, "en")
@@ -257,7 +270,17 @@ def expand_queries(
                 push(keyword, f"{region_name_zh} {topic_zh} 群", "zh_group", code, "zh")
                 push(keyword, f"{topic_zh} 群", "zh_topic_group", code, "zh")
 
-            # 6. 群组后缀：英文 group、马来语 kumpulan、中文 群。
+            # 5.5 泰语词组：กลุ่มเทรด Forex / พูดคุย Forex / Forex ไทย。
+            if code == "TH" and "th" in langs:
+                for variant in variants[keyword]:
+                    if topic_th:
+                        push(keyword, f"กลุ่ม{topic_th}", "th_group", code, "th")
+                        push(keyword, f"พูดคุย {topic_th}", "th_chat", code, "th")
+                        push(keyword, f"{topic_th} ไทย", "th_region", code, "th")
+                    push(keyword, f"กลุ่ม {variant}", "th_group", code, "th")
+                    push(keyword, f"พูดคุย {variant}", "th_chat", code, "th")
+
+            # 6. 群组后缀：英文 group、马来语 kumpulan、中文 群、泰语 กลุ่ม。
             for variant in variants[keyword]:
                 for name in profile["names"][:1]:
                     if "en" in langs:

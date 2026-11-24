@@ -42,6 +42,12 @@ def main() -> None:
     assert "pelaburan emas" in gold, gold
     assert "trading emas" in gold, gold
 
+    # 泰语地区：泰文主题词 + กลุ่ม/พูดคุย 前缀 + 泰国城市。
+    thai = [item.query for item in expand_queries(["Forex"], regions=["TH"], languages=["th", "en"], max_queries=80)]
+    lowered_thai = {item.casefold() for item in thai}
+    for expected in ("กลุ่มฟอเร็กซ์", "พูดคุย ฟอเร็กซ์", "ฟอเร็กซ์ ไทย", "forex กรุงเทพ", "forex bangkok"):
+        assert expected.casefold() in lowered_thai, f"缺少泰语查询：{expected}\n{thai}"
+
     # 已停用的查询不参与扩展，但用户手输的基础词仍保留。
     excluded = [item.query for item in expand_queries(["forex"], regions=["MY"], max_queries=80, exclude=["signal forex"])]
     assert "signal forex" not in excluded, excluded

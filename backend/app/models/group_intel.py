@@ -86,6 +86,18 @@ class GroupProfile(Base, TimestampMixin):
     member_sampled: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     source: Mapped[str] = mapped_column(String(24), nullable=False, default="profile_sync")
     raw: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
+    # 精准检索的判定结果：语言/地区/主题、相关性分数、发言权限、校验状态。
+    language: Mapped[Optional[str]] = mapped_column(String(8), nullable=True, index=True)
+    country: Mapped[Optional[str]] = mapped_column(String(8), nullable=True, index=True)
+    topic: Mapped[Optional[str]] = mapped_column(String(24), nullable=True, index=True)
+    relevance_score: Mapped[Optional[int]] = mapped_column(Integer, nullable=True, index=True)
+    send_permission: Mapped[Optional[str]] = mapped_column(String(16), nullable=True)
+    join_request: Mapped[Optional[bool]] = mapped_column(Boolean, nullable=True)
+    linked_channel_id: Mapped[Optional[int]] = mapped_column(BigInteger, nullable=True)
+    verification_status: Mapped[Optional[str]] = mapped_column(String(16), nullable=True)
+    last_verified_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    discovery_sources: Mapped[list] = mapped_column(JSONB, nullable=False, default=list)
+    matched_keywords: Mapped[list] = mapped_column(JSONB, nullable=False, default=list)
 
     __table_args__ = (
         UniqueConstraint("account_id", "tg_chat_id", name="uq_group_profiles_account_chat"),
@@ -266,4 +278,70 @@ class DiscoveryLead(Base, TimestampMixin):
     __table_args__ = (
         UniqueConstraint("account_id", "invite_hash", name="uq_discovery_leads_account_invite"),
         Index("ix_discovery_leads_seed_chat", "seed_chat_id"),
+    )
+
+
+class GroupSearchKeyword(Base, TimestampMixin):
+    """一次精准检索里实际跑过的查询（任务级流水，便于复现和审计）。"""
+
+    __tablename__ = "group_search_keywords"
+
+    id: Mapped[uuid.UUID] = uuid_pk()
+    task_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("tasks.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    account_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("tg_accounts.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    query: Mapped[str] = mapped_column(String(255), nullable=False, default="")
+    source: Mapped[str] = mapped_column(String(24), nullable=False, default="contacts")
+    status: Mapped[str] = mapped_column(String(16), nullable=False, default="ok")
+    raw_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    found_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    error: Mapped[str] = mapped_column(Text, nullable=False, default="")
+
+    __table_args__ = (
+        UniqueConstraint("task_id", "source", "query", name="uq_group_search_keywords_task_source_query"),
+    )
+
+
+class GroupSearchMatch(Base, TimestampMixin):
+    """精准检索的结果：一条记录是「任务 × 群」的判定快照。
+
+    为什么快照标题/用户名：群改名/注销后，历史任务仍要能解释「当时为什么收录它」。
+    """
+
+    __tablename__ = "group_search_matches"
+
+    id: Mapped[uuid.UUID] = uuid_pk()
+    task_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("tasks.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    account_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("tg_accounts.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    profile_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("group_profiles.id", ondelete="CASCADE"), nullable=True, index=True
+    )
+    tg_chat_id: Mapped[int] = mapped_column(BigInteger, nullable=False, index=True)
+    title: Mapped[str] = mapped_column(String(255), nullable=False, default="")
+    username: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    member_count: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    source: Mapped[str] = mapped_column(String(24), nullable=False, default="contacts")
+    query: Mapped[str] = mapped_column(String(255), nullable=False, default="")
+    keywords: Mapped[list] = mapped_column(JSONB, nullable=False, default=list)
+    relevance_score: Mapped[int] = mapped_column(Integer, nullable=False, default=0, index=True)
+    breakdown: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
+    matched_keywords: Mapped[list] = mapped_column(JSONB, nullable=False, default=list)
+    discovery_sources: Mapped[list] = mapped_column(JSONB, nullable=False, default=list)
+    language: Mapped[Optional[str]] = mapped_column(String(8), nullable=True, index=True)
+    country: Mapped[Optional[str]] = mapped_column(String(8), nullable=True, index=True)
+    topic: Mapped[Optional[str]] = mapped_column(String(24), nullable=True)
+    status: Mapped[str] = mapped_column(String(16), nullable=False, default="needs_review", index=True)
+    reasons: Mapped[list] = mapped_column(JSONB, nullable=False, default=list)
+    raw: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
+
+    __table_args__ = (
+        UniqueConstraint("task_id", "tg_chat_id", name="uq_group_search_matches_task_chat"),
+        Index("ix_group_search_matches_task_status", "task_id", "status"),
     )

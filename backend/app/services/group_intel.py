@@ -55,6 +55,17 @@ async def upsert_profile(
     source: str = "profile_sync",
     raw: Optional[dict] = None,
     dialog_id: Optional[uuid.UUID] = None,
+    language: Optional[str] = None,
+    country: Optional[str] = None,
+    topic: Optional[str] = None,
+    relevance_score: Optional[int] = None,
+    send_permission: Optional[str] = None,
+    join_request: Optional[bool] = None,
+    linked_channel_id: Optional[int] = None,
+    verification_status: Optional[str] = None,
+    last_verified_at: Optional[datetime] = None,
+    discovery_sources: Optional[list] = None,
+    matched_keywords: Optional[list] = None,
     touch_collected_at: bool = True,
 ) -> GroupProfile:
     """写或更新群档案。同号同群只保留一行，重复采集只刷新字段。"""
@@ -107,6 +118,28 @@ async def upsert_profile(
         profile.source = source
     if raw:
         profile.raw = {**(profile.raw or {}), **raw}
+    if language is not None:
+        profile.language = language[:8]
+    if country is not None:
+        profile.country = country[:8]
+    if topic is not None:
+        profile.topic = topic[:24]
+    if relevance_score is not None:
+        profile.relevance_score = int(relevance_score)
+    if send_permission is not None:
+        profile.send_permission = send_permission[:16]
+    if join_request is not None:
+        profile.join_request = bool(join_request)
+    if linked_channel_id is not None:
+        profile.linked_channel_id = int(linked_channel_id)
+    if verification_status is not None:
+        profile.verification_status = verification_status[:16]
+    if last_verified_at is not None:
+        profile.last_verified_at = _as_aware(last_verified_at)
+    if discovery_sources is not None:
+        profile.discovery_sources = list(dict.fromkeys(str(item) for item in discovery_sources if item))
+    if matched_keywords is not None:
+        profile.matched_keywords = list(dict.fromkeys(str(item) for item in matched_keywords if item))
     if touch_collected_at:
         profile.collected_at = _now()
     await session.flush()

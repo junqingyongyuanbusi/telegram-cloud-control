@@ -27,6 +27,7 @@ import {
 } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
 import {
+  AimOutlined,
   CloudDownloadOutlined,
   CommentOutlined,
   FileZipOutlined,
@@ -48,6 +49,7 @@ import type {
   GroupEventOut,
   GroupMemberOut,
   GroupProfileOut,
+  GroupSearchMatchOut,
 } from '../api/types';
 
 const KIND_LABEL: Record<string, string> = {
@@ -84,6 +86,16 @@ export default function GroupIntel() {
   const [findExpandMessages, setFindExpandMessages] = useState(true);
   const [findExpandRecommendations, setFindExpandRecommendations] = useState(true);
   const [findEnrichTme, setFindEnrichTme] = useState(true);
+  // 精准检索：多语言 + 类型/权限校验 + 评分
+  const [preciseOpen, setPreciseOpen] = useState(false);
+  const [preciseBusy, setPreciseBusy] = useState(false);
+  const [preciseKeywords, setPreciseKeywords] = useState('');
+  const [preciseCountry, setPreciseCountry] = useState('TH');
+  const [preciseLanguages, setPreciseLanguages] = useState<string[]>(['th', 'en']);
+  const [preciseMinScore, setPreciseMinScore] = useState(60);
+  const [preciseTaskId, setPreciseTaskId] = useState<string | null>(null);
+  const [preciseRows, setPreciseRows] = useState<GroupSearchMatchOut[]>([]);
+  const [preciseLoading, setPreciseLoading] = useState(false);
   const [memberScope, setMemberScope] = useState<'all' | 'human' | 'bot'>('all');
   const [collectOpen, setCollectOpen] = useState(false);
   const [collectBusy, setCollectBusy] = useState(false);
@@ -93,6 +105,31 @@ export default function GroupIntel() {
   const [linkOpen, setLinkOpen] = useState(false);
   const [linkBusy, setLinkBusy] = useState(false);
   const [linkForm] = Form.useForm();
+
+  useEffect(() => {
+    if (!preciseTaskId) return;
+    let stopped = false;
+    let attempts = 0;
+    setPreciseLoading(true);
+    const tick = async () => {
+      attempts += 1;
+      try {
+        const rows = await groupIntelApi.preciseMatches(preciseTaskId);
+        if (!stopped) setPreciseRows(rows);
+      } catch {
+        /* 任务还没产出时保持旧表 */
+      } finally {
+        if (!stopped) setPreciseLoading(false);
+      }
+      if (attempts >= 30) window.clearInterval(timer);
+    };
+    const timer = window.setInterval(() => void tick(), 3000);
+    void tick();
+    return () => {
+      stopped = true;
+      window.clearInterval(timer);
+    };
+  }, [preciseTaskId]);
 
   const stats = useAsyncData(() => groupIntelApi.stats(), []);
   // 采集进度：进行中时每 5 秒刷新一次，避免黑盒等待
@@ -297,6 +334,19 @@ export default function GroupIntel() {
     },
     { title: '类型', dataIndex: 'kind', width: 90, render: (value: string) => <Tag>{KIND_LABEL[value] ?? value}</Tag> },
     {
+      title: '相关性',
+      dataIndex: 'relevance_score',
+      width: 86,
+      sorter: (a, b) => (a.relevance_score ?? 0) - (b.relevance_score ?? 0),
+      render: (value: number | null) =>
+        value == null ? <span className="tg-muted">—</span> : <Tag color={value >= 80 ? 'green' : value >= 60 ? 'gold' : 'default'}>{value}</Tag>,
+    },
+    {
+      title: '语言/地区',
+      width: 96,
+      render: (_: unknown, record) => `${record.language || '—'} / ${record.country || '—'}`,
+    },
+    {
       title: '成员数',
       dataIndex: 'member_count',
       width: 90,
@@ -401,6 +451,9 @@ export default function GroupIntel() {
           </Button>
           <Button icon={<SearchOutlined />} onClick={() => setFindOpen(true)}>
             按关键词找群
+          </Button>
+          <Button type="primary" ghost icon={<AimOutlined />} onClick={() => setPreciseOpen(true)}>
+            精准找群
           </Button>
           <Button type="primary" icon={<CloudDownloadOutlined />} onClick={() => setCollectOpen(true)}>
             采集群情报
@@ -904,6 +957,193 @@ export default function GroupIntel() {
             />
           </Space>
         </div>
+      </Modal>
+
+      <Modal
+        open={preciseOpen}
+        width={920}
+        title="精准找群：多语言 · 类型校验 · 相关性评分"
+        okText={preciseTaskId ? '重新检索' : '开始检索'}
+        cancelText="关闭"
+        confirmLoading={preciseBusy}
+        onCancel={() => setPreciseOpen(false)}
+        onOk={async () => {
+          if (preciseTaskId) {
+            setPreciseTaskId(null);
+            setPreciseRows([]);
+            return;
+          }
+          const keywords = preciseKeywords
+            .split(/[,\n，]/)
+            .map((item) => item.trim())
+            .filter(Boolean);
+          if (!keywords.length) {
+            toast.warning('至少填一个关键词');
+            return;
+          }
+          setPreciseBusy(true);
+          try {
+            const res = await groupIntelApi.preciseSearch({
+              scope: 'all',
+              keywords,
+              country: preciseCountry,
+              languages: preciseLanguages,
+              per_keyword: 50,
+              min_members: 0,
+              max_queries: 120,
+              group_only: true,
+              public_only: true,
+              include_linked_groups: true,
+              max_linked_chats: 50,
+              exclude_readonly: true,
+              search_messages: true,
+              message_search_queries: 3,
+              full_check_limit: 40,
+              min_relevance_score: preciseMinScore,
+            });
+            setPreciseRows([]);
+            setPreciseTaskId(res.task_ids[0] || null);
+            void jobs.reload();
+            void profiles.reload();
+          } catch {
+            /* client 已统一提示 */
+          } finally {
+            setPreciseBusy(false);
+          }
+        }}
+      >
+        {!preciseTaskId ? (
+          <div className="tg-stack" style={{ gap: 'var(--tg-space-lg)' }}>
+            <Alert
+              type="info"
+              showIcon
+              message="先搜实体，再严格验类型和权限，最后按主题/地区/讨论意图打分"
+              description="同时用联系人搜索、全局消息搜索和频道关联讨论组召回候选；广播频道、只读群、私密群会被排除。结果写入群档案，分数和原因可在下方追溯。全程只读。"
+            />
+            <div className="tg-stack" style={{ gap: 2 }}>
+              <span>关键词（逗号或换行分隔，最多 20 个）</span>
+              <Input.TextArea
+                rows={3}
+                style={{ maxWidth: 540 }}
+                placeholder={'Forex Thailand\nกลุ่มเทรด Forex\nThai Forex'}
+                value={preciseKeywords}
+                onChange={(e) => setPreciseKeywords(e.target.value)}
+              />
+            </div>
+            <Space size="large" wrap>
+              <span>
+                目标地区
+                <Select
+                  value={preciseCountry}
+                  onChange={setPreciseCountry}
+                  style={{ width: 140, marginLeft: 8 }}
+                  options={[
+                    { value: 'TH', label: '泰国 TH' },
+                    { value: 'MY', label: '马来西亚 MY' },
+                    { value: 'SG', label: '新加坡 SG' },
+                    { value: 'ID', label: '印尼 ID' },
+                    { value: 'US', label: '美国 US' },
+                    { value: 'GB', label: '英国 GB' },
+                  ]}
+                />
+              </span>
+              <span>
+                目标语言
+                <Select
+                  mode="multiple"
+                  value={preciseLanguages}
+                  onChange={setPreciseLanguages}
+                  style={{ minWidth: 220, marginLeft: 8 }}
+                  options={[
+                    { value: 'th', label: '泰语' },
+                    { value: 'en', label: '英语' },
+                    { value: 'ms', label: '马来语' },
+                    { value: 'zh', label: '中文' },
+                    { value: 'id', label: '印尼语' },
+                  ]}
+                />
+              </span>
+              <span>
+                低分门槛
+                <InputNumber
+                  min={40}
+                  max={100}
+                  value={preciseMinScore}
+                  onChange={(v) => setPreciseMinScore(Number(v) || 60)}
+                  style={{ width: 80, marginLeft: 8 }}
+                />
+              </span>
+            </Space>
+            <span className="tg-muted">
+              评分：名称 30 + 简介 25 + 地区 20 + 讨论意图 15 + 语言 10；≥ 门槛为「保留」，40 到门槛之间为「待确认」。
+              检索会消耗账号的搜索频率，账号越多越稳；默认最多 120 条扩展查询。
+            </span>
+          </div>
+        ) : (
+          <div className="tg-stack" style={{ gap: 'var(--tg-space-md)' }}>
+            <Alert
+              type={preciseRows.length ? 'success' : 'info'}
+              showIcon
+              message={
+                preciseRows.length
+                  ? `已产出 ${preciseRows.length} 条匹配（按分数排序）`
+                  : '检索任务已排队，正在搜索/校验；结果每 3 秒刷新，通常 30–90 秒。'
+              }
+              description={`任务 ${preciseTaskId}；保留与待确认的群已写入群档案。`}
+            />
+            <Table<GroupSearchMatchOut>
+              size="small"
+              rowKey="id"
+              loading={preciseLoading}
+              dataSource={preciseRows}
+              pagination={false}
+              scroll={{ y: 380 }}
+              columns={[
+                {
+                  title: '分',
+                  dataIndex: 'relevance_score',
+                  width: 58,
+                  sorter: (a, b) => a.relevance_score - b.relevance_score,
+                  render: (value: number) => (
+                    <Tag color={value >= 80 ? 'green' : value >= 60 ? 'gold' : 'default'}>{value}</Tag>
+                  ),
+                },
+                {
+                  title: '结论',
+                  dataIndex: 'status',
+                  width: 76,
+                  render: (value: string) =>
+                    value === 'accepted' ? <Tag color="green">保留</Tag> : value === 'needs_review' ? <Tag color="gold">待确认</Tag> : <Tag>排除</Tag>,
+                },
+                {
+                  title: '群组',
+                  dataIndex: 'title',
+                  ellipsis: true,
+                  render: (value: string, row) =>
+                    row.username ? (
+                      <a href={`https://t.me/${row.username}`} target="_blank" rel="noreferrer">
+                        {value}
+                      </a>
+                    ) : (
+                      value
+                    ),
+                },
+                { title: '成员', dataIndex: 'member_count', width: 84 },
+                {
+                  title: '语言/地区',
+                  width: 100,
+                  render: (_: unknown, row) => `${row.language || '—'} / ${row.country || '—'}`,
+                },
+                {
+                  title: '判定原因',
+                  dataIndex: 'reasons',
+                  ellipsis: true,
+                  render: (value: string[]) => value.join('；'),
+                },
+              ]}
+            />
+          </div>
+        )}
       </Modal>
 
       <KeywordWatchPanel />

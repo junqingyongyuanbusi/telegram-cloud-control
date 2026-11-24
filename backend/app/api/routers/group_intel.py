@@ -48,6 +48,8 @@ from app.models import (
     GroupEvent,
     GroupMember,
     GroupProfile,
+    GroupSearchKeyword,
+    GroupSearchMatch,
     Task,
     TaskStatus,
     TaskType,
@@ -74,7 +76,13 @@ from app.schemas import (
     ReplyRuleUpdate,
     SearchGroupsRequest,
 )
-from app.schemas.group_intel import DiscoveryLeadOut, DiscoveryQueryStatOut
+from app.schemas.group_intel import (
+    DiscoveryLeadOut,
+    DiscoveryQueryStatOut,
+    GroupSearchKeywordOut,
+    GroupSearchMatchOut,
+    PreciseSearchRequest,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -150,6 +158,91 @@ async def search_public_groups(
         },
         priority=65,
     )
+
+
+@router.post("/search/precise", response_model=BulkResultResponse, summary="精准检索讨论组（多语言 + 类型/权限校验 + 评分）")
+async def precise_search_groups(
+    payload: PreciseSearchRequest,
+    session: AsyncSession = Depends(get_session),
+    user: User = Depends(get_current_user),
+) -> BulkResultResponse:
+    """按目标地区/语言精准检索公开讨论组。
+
+    与 `/search-groups` 的区别：多源召回（contacts.search + messages.searchGlobal +
+    linked_chat）、严格排除广播频道/只读群，并按名称/简介/地区/讨论意图/语言五项打分。
+    结果写入 `group_search_matches`，可用 `/search/tasks/{task_id}/matches` 查看解释。
+    """
+
+    return await _submit_campaign(
+        session=session,
+        user=user,
+        action="search_groups",
+        task_type=TaskType.search_groups,
+        payload_scope=payload,
+        params={
+            "mode": "precise",
+            "keywords": payload.keywords,
+            "country": payload.country,
+            "languages": payload.languages,
+            "limit": payload.per_keyword,
+            "min_members": payload.min_members,
+            "max_queries": payload.max_queries,
+            "group_only": payload.group_only,
+            "public_only": payload.public_only,
+            "include_linked_groups": payload.include_linked_groups,
+            "max_linked_chats": payload.max_linked_chats,
+            "exclude_readonly": payload.exclude_readonly,
+            "search_messages": payload.search_messages,
+            "message_search_queries": payload.message_search_queries,
+            "full_check_limit": payload.full_check_limit,
+            "min_relevance_score": payload.min_relevance_score,
+        },
+        priority=65,
+    )
+
+
+@router.get(
+    "/search/tasks/{task_id}/matches",
+    response_model=List[GroupSearchMatchOut],
+    summary="精准检索的匹配结果（含分数与原因）",
+)
+async def list_precise_matches(
+    task_id: uuid.UUID,
+    status_filter: Optional[str] = Query(default=None, alias="status", description="accepted/needs_review/rejected"),
+    limit: int = Query(default=200, ge=1, le=1000),
+    session: AsyncSession = Depends(get_session),
+    user: User = Depends(get_current_user),
+) -> List[GroupSearchMatchOut]:
+    conditions = [GroupSearchMatch.task_id == task_id]
+    if status_filter:
+        conditions.append(GroupSearchMatch.status == status_filter)
+    rows = await session.scalars(
+        select(GroupSearchMatch)
+        .where(*conditions)
+        .order_by(GroupSearchMatch.relevance_score.desc(), GroupSearchMatch.id)
+        .limit(limit)
+    )
+    return [GroupSearchMatchOut.model_validate(row) for row in rows]
+
+
+@router.get(
+    "/search/tasks/{task_id}/keywords",
+    response_model=List[GroupSearchKeywordOut],
+    summary="精准检索实际跑过的查询",
+)
+async def list_precise_keywords(
+    task_id: uuid.UUID,
+    limit: int = Query(default=300, ge=1, le=1000),
+    session: AsyncSession = Depends(get_session),
+    user: User = Depends(get_current_user),
+) -> List[GroupSearchKeywordOut]:
+    rows = await session.scalars(
+        select(GroupSearchKeyword)
+        .where(GroupSearchKeyword.task_id == task_id)
+        .order_by(GroupSearchKeyword.created_at, GroupSearchKeyword.id)
+        .limit(limit)
+    )
+    return [GroupSearchKeywordOut.model_validate(row) for row in rows]
 
 
 @router.get("/discovery/queries", response_model=List[DiscoveryQueryStatOut], summary="查询绩效（哪些词真的找得到群）")
@@ -1490,7 +1583,7 @@ async def export_zip(
             "events": len(events) if include_events else 0,
             "filters": {"profile_ids": profile_ids, "batch_id": batch_id, "account_id": str(account_id) if account_id else None},
             "files": ["groups.csv", "members/*.csv"] + (["events.csv"] if include_events else []),
-            "note": "由 Telegram 云控「群情报」导出；CSV 为 UTF-8 BOM，Excel 可直接打开",
+            "note": "由 wikifxtg云控「群情报」导出；CSV 为 UTF-8 BOM，Excel 可直接打开",
         }
         bundle.writestr("manifest.json", json.dumps(manifest, ensure_ascii=False, indent=2))
 

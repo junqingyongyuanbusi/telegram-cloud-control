@@ -37,6 +37,8 @@ from app.models.group_intel import (
     GroupEvent,
     GroupMember,
     GroupProfile,
+    GroupSearchKeyword,
+    GroupSearchMatch,
     KeywordWatch,
     ReplyRule,
 )
@@ -98,6 +100,8 @@ __all__ = [
     "GroupEvent",
     "DiscoveryQueryStat",
     "DiscoveryLead",
+    "GroupSearchKeyword",
+    "GroupSearchMatch",
     "COLLECT_SOURCES",
     "COLLECT_SOURCE_LABELS",
     "GROUP_EVENT_TYPES",
