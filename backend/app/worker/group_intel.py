@@ -50,7 +50,7 @@ from app.services.group_intel import (
     upsert_member,
     upsert_profile,
 )
-from app.services.group_search import SearchQuery, expand_queries
+from app.services.group_search import SearchQuery, build_short_queries, expand_queries
 from app.services.local_group_search import search_local_profiles
 from app.worker.entities import resolve_chat_entity, resolve_entity
 from app.worker.campaign_tasks import _invite_hash_of, _username_from_target
@@ -117,7 +117,9 @@ async def _record_query_stat(
         else:
             stat.zero_streak += 1
     stat.yield_rate = (stat.found_total / stat.runs) if stat.runs else 0.0
-    if stat.template != "base" and stat.runs >= 5 and stat.zero_streak >= 3:
+    # 短核心词是兜底召回，不能因为「本轮没有新增候选」被自动停用；
+    # 否则热门词在候选已存在时会连续 0 产出，反而被系统关掉。
+    if stat.template not in ("base", "short_core") and stat.runs >= 5 and stat.zero_streak >= 3:
         stat.enabled = False
     await session.flush()
 
@@ -1186,6 +1188,13 @@ class GroupIntelMixin:
         message_queries = max(0, min(int(payload.get("message_search_queries") or 3), 20))
         full_check_limit = max(0, min(int(payload.get("full_check_limit") or 40), 100))
         min_score = max(0, min(int(payload.get("min_relevance_score") or 60), 100))
+        expand_short = bool(payload.get("expand_short_queries", True))
+        raw_short_limit = payload.get("short_query_limit")
+        short_limit = 0 if raw_short_limit == 0 else max(0, min(int(raw_short_limit or 60), 80))
+        raw_candidate_links = payload.get("candidate_links") or []
+        if isinstance(raw_candidate_links, str):
+            raw_candidate_links = [raw_candidate_links]
+        candidate_links = [str(item).strip() for item in raw_candidate_links if str(item).strip()][:200]
 
         disabled_queries = list(
             await session.scalars(select(DiscoveryQueryStat.query).where(DiscoveryQueryStat.enabled.is_(False)))
@@ -1197,15 +1206,40 @@ class GroupIntelMixin:
             max_queries=max_queries,
             exclude=disabled_queries,
         )
-        if not queries:
+        if not queries and not candidate_links:
+            raise TaskFailure("精准检索没有生成可用查询", retryable=False)
+
+        # 短核心词作为「第二段兜底」：先跑用户长尾词，只有候选不足时才补，
+        # 避免每次任务都无条件多打几十条搜索。短词仍参与评分与本地库检索。
+        short_items: list[SearchQuery] = []
+        if expand_short and short_limit and queries:
+            seen_query_keys = {item.query.casefold() for item in queries}
+            short_items = [
+                item
+                for item in build_short_queries(
+                    keywords,
+                    regions=[country] if country else [],
+                    limit=short_limit,
+                )
+                if item.query.casefold() not in seen_query_keys
+            ]
+        all_queries = list(queries)
+        short_run = 0
+        if not all_queries and not candidate_links:
             raise TaskFailure("精准检索没有生成可用查询", retryable=False)
 
         client = self._client(account.id)
         rng = self._campaign_rng(task, payload)
         metrics = {
-            "queries": len(queries),
+            "queries": len(all_queries),
+            "short_queries": 0,
+            "short_raw_chats": 0,
             "raw_chats": 0,
             "candidates": 0,
+            "candidate_links": len(candidate_links),
+            "candidate_found": 0,
+            "candidate_errors": 0,
+            "invite_leads": 0,
             "message_raw_chats": 0,
             "message_errors": 0,
             "query_errors": 0,
@@ -1270,8 +1304,8 @@ class GroupIntelMixin:
                 )
             )
 
-        # 1) contacts.search：全局实体搜索，原始关键词和地区扩展都跑。
-        for index, item in enumerate(queries):
+        # 1) contacts.search：短核心词 + 原始关键词 + 地区扩展都跑。
+        for index, item in enumerate(all_queries):
             try:
                 res = await client(functions.contacts.SearchRequest(q=item.query, limit=per_query))
             except BaseException as exc:  # noqa: BLE001 - 单条失败不影响整批
@@ -1286,6 +1320,8 @@ class GroupIntelMixin:
 
             chats = list(getattr(res, "chats", []) or [])
             metrics["raw_chats"] += len(chats)
+            if item.template == "short_core":
+                metrics["short_raw_chats"] += len(chats)
             found = 0
             for chat in chats:
                 if add_candidate(chat, source="contacts", query=item.query, keyword=item.keyword):
@@ -1300,18 +1336,160 @@ class GroupIntelMixin:
                 session,
                 task,
                 stage="searching",
-                detail=f"联系人搜索「{item.query}」返回 {len(chats)} 个实体（候选 {len(candidates)}）",
+                detail=(
+                    f"{'短词' if item.template == 'short_core' else '联系人'}"
+                    f"搜索「{item.query}」返回 {len(chats)} 个实体（候选 {len(candidates)}）"
+                ),
                 scanned=index + 1,
                 found=len(candidates),
-                total=len(queries),
+                total=len(all_queries),
             )
-            if index < len(queries) - 1:
+            if index < len(all_queries) - 1:
                 await sleep_human(2.0, 5.0, rng)
+
+        # 1b) 外部候选链接：网页/目录/人工找到的 t.me 用户名或邀请链接。
+        # 只做只读核验，不入群、不发消息；私群只有邀请链接时落 DiscoveryLead。
+        if candidate_links:
+            links = extract_links(candidate_links, limit=200)
+            for index, link in enumerate(links):
+                raw = {"discovered_from": "web_candidate", "link": link.url}
+                link_found = 0
+                try:
+                    if link.kind == "username":
+                        resolved = await client(
+                            functions.contacts.ResolveUsernameRequest(username=link.value)
+                        )
+                        chats = list(getattr(resolved, "chats", []) or [])
+                        chat = next(
+                            (
+                                item
+                                for item in chats
+                                if str(getattr(item, "username", "") or "").casefold()
+                                == link.value.casefold()
+                            ),
+                            chats[0] if chats else None,
+                        )
+                        if chat is not None and add_candidate(
+                            chat,
+                            source="web_candidate",
+                            query=link.url,
+                            keyword=keywords[0],
+                        ):
+                            metrics["candidate_found"] += 1
+                            link_found = 1
+                    else:
+                        invite = await client(
+                            functions.messages.CheckChatInviteRequest(hash=link.value)
+                        )
+                        if isinstance(invite, (tl_types.ChatInviteAlready, tl_types.ChatInvitePeek)):
+                            chat = getattr(invite, "chat", None)
+                            if chat is not None and add_candidate(
+                                chat,
+                                source="web_candidate",
+                                query=link.url,
+                                keyword=keywords[0],
+                            ):
+                                metrics["candidate_found"] += 1
+                                link_found = 1
+                        elif isinstance(invite, tl_types.ChatInvite):
+                            created = await self._store_invite_lead(
+                                session,
+                                account,
+                                link.value,
+                                invite,
+                                source="web_candidate",
+                                query="",
+                                seed_chat_id=None,
+                                raw=raw,
+                            )
+                            if created:
+                                metrics["invite_leads"] += 1
+                    await record_keyword(
+                        link.url,
+                        "candidate",
+                        status="ok",
+                        raw=1,
+                        found=link_found,
+                    )
+                except BaseException as exc:  # noqa: BLE001 - 单条候选失败不影响整批
+                    metrics["candidate_errors"] += 1
+                    await record_keyword(
+                        link.url,
+                        "candidate",
+                        status="error",
+                        raw=0,
+                        found=0,
+                        error=f"{type(exc).__name__}: {str(exc)[:160]}",
+                    )
+                    self.log.debug("外部候选链接验证失败 %s: %s", link.url, exc)
+                if index < len(links) - 1:
+                    await sleep_human(1.0, 2.5, rng)
+
+        # 1c) 长尾召回不足时补短核心词。阈值用 per_query：长尾词通常每个只回 ~10 条，
+        # 候选数低于单查询上限就说明召回不够，值得再打一轮高命中的短词。
+        if expand_short and short_items and len(candidates) < per_query:
+            short_run = len(short_items)
+            for index, item in enumerate(short_items):
+                try:
+                    res = await client(
+                        functions.contacts.SearchRequest(q=item.query, limit=per_query)
+                    )
+                except BaseException as exc:  # noqa: BLE001 - 单条失败不影响整批
+                    metrics["query_errors"] += 1
+                    err = f"{type(exc).__name__}: {str(exc)[:160]}"
+                    await record_keyword(
+                        item.query, "short_core", status="error", raw=0, found=0, error=err
+                    )
+                    try:
+                        await _record_query_stat(session, item, raw_count=0, found_count=0, error=err)
+                    except BaseException:  # noqa: BLE001
+                        pass
+                    continue
+
+                chats = list(getattr(res, "chats", []) or [])
+                metrics["raw_chats"] += len(chats)
+                metrics["short_raw_chats"] += len(chats)
+                found = 0
+                for chat in chats:
+                    if add_candidate(
+                        chat,
+                        source="short_core",
+                        query=item.query,
+                        keyword=item.keyword,
+                    ):
+                        found += 1
+                await record_keyword(
+                    item.query, "short_core", status="ok", raw=len(chats), found=found
+                )
+                try:
+                    await _record_query_stat(session, item, raw_count=len(chats), found_count=found)
+                except BaseException:  # noqa: BLE001
+                    self.log.debug("查询绩效记录失败 query=%s", item.query)
+
+                await self._report_progress(
+                    session,
+                    task,
+                    stage="searching",
+                    detail=f"短词补充「{item.query}」返回 {len(chats)} 个实体（候选 {len(candidates)}）",
+                    scanned=index + 1,
+                    found=len(candidates),
+                    total=short_run,
+                )
+                if index < short_run - 1:
+                    await sleep_human(2.0, 5.0, rng)
+
+        metrics["queries"] += short_run
+        metrics["short_queries"] = short_run
+        total_queries = len(all_queries) + short_run
+        scoring_keywords = [
+            *keywords,
+            *[item.query for item in short_items[:short_run]],
+        ]
 
         # 2) messages.searchGlobal：只搜群消息，补 contacts.search 召回不到的长尾。
         if search_messages and message_queries:
             fallback_done: set[str] = set()
-            for index, item in enumerate(queries[:message_queries]):
+            for index, item in enumerate(all_queries[:message_queries]):
                 # 组合查询命中 0 时回退到基础词/首词：SearchGlobal 默认所有词都要命中，
                 # 「Forex Thailand」这类组合常因地区词而整条落空。
                 attempts = [item.query]
@@ -1385,7 +1563,8 @@ class GroupIntelMixin:
         # 2b) 本地历史群档案：tsvector + pg_trgm 检索，标题/用户名/简介都能命中。
         local_profiles: list[GroupProfile] = []
         local_seen: set[int] = set()
-        for keyword in keywords:
+        local_keywords = [*keywords, *([item.query for item in short_items[:10]] if short_run else [])]
+        for keyword in local_keywords:
             try:
                 matches = await search_local_profiles(
                     session,
@@ -1498,7 +1677,7 @@ class GroupIntelMixin:
                 title=title,
                 about=about,
                 username=username,
-                keywords=keywords,
+                keywords=scoring_keywords,
                 country=country,
                 languages=languages,
             )
@@ -1563,7 +1742,7 @@ class GroupIntelMixin:
                     member_count=int(members) if members is not None else None,
                     source=str(entry["sources"][0] if entry["sources"] else "contacts"),
                     query=str(entry["query"] or "")[:255],
-                    keywords=keywords,
+                    keywords=scoring_keywords,
                     relevance_score=score.score,
                     breakdown=score.breakdown,
                     matched_keywords=score.matched_keywords,
@@ -1602,9 +1781,9 @@ class GroupIntelMixin:
                 f"精准检索完成：{len(candidates)} 个候选，{metrics['accepted']} 个保留，"
                 f"{metrics['needs_review']} 个待确认，{metrics['rejected']} 个排除"
             ),
-            scanned=len(queries),
+            scanned=total_queries,
             found=metrics["accepted"],
-            total=len(queries),
+            total=total_queries,
         )
         average = round(metrics["score_sum"] / max(metrics["accepted"] + metrics["needs_review"] + metrics["rejected"], 1), 1)
         return {
@@ -1612,7 +1791,9 @@ class GroupIntelMixin:
             "keywords": keywords,
             "country": country,
             "languages": languages,
-            "queries_run": len(queries),
+            "queries_run": total_queries,
+            "short_queries_run": short_run,
+            "candidate_links": len(candidate_links),
             "min_relevance_score": min_score,
             "candidates": len(candidates),
             "accepted": metrics["accepted"],
@@ -1621,7 +1802,7 @@ class GroupIntelMixin:
             "average_score": average,
             "metrics": metrics,
             "summary": (
-                f"精准检索：{len(queries)} 条查询，{len(candidates)} 个候选，"
+                f"精准检索：{total_queries} 条查询（短词 {short_run} 条，外部候选 {len(candidate_links)} 个），{len(candidates)} 个候选，"
                 f"保留 {metrics['accepted']} 个、待确认 {metrics['needs_review']} 个、排除 {metrics['rejected']} 个"
             ),
         }

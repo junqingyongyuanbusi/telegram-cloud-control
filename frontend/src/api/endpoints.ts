@@ -402,6 +402,9 @@ export const groupIntelApi = {
     message_search_queries?: number;
     full_check_limit?: number;
     min_relevance_score?: number;
+    expand_short_queries?: boolean;
+    short_query_limit?: number;
+    candidate_links?: string[];
   }) => api.post<BulkResultOut>('/api/group-intel/search/precise', payload),
   preciseMatches: (taskId: string, status?: string) =>
     api.get<GroupSearchMatchOut[]>(`/api/group-intel/search/tasks/${taskId}/matches`, status ? { status } : undefined),

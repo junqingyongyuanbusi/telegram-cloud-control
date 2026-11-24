@@ -295,6 +295,16 @@ class PreciseSearchRequest(BulkScopeRequest):
     message_search_queries: int = Field(default=3, ge=0, le=20, description="用前几条查询做消息搜索")
     full_check_limit: int = Field(default=40, ge=0, le=100, description="最多对多少个讨论组拉 GetFullChannel")
     min_relevance_score: int = Field(default=60, ge=0, le=100, description="保留门槛；低于它但 ≥40 的进待确认")
+    expand_short_queries: bool = Field(
+        default=True,
+        description="是否追加短核心词（forex/เทรด/ทองคำ 等）做兜底召回；长尾词全不命中时特别有用",
+    )
+    short_query_limit: int = Field(default=60, ge=0, le=80, description="最多追加多少条短核心词")
+    candidate_links: List[str] = Field(
+        default_factory=list,
+        max_length=200,
+        description="可选：外部找到的 t.me 用户名/邀请链接，逐条只读核验后并入结果",
+    )
 
 
 class GroupSearchKeywordOut(ORMModel):

@@ -5,7 +5,7 @@
 
 from __future__ import annotations
 
-from app.services.group_search import MAX_QUERY_LEN, expand_queries
+from app.services.group_search import MAX_QUERY_LEN, build_short_queries, expand_queries
 
 
 def main() -> None:
@@ -65,6 +65,22 @@ def main() -> None:
     # 未知地区按用户输入展开，不报错。
     custom = [item.query for item in expand_queries(["saham"], regions=["Johor Bahru"], max_queries=20)]
     assert "saham johor bahru" in custom, custom
+
+    # 短核心词：即使只给一个长尾词，也要补出 forex/เทรด/ทอง 等基础词。
+    short = build_short_queries(["Forex Thailand signal group"], regions=["TH"], limit=40)
+    short_queries = [item.query for item in short]
+    assert "forex" in short_queries, short_queries
+    assert "เทรด" in short_queries, short_queries
+    assert "ทองคำ" in short_queries, short_queries
+    assert "กลุ่มเทรด" in short_queries, short_queries
+    assert "XM Thailand" in short_queries, short_queries
+    assert "forex thai" in short_queries, short_queries
+    assert all(item.template == "short_core" for item in short), short
+    # 用户已输入的基础词不重复追加。
+    short_again = [item.query for item in build_short_queries(["forex", "gold"], regions=["TH"], limit=40)]
+    assert "forex" not in short_again and "gold" not in short_again, short_again
+    # 上限生效。
+    assert len(build_short_queries(["forex"], regions=["TH"], limit=5)) == 5
 
     print("group_search_check: ok")
 

@@ -93,6 +93,8 @@ export default function GroupIntel() {
   const [preciseCountry, setPreciseCountry] = useState('TH');
   const [preciseLanguages, setPreciseLanguages] = useState<string[]>(['th', 'en']);
   const [preciseMinScore, setPreciseMinScore] = useState(60);
+  const [preciseShortQueries, setPreciseShortQueries] = useState(true);
+  const [preciseCandidateLinks, setPreciseCandidateLinks] = useState('');
   const [preciseTaskId, setPreciseTaskId] = useState<string | null>(null);
   const [preciseRows, setPreciseRows] = useState<GroupSearchMatchOut[]>([]);
   const [preciseLoading, setPreciseLoading] = useState(false);
@@ -981,6 +983,11 @@ export default function GroupIntel() {
             toast.warning('至少填一个关键词');
             return;
           }
+          const candidateLinks = preciseCandidateLinks
+            .split(/[\n,，]/)
+            .map((item) => item.trim())
+            .filter(Boolean)
+            .slice(0, 200);
           setPreciseBusy(true);
           try {
             const res = await groupIntelApi.preciseSearch({
@@ -1000,6 +1007,9 @@ export default function GroupIntel() {
               message_search_queries: 3,
               full_check_limit: 40,
               min_relevance_score: preciseMinScore,
+              expand_short_queries: preciseShortQueries,
+              short_query_limit: 60,
+              candidate_links: candidateLinks,
             });
             setPreciseRows([]);
             setPreciseTaskId(res.task_ids[0] || null);
@@ -1074,9 +1084,25 @@ export default function GroupIntel() {
                 />
               </span>
             </Space>
+            <Checkbox
+              checked={preciseShortQueries}
+              onChange={(e) => setPreciseShortQueries(e.target.checked)}
+            >
+              追加短核心词兜底（forex / เทรด / ทองคำ / กลุ่มเทรด 等，最多 60 条）
+            </Checkbox>
+            <div className="tg-stack" style={{ gap: 2 }}>
+              <span>外部候选链接（可选，每行一个 t.me/xxx、@xxx 或邀请链接）</span>
+              <Input.TextArea
+                rows={3}
+                style={{ maxWidth: 540 }}
+                placeholder={'https://t.me/CitytraderEa\nhttps://t.me/+HASH'}
+                value={preciseCandidateLinks}
+                onChange={(e) => setPreciseCandidateLinks(e.target.value)}
+              />
+            </div>
             <span className="tg-muted">
               评分：名称 30 + 简介 25 + 地区 20 + 讨论意图 15 + 语言 10；≥ 门槛为「保留」，40 到门槛之间为「待确认」。
-              检索会消耗账号的搜索频率，账号越多越稳；默认最多 120 条扩展查询。
+              短词会先跑，长尾词随后；外部候选只做只读核验，不进群、不发消息。检索会消耗账号的搜索频率，账号越多越稳。
             </span>
           </div>
         ) : (

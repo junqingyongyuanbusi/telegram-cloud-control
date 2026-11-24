@@ -197,6 +197,9 @@ async def precise_search_groups(
             "message_search_queries": payload.message_search_queries,
             "full_check_limit": payload.full_check_limit,
             "min_relevance_score": payload.min_relevance_score,
+            "expand_short_queries": payload.expand_short_queries,
+            "short_query_limit": payload.short_query_limit,
+            "candidate_links": payload.candidate_links,
         },
         priority=65,
     )

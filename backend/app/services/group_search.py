@@ -104,6 +104,157 @@ REGION_NAMES_ZH: dict[str, str] = {
 DEFAULT_LANGUAGES: tuple[str, ...] = ("en",)
 MAX_QUERY_LEN = 64
 
+# 短核心词：不依赖用户输入的长尾词，直接打 Telegram 公开搜索里命中率最高的一批词。
+# 长尾词（如 "Forex Thailand signal group"）经常因为所有词都要命中而整条落空；
+# 短词召回更宽，再交给类型/权限/评分层过滤。顺序按经验命中率排列。
+SHORT_QUERIES: dict[str, tuple[str, ...]] = {
+    "global": (
+        "forex",
+        "forex trading",
+        "forex signals",
+        "forex community",
+        "trading",
+        "trading community",
+        "trading signals",
+        "trader",
+        "gold",
+        "gold trading",
+        "xauusd",
+        "gold signals",
+        "xauusd signals",
+        "signal",
+    ),
+    "TH": (
+        "เทรด",
+        "ทองคำ",
+        "ทอง",
+        "ฟอเร็กซ์",
+        "กลุ่มเทรด",
+        "แชทเทรด",
+        "คุยเทรด",
+        "ห้องเทรด",
+        "ห้องแชทเทรด",
+        "นักเทรด",
+        "เทรดเดอร์",
+        "สัญญาณ",
+        "เทรดทอง",
+        "เทรดทองคำ",
+        "วิเคราะห์ทอง",
+        "วิเคราะห์ทองคำ",
+        "สอนเทรด",
+        "ตลาดทุน",
+        "ตลาดทองคำ",
+        "ลงทุน",
+        "กลุ่มลงทุน",
+        "กรุ๊ปเทรด",
+        "กรุ๊ป Forex",
+        "กลุ่มฟอเร็กซ์",
+        "คอมมูนิตี้เทรด",
+        "นักลงทุนไทย",
+        "หุ้นไทย",
+        "ลงทุนหุ้น",
+        "TFEX",
+        "YLG",
+        "Ausiris",
+        "MTS Gold",
+        "Hua Seng Heng",
+        "XM Thailand",
+        "Exness ไทย",
+        "Mitrade Thailand",
+        "Gold Online Thailand",
+        "forex thai",
+        "forex ไทย",
+    ),
+    "MY": (
+        "forex malaysia",
+        "forex malaysia group",
+        "trading malaysia",
+        "gold malaysia",
+        "saham malaysia",
+        "pelaburan emas",
+        "trading emas",
+        "signal forex",
+        "kelas trading",
+        "modal saham",
+        "komuniti trader",
+        "kumpulan forex",
+        "马来西亚 外汇",
+        "马来西亚 股票",
+        "外汇 群",
+        "股票 群",
+    ),
+    "SG": ("forex singapore", "trading singapore", "gold singapore", "forex singapore group"),
+    "ID": ("forex indonesia", "trading indonesia", "gold indonesia", "komunitas forex", "grup forex"),
+}
+
+# 这些短词只用于扩大召回，不参与「自动停用」判断；也不替换用户原始关键词。
+SHORT_QUERY_TEMPLATE = "short_core"
+
+
+def build_short_queries(
+    keywords: Iterable[str],
+    *,
+    regions: Sequence[str] = (),
+    limit: int = 60,
+) -> list[SearchQuery]:
+    """生成短核心词查询，按地区追加本地词；去重并避开用户已输入的关键词。
+
+    与 `expand_queries` 分开，原因是短词是「兜底召回」：即使用户只给了一个很长的
+    组合词，也要保证基础主题词被搜到。返回的 `keyword` 优先匹配用户关键词，
+    便于后续按关键词统计产出。
+    """
+
+    cleaned: list[str] = []
+    seen: set[str] = set()
+    for item in keywords:
+        text = _clean(item)
+        key = _dedupe_key(text)
+        if text and key not in seen:
+            seen.add(key)
+            cleaned.append(text)
+
+    try:
+        cap = int(limit)
+    except (TypeError, ValueError):
+        cap = 30
+    cap = max(0, min(cap, 80))
+    if not cap:
+        return []
+
+    region_codes = {_clean(item).upper() for item in regions if _clean(item)}
+    region_terms: list[str] = []
+    for code in ("TH", "MY", "SG", "ID"):
+        if code in region_codes:
+            region_terms.extend(SHORT_QUERIES[code])
+    # 目标地区优先，但保留全球基础词；默认上限 60 足以覆盖 TH 全量 37 条 + global 13 条。
+    if region_terms:
+        ordered = [*region_terms, *SHORT_QUERIES["global"]]
+    else:
+        ordered = list(SHORT_QUERIES["global"])
+
+    result: list[SearchQuery] = []
+    seen_queries: set[str] = set()
+    for query in ordered:
+        text = _clean(query)
+        key = _dedupe_key(text)
+        if not text or key in seen or key in seen_queries or len(result) >= cap:
+            continue
+        seen_queries.add(key)
+        keyword = next(
+            (item for item in cleaned if _dedupe_key(item) in key or key in _dedupe_key(item)),
+            cleaned[0] if cleaned else text,
+        )
+        result.append(
+            SearchQuery(
+                query=text,
+                keyword=keyword,
+                template=SHORT_QUERY_TEMPLATE,
+                region=next((code for code in region_codes if code in ("TH", "MY", "SG", "ID")), None),
+                lang="th" if any("฀" <= char <= "๿" for char in text) else None,
+            )
+        )
+    return result
+
 
 @dataclass(frozen=True)
 class SearchQuery:
