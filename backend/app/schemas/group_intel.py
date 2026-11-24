@@ -251,3 +251,59 @@ class SearchGroupsRequest(BulkScopeRequest):
         le=200,
         description="本轮最多展开多少个频道/群的 linked_chat",
     )
+    expand_messages: bool = Field(
+        default=True,
+        description="是否从命中频道的最近消息里抓 t.me/@username 反查群（图扩散 depth=1）",
+    )
+    message_channels: int = Field(default=10, ge=0, le=50, description="最多读多少个频道的消息")
+    message_limit: int = Field(default=200, ge=20, le=500, description="每个频道读最近多少条消息")
+    expand_recommendations: bool = Field(
+        default=True,
+        description="是否调用 channels.GetChannelRecommendations 找相似频道",
+    )
+    recommendation_channels: int = Field(default=10, ge=0, le=50, description="最多对多少个种子频道取推荐")
+    enrich_tme: bool = Field(
+        default=True,
+        description="是否访问 t.me 公开页补标题/简介/成员数（只读 HTTP，不登录）",
+    )
+    tme_limit: int = Field(default=50, ge=0, le=200, description="每轮最多富化多少个公开实体")
+    max_links: int = Field(default=100, ge=0, le=300, description="每轮最多验证多少个消息里发现的链接")
+
+
+class DiscoveryQueryStatOut(ORMModel):
+    """一条查询的绩效：跑了多少次、产出多少、是否已被自动停用。"""
+
+    query: str
+    region: Optional[str] = None
+    lang: Optional[str] = None
+    template: str = ""
+    runs: int = 0
+    raw: int = 0
+    found_total: int = 0
+    last_found: int = 0
+    zero_streak: int = 0
+    yield_rate: float = 0.0
+    enabled: bool = True
+    last_error: str = ""
+    last_run_at: Optional[datetime] = None
+
+
+class DiscoveryLeadOut(ORMModel):
+    """只有邀请链接、还没有实体 id 的私群线索。"""
+
+    id: uuid.UUID
+    account_id: Optional[uuid.UUID] = None
+    invite_hash: str
+    invite_link: str = ""
+    tg_chat_id: Optional[int] = None
+    title: str = ""
+    about: str = ""
+    member_count: Optional[int] = None
+    kind: str = "group"
+    source: str = "message_link"
+    query: str = ""
+    seed_chat_id: Optional[int] = None
+    depth: int = 1
+    confidence: float = 0.5
+    status: str = "new"
+    created_at: Optional[datetime] = None

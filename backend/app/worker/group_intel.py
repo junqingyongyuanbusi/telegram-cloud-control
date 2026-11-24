@@ -14,12 +14,16 @@ import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Any, Awaitable, Callable, Optional
 
+import httpx
+from sqlalchemy import select
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from telethon import functions
 from telethon.tl import types as tl_types
 
 from app.config import settings
 from app.db import session_scope
-from app.models import Dialog, DialogChannel, Task, TgAccount
+from app.models import Dialog, DialogChannel, DiscoveryLead, DiscoveryQueryStat, GroupProfile, Task, TgAccount
+from app.services.group_discovery import extract_links, invite_url, parse_tme_page, tme_url
 from app.services.group_intel import (
     describe_chat_action,
     display_name_of,
@@ -29,7 +33,7 @@ from app.services.group_intel import (
     upsert_member,
     upsert_profile,
 )
-from app.services.group_search import expand_queries
+from app.services.group_search import SearchQuery, expand_queries
 from app.worker.entities import resolve_chat_entity, resolve_entity
 from app.worker.campaign_tasks import _invite_hash_of, _username_from_target
 from app.worker.humanize import sleep_human
@@ -40,6 +44,64 @@ logger = logging.getLogger(__name__)
 
 def _now() -> datetime:
     return datetime.now(tz=timezone.utc)
+
+
+async def _record_query_stat(
+    session: Any,
+    item: SearchQuery,
+    *,
+    raw_count: int,
+    found_count: int,
+    error: str = "",
+) -> None:
+    """记一条查询的产出，连续 0 产出且跑够次数的非基础查询自动停用。
+
+    用 `ON CONFLICT DO NOTHING` + `FOR UPDATE` 串行化同一 query 的并发更新：
+    多个账号同时搜同一个词时，不会因为唯一键冲突把整个任务打挂。
+    """
+
+    await session.execute(
+        pg_insert(DiscoveryQueryStat)
+        .values(
+            id=uuid.uuid4(),
+            query=item.query,
+            region=item.region,
+            lang=item.lang,
+            template=item.template,
+            runs=0,
+            raw=0,
+            found_total=0,
+            last_found=0,
+            zero_streak=0,
+            yield_rate=0.0,
+            enabled=True,
+            last_error="",
+        )
+        .on_conflict_do_nothing(index_elements=["query"])
+    )
+    stat = await session.scalar(
+        select(DiscoveryQueryStat).where(DiscoveryQueryStat.query == item.query).with_for_update()
+    )
+    if stat is None:
+        return
+    stat.runs += 1
+    stat.last_run_at = _now()
+    if error:
+        stat.last_error = error[:500]
+        # 抓取失败不等于「这个词没产出」，不计入 zero_streak。
+    else:
+        stat.last_error = ""
+        stat.raw += max(0, raw_count)
+        stat.found_total += max(0, found_count)
+        stat.last_found = max(0, found_count)
+        if found_count > 0:
+            stat.zero_streak = 0
+        else:
+            stat.zero_streak += 1
+    stat.yield_rate = (stat.found_total / stat.runs) if stat.runs else 0.0
+    if stat.template != "base" and stat.runs >= 5 and stat.zero_streak >= 3:
+        stat.enabled = False
+    await session.flush()
 
 
 def _is_group_chat(chat: Any) -> bool:
@@ -342,6 +404,355 @@ class GroupIntelMixin:
         )
         return {"total": len(raw_links), "ok": ok_count, "failed": len(raw_links) - ok_count, "results": results[:200]}
 
+    async def _store_discovered_chat(
+        self,
+        session: Any,
+        account: TgAccount,
+        chat: Any,
+        *,
+        source: str,
+        raw: dict,
+        full: Any = None,
+    ) -> Optional[int]:
+        """落档一个通过消息/推荐找到的公开群或频道；单条失败不影响整批。"""
+
+        chat_id = int(getattr(chat, "id", 0) or 0)
+        if not chat_id:
+            return None
+        try:
+            await upsert_profile(
+                session,
+                account_id=account.id,
+                tg_chat_id=chat_id,
+                source=source,
+                touch_collected_at=False,
+                raw=raw,
+                **profile_fields_from_entity(chat, full),
+            )
+            return chat_id
+        except BaseException:  # noqa: BLE001 - 单个群落档失败不影响整批
+            self.log.debug("发现链路落档失败 tg_chat_id=%s source=%s", chat_id, source)
+            return None
+
+    async def _store_invite_lead(
+        self,
+        session: Any,
+        account: TgAccount,
+        invite_hash: str,
+        invite: Any,
+        *,
+        source: str,
+        query: str,
+        seed_chat_id: Optional[int],
+        raw: dict,
+    ) -> bool:
+        """`CheckChatInvite` 只给标题/人数、不给实体 id 时，先落成私群线索。"""
+
+        existing = await session.scalar(
+            select(DiscoveryLead).where(
+                DiscoveryLead.account_id == account.id,
+                DiscoveryLead.invite_hash == invite_hash,
+            )
+        )
+        title = str(getattr(invite, "title", "") or "")
+        about = str(getattr(invite, "about", "") or "")
+        members = getattr(invite, "participants_count", None)
+        kind = "channel" if getattr(invite, "broadcast", False) else "group"
+        if existing is not None:
+            if title:
+                existing.title = title[:255]
+            if about:
+                existing.about = about[:4000]
+            if members is not None:
+                existing.member_count = int(members)
+            existing.raw = {**(existing.raw or {}), **raw}
+            await session.flush()
+            return False
+
+        confidence = 0.45
+        if title:
+            confidence += 0.05
+        if about:
+            confidence += 0.05
+        if members is not None:
+            confidence += 0.05
+        session.add(
+            DiscoveryLead(
+                account_id=account.id,
+                invite_hash=invite_hash,
+                invite_link=invite_url(invite_hash),
+                title=title[:255],
+                about=about[:4000],
+                member_count=int(members) if members is not None else None,
+                kind=kind,
+                source=source,
+                query=query,
+                seed_chat_id=seed_chat_id,
+                depth=1,
+                confidence=min(confidence, 0.65),
+                status="new",
+                raw=raw,
+            )
+        )
+        await session.flush()
+        return True
+
+    async def _verify_discovered_link(
+        self,
+        client: Any,
+        session: Any,
+        account: TgAccount,
+        link: Any,
+        *,
+        source: str,
+        query: str,
+        seed_chat_id: Optional[int],
+        metrics: dict,
+    ) -> Optional[dict]:
+        """验证一个用户名/邀请链接；公开群落档案，私群落线索。"""
+
+        raw = {
+            "discovered_from": source,
+            "seed_chat_id": seed_chat_id,
+            "link": link.url,
+            "query": query,
+            "depth": 1,
+        }
+        if link.kind == "username":
+            res = await client(functions.contacts.ResolveUsernameRequest(username=link.value))
+            chats = list(getattr(res, "chats", []) or [])
+            chat = next(
+                (item for item in chats if str(getattr(item, "username", "") or "").casefold() == link.value),
+                chats[0] if chats else None,
+            )
+            if chat is None:
+                return None
+            chat_id = await self._store_discovered_chat(session, account, chat, source=source, raw=raw)
+            if chat_id is None:
+                return None
+            kind = "channel" if getattr(chat, "broadcast", False) else "group"
+            return {
+                "title": getattr(chat, "title", "") or "",
+                "username": getattr(chat, "username", None),
+                "tg_chat_id": chat_id,
+                "kind": kind,
+                "members": getattr(chat, "participants_count", None),
+            }
+
+        res = await client(functions.messages.CheckChatInviteRequest(hash=link.value))
+        if isinstance(res, (tl_types.ChatInviteAlready, tl_types.ChatInvitePeek)):
+            chat = getattr(res, "chat", None)
+            if chat is None:
+                return None
+            chat_id = await self._store_discovered_chat(session, account, chat, source=source, raw=raw)
+            if chat_id is None:
+                return None
+            kind = "channel" if getattr(chat, "broadcast", False) else "group"
+            return {
+                "title": getattr(chat, "title", "") or "",
+                "username": getattr(chat, "username", None),
+                "tg_chat_id": chat_id,
+                "kind": kind,
+                "members": getattr(chat, "participants_count", None),
+            }
+        if isinstance(res, tl_types.ChatInvite):
+            created = await self._store_invite_lead(
+                session,
+                account,
+                link.value,
+                res,
+                source=source,
+                query=query,
+                seed_chat_id=seed_chat_id,
+                raw=raw,
+            )
+            if created:
+                metrics["invite_leads"] += 1
+        return None
+
+    async def _expand_from_messages(
+        self,
+        client: Any,
+        session: Any,
+        account: TgAccount,
+        seeds: list[Any],
+        *,
+        task: Task,
+        query: str,
+        channel_limit: int,
+        message_limit: int,
+        max_links: int,
+        rng: Any,
+        metrics: dict,
+    ) -> list[dict]:
+        """读种子频道最近消息，抓 t.me/@username 反查，图扩散深度固定为 1。"""
+
+        found: list[dict] = []
+        seen_links: set[tuple[str, str]] = set()
+        channels = seeds[: max(0, channel_limit)]
+        for index, seed in enumerate(channels):
+            seed_id = int(getattr(seed, "id", 0) or 0)
+            try:
+                async for message in client.iter_messages(seed, limit=message_limit):
+                    if len(seen_links) >= max_links:
+                        break
+                    texts = [getattr(message, "message", "") or ""]
+                    for link in extract_links(texts, limit=max_links - len(seen_links)):
+                        key = (link.kind, link.value)
+                        if key in seen_links:
+                            continue
+                        seen_links.add(key)
+                        try:
+                            hit = await self._verify_discovered_link(
+                                client,
+                                session,
+                                account,
+                                link,
+                                source="message_link",
+                                query=query,
+                                seed_chat_id=seed_id,
+                                metrics=metrics,
+                            )
+                        except BaseException as exc:  # noqa: BLE001 - 单条链接失败继续下一条
+                            metrics["message_errors"] += 1
+                            self.log.debug("消息链接验证失败 %s: %s", link.url, exc)
+                            hit = None
+                        if hit is not None:
+                            found.append(hit)
+                            metrics["message_profiles"] += 1
+                        await sleep_human(1.0, 2.2, rng)
+                        if len(seen_links) >= max_links:
+                            break
+            except BaseException as exc:  # noqa: BLE001 - 单个频道读不到就跳过
+                metrics["message_errors"] += 1
+                self.log.debug("读频道消息失败 seed=%s: %s", seed_id, exc)
+            await self._report_progress(
+                session,
+                task,
+                stage="expanding_messages",
+                detail=(
+                    f"已读 {index + 1}/{len(channels)} 个频道，发现 {len(seen_links)} 个链接，"
+                    f"公开群 {len(found)} 个"
+                ),
+                scanned=index + 1,
+                found=len(found),
+                total=len(channels),
+            )
+            if index < len(channels) - 1:
+                await sleep_human(1.5, 3.0, rng)
+        return found
+
+    async def _expand_recommendations(
+        self,
+        client: Any,
+        session: Any,
+        account: TgAccount,
+        seeds: list[Any],
+        *,
+        task: Task,
+        query: str,
+        channel_limit: int,
+        rng: Any,
+        metrics: dict,
+    ) -> list[dict]:
+        """用 Telegram 的相似频道推荐扩展种子，仍然只读。"""
+
+        found: list[dict] = []
+        channels = seeds[: max(0, channel_limit)]
+        for index, seed in enumerate(channels):
+            seed_id = int(getattr(seed, "id", 0) or 0)
+            try:
+                res = await client(functions.channels.GetChannelRecommendationsRequest(channel=seed))
+                for chat in list(getattr(res, "chats", []) or []):
+                    chat_id = await self._store_discovered_chat(
+                        session,
+                        account,
+                        chat,
+                        source="recommendation",
+                        raw={
+                            "discovered_from": "recommendation",
+                            "seed_chat_id": seed_id,
+                            "query": query,
+                            "depth": 1,
+                        },
+                    )
+                    if chat_id is None:
+                        continue
+                    kind = "channel" if getattr(chat, "broadcast", False) else "group"
+                    found.append(
+                        {
+                            "title": getattr(chat, "title", "") or "",
+                            "username": getattr(chat, "username", None),
+                            "tg_chat_id": chat_id,
+                            "kind": kind,
+                            "members": getattr(chat, "participants_count", None),
+                        }
+                    )
+                    metrics["recommendation_profiles"] += 1
+            except BaseException as exc:  # noqa: BLE001 - 单个种子失败继续下一个
+                metrics["recommendation_errors"] += 1
+                self.log.debug("频道推荐失败 seed=%s: %s", seed_id, exc)
+            await self._report_progress(
+                session,
+                task,
+                stage="expanding_recommendations",
+                detail=f"已取 {index + 1}/{len(channels)} 个频道的相似推荐，新增 {len(found)} 个公开实体",
+                scanned=index + 1,
+                found=len(found),
+                total=len(channels),
+            )
+            if index < len(channels) - 1:
+                await sleep_human(2.0, 4.0, rng)
+        return found
+
+    async def _enrich_from_tme(self, session: Any, account: TgAccount, *, limit: int, metrics: dict) -> int:
+        """访问 t.me 公开页补简介/成员数；只 GET，不带登录态。"""
+
+        if limit <= 0:
+            return 0
+        rows = list(
+            await session.scalars(
+                select(GroupProfile)
+                .where(GroupProfile.account_id == account.id, GroupProfile.username.is_not(None))
+                .order_by(GroupProfile.updated_at.desc())
+                .limit(limit)
+            )
+        )
+        enriched = 0
+        headers = {"User-Agent": "tgcc-discovery/1.0 (public preview reader)"}
+        async with httpx.AsyncClient(timeout=8.0, follow_redirects=True, headers=headers) as http:
+            for profile in rows:
+                username = str(profile.username or "").strip()
+                if not username:
+                    continue
+                try:
+                    response = await http.get(tme_url(username))
+                    if response.status_code != 200:
+                        metrics["tme_errors"] += 1
+                        continue
+                    parsed = parse_tme_page(response.text, username=username)
+                    if not parsed.get("title") and not parsed.get("about") and parsed.get("member_count") is None:
+                        metrics["tme_errors"] += 1
+                        continue
+                    await upsert_profile(
+                        session,
+                        account_id=account.id,
+                        tg_chat_id=int(profile.tg_chat_id),
+                        title=str(parsed.get("title") or ""),
+                        about=str(parsed.get("about") or ""),
+                        member_count=parsed.get("member_count"),
+                        is_public=True,
+                        source="tme_preview",
+                        touch_collected_at=False,
+                        raw={"tme_preview": parsed, "tme_url": tme_url(username)},
+                    )
+                    enriched += 1
+                    metrics["tme_enriched"] += 1
+                except BaseException as exc:  # noqa: BLE001 - 单个页面失败不影响整批
+                    metrics["tme_errors"] += 1
+                    self.log.debug("t.me 富化失败 username=%s: %s", username, exc)
+        return enriched
+
     async def _search_groups(self, session: Any, task: Task, account: Optional[TgAccount]) -> dict:
         """按关键词找公开群：原生搜索 + 查询扩展 + linked_chat 讨论群展开。
 
@@ -367,12 +778,24 @@ class GroupIntelMixin:
         max_queries = max(1, min(int(payload.get("max_queries") or 120), 300))
         expand_linked = bool(payload.get("expand_linked_chats", True))
         max_linked = max(0, min(int(payload.get("max_linked_chats") or 50), 200))
+        expand_messages = bool(payload.get("expand_messages", True))
+        message_channels = max(0, min(int(payload.get("message_channels") or 10), 50))
+        message_limit = max(20, min(int(payload.get("message_limit") or 200), 500))
+        expand_recommendations = bool(payload.get("expand_recommendations", True))
+        recommendation_channels = max(0, min(int(payload.get("recommendation_channels") or 10), 50))
+        enrich_tme = bool(payload.get("enrich_tme", True))
+        tme_limit = max(0, min(int(payload.get("tme_limit") or 50), 200))
+        max_links = max(0, min(int(payload.get("max_links") or 100), 300))
 
+        disabled_queries = list(
+            await session.scalars(select(DiscoveryQueryStat.query).where(DiscoveryQueryStat.enabled.is_(False)))
+        )
         queries = expand_queries(
             keywords,
             regions=regions,
             languages=languages,
             max_queries=max_queries,
+            exclude=disabled_queries,
         )
         if not queries:
             raise TaskFailure("找群任务没有生成可用查询", retryable=False)
@@ -394,6 +817,14 @@ class GroupIntelMixin:
             "linked_expanded": 0,
             "linked_found": 0,
             "linked_errors": 0,
+            "message_profiles": 0,
+            "invite_leads": 0,
+            "recommendation_profiles": 0,
+            "tme_enriched": 0,
+            "message_errors": 0,
+            "recommendation_errors": 0,
+            "tme_errors": 0,
+            "discovered_hits": 0,
         }
 
         def chat_kind(chat: Any) -> str:
@@ -455,6 +886,16 @@ class GroupIntelMixin:
                             "error": f"{type(exc).__name__}: {str(exc)[:100]}",
                         }
                     )
+                    try:
+                        await _record_query_stat(
+                            session,
+                            item,
+                            raw_count=0,
+                            found_count=0,
+                            error=f"{type(exc).__name__}: {str(exc)[:200]}",
+                        )
+                    except BaseException:  # noqa: BLE001 - 绩效记录失败不影响搜索
+                        self.log.debug("查询绩效记录失败 query=%s", item.query)
                     continue
 
                 raw_chats = list(getattr(res, "chats", []) or [])
@@ -498,6 +939,15 @@ class GroupIntelMixin:
                     hit_ids.add(chat_id)
                     hits.append(hit_payload(chat, kind, members))
 
+                try:
+                    await _record_query_stat(
+                        session,
+                        item,
+                        raw_count=len(raw_chats),
+                        found_count=len(hits),
+                    )
+                except BaseException:  # noqa: BLE001 - 绩效记录失败不影响搜索
+                    self.log.debug("查询绩效记录失败 query=%s", item.query)
                 results.append(
                     {
                         "query": item.query,
@@ -596,11 +1046,71 @@ class GroupIntelMixin:
                         )
                     if index < len(candidates) - 1:
                         await sleep_human(1.5, 3.0, rng)
+
+            # 第三段：结果扩展（图扩散 depth=1）。只读：读最近消息里的链接、取相似推荐、
+            # 访问 t.me 公开页；不加入、不发言、不给群主发消息。
+            discovered_hits: list[dict] = []
+            seeds = list(seed_channels.values())
+            query_label = ", ".join(keywords[:3])
+            if expand_messages and max_links and message_channels and seeds:
+                found = await self._expand_from_messages(
+                    client,
+                    session,
+                    account,
+                    seeds,
+                    task=task,
+                    query=query_label,
+                    channel_limit=message_channels,
+                    message_limit=message_limit,
+                    max_links=max_links,
+                    rng=rng,
+                    metrics=metrics,
+                )
+                discovered_hits.extend(found)
+            if expand_recommendations and recommendation_channels and seeds:
+                found = await self._expand_recommendations(
+                    client,
+                    session,
+                    account,
+                    seeds,
+                    task=task,
+                    query=query_label,
+                    channel_limit=recommendation_channels,
+                    rng=rng,
+                    metrics=metrics,
+                )
+                discovered_hits.extend(found)
+            if enrich_tme and tme_limit:
+                await self._report_progress(
+                    session,
+                    task,
+                    stage="enriching_tme",
+                    detail=f"正在补 {tme_limit} 个公开实体的 t.me 简介/成员数",
+                    scanned=0,
+                    found=len(discovered_hits),
+                    total=tme_limit,
+                )
+                await self._enrich_from_tme(session, account, limit=tme_limit, metrics=metrics)
+
+            for hit in discovered_hits:
+                hit_id = int(hit.get("tg_chat_id") or 0)
+                if not hit_id:
+                    continue
+                if want != "any" and hit.get("kind") != want:
+                    metrics["dropped_kind"] += 1
+                    continue
+                if min_members and (hit.get("members") or 0) < min_members:
+                    metrics["dropped_members"] += 1
+                    continue
+                if hit_id in hit_ids:
+                    continue
+                hit_ids.add(hit_id)
+                metrics["discovered_hits"] += 1
         except BaseException as exc:  # noqa: BLE001
             await self._apply_status(session, account, exc)
             raise self._failure(exc, "按关键词找群失败") from exc
 
-        total = sum(item.get("found", 0) for item in results if item.get("ok")) + len(linked_hits)
+        total = sum(item.get("found", 0) for item in results if item.get("ok")) + len(linked_hits) + metrics["discovered_hits"]
         return {
             "keywords": keywords,
             "queries": [item.query for item in queries],
@@ -609,12 +1119,15 @@ class GroupIntelMixin:
             "unique_entities": len(seen_entities),
             "total_hits": total,
             "linked_chats": linked_hits[:100],
+            "discovered_chats": discovered_hits[:100],
             "metrics": metrics,
             "results": results,
             "summary": (
                 f"{len(keywords)} 个原始关键词展开为 {len(queries)} 条查询，"
                 f"共找到 {len(hit_ids)} 个不同的群/频道（落档 {len(seen_entities)} 个实体）；"
-                f"展开 {metrics['linked_expanded']} 个频道，额外发现 {len(linked_hits)} 个讨论群"
+                f"linked_chat 额外 {len(linked_hits)} 个讨论群；"
+                f"消息链接发现 {metrics['message_profiles']} 个公开实体、{metrics['invite_leads']} 个私群线索；"
+                f"相似推荐 {metrics['recommendation_profiles']} 个；t.me 富化 {metrics['tme_enriched']} 个"
             ),
         }
 

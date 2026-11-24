@@ -34,6 +34,8 @@ from app.config import settings
 from app.core.audit import write_audit
 from app.core.tasks import enqueue_task
 from app.models import (
+    DiscoveryLead,
+    DiscoveryQueryStat,
     KeywordWatch,
     ReplyRule,
     GROUP_EVENT_LABELS,
@@ -72,6 +74,7 @@ from app.schemas import (
     ReplyRuleUpdate,
     SearchGroupsRequest,
 )
+from app.schemas.group_intel import DiscoveryLeadOut, DiscoveryQueryStatOut
 
 logger = logging.getLogger(__name__)
 
@@ -136,9 +139,63 @@ async def search_public_groups(
             "max_queries": payload.max_queries,
             "expand_linked_chats": payload.expand_linked_chats,
             "max_linked_chats": payload.max_linked_chats,
+            "expand_messages": payload.expand_messages,
+            "message_channels": payload.message_channels,
+            "message_limit": payload.message_limit,
+            "expand_recommendations": payload.expand_recommendations,
+            "recommendation_channels": payload.recommendation_channels,
+            "enrich_tme": payload.enrich_tme,
+            "tme_limit": payload.tme_limit,
+            "max_links": payload.max_links,
         },
         priority=65,
     )
+
+
+@router.get("/discovery/queries", response_model=List[DiscoveryQueryStatOut], summary="查询绩效（哪些词真的找得到群）")
+async def list_discovery_queries(
+    limit: int = Query(default=200, ge=1, le=500),
+    enabled: Optional[bool] = Query(default=None, description="只看启用/已自动停用的查询"),
+    session: AsyncSession = Depends(get_session),
+    user: User = Depends(get_current_user),
+) -> List[DiscoveryQueryStatOut]:
+    """按产出率倒序看每条查询；连续 0 产出的非基础查询会被自动停用（enabled=false）。"""
+
+    conditions = []
+    if enabled is not None:
+        conditions.append(DiscoveryQueryStat.enabled.is_(enabled))
+    rows = await session.scalars(
+        select(DiscoveryQueryStat)
+        .where(*conditions)
+        .order_by(DiscoveryQueryStat.yield_rate.desc(), DiscoveryQueryStat.runs.desc())
+        .limit(limit)
+    )
+    return [DiscoveryQueryStatOut.model_validate(row) for row in rows]
+
+
+@router.get("/discovery/leads", response_model=List[DiscoveryLeadOut], summary="私群邀请线索")
+async def list_discovery_leads(
+    limit: int = Query(default=100, ge=1, le=500),
+    status_filter: Optional[str] = Query(default=None, alias="status"),
+    session: AsyncSession = Depends(get_session),
+    user: User = Depends(get_current_user),
+) -> List[DiscoveryLeadOut]:
+    """`CheckChatInvite` 只能拿到标题/人数的私群，先以线索形式保存，供后续人工确认或加入。"""
+
+    ids = await visible_account_ids(session, user)
+    conditions = []
+    clause = scope_clause(DiscoveryLead.account_id, ids)
+    if clause is not None:
+        conditions.append(clause)
+    if status_filter:
+        conditions.append(DiscoveryLead.status == status_filter)
+    rows = await session.scalars(
+        select(DiscoveryLead)
+        .where(*conditions)
+        .order_by(DiscoveryLead.member_count.desc().nullslast(), DiscoveryLead.created_at.desc())
+        .limit(limit)
+    )
+    return [DiscoveryLeadOut.model_validate(row) for row in rows]
 
 
 @router.post("/collect", response_model=BulkResultResponse, summary="批量采集群情报（群档案 + 可选成员）")

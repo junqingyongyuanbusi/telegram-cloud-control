@@ -80,6 +80,10 @@ export default function GroupIntel() {
   const [findRegions, setFindRegions] = useState<string[]>([]);
   const [findLanguages, setFindLanguages] = useState<string[]>([]);
   const [findExpandLinked, setFindExpandLinked] = useState(true);
+  // 第二步结果扩展：消息链接 / 相似推荐 / t.me 富化（都只读）
+  const [findExpandMessages, setFindExpandMessages] = useState(true);
+  const [findExpandRecommendations, setFindExpandRecommendations] = useState(true);
+  const [findEnrichTme, setFindEnrichTme] = useState(true);
   const [memberScope, setMemberScope] = useState<'all' | 'human' | 'bot'>('all');
   const [collectOpen, setCollectOpen] = useState(false);
   const [collectBusy, setCollectBusy] = useState(false);
@@ -788,6 +792,14 @@ export default function GroupIntel() {
               max_queries: 120,
               expand_linked_chats: findExpandLinked,
               max_linked_chats: 50,
+              expand_messages: findExpandMessages,
+              message_channels: 10,
+              message_limit: 200,
+              max_links: 100,
+              expand_recommendations: findExpandRecommendations,
+              recommendation_channels: 10,
+              enrich_tme: findEnrichTme,
+              tme_limit: 50,
             });
             setFindOpen(false);
             setCollectResult(res);
@@ -853,8 +865,21 @@ export default function GroupIntel() {
             <Checkbox checked={findExpandLinked} onChange={(e) => setFindExpandLinked(e.target.checked)}>
               顺着公开频道的讨论群继续找（linked_chat，只读）
             </Checkbox>
+            <Checkbox checked={findExpandMessages} onChange={(e) => setFindExpandMessages(e.target.checked)}>
+              读频道最近消息里的 t.me / @username，继续反查（图扩散 depth=1）
+            </Checkbox>
+            <Checkbox
+              checked={findExpandRecommendations}
+              onChange={(e) => setFindExpandRecommendations(e.target.checked)}
+            >
+              取 Telegram 的相似频道推荐
+            </Checkbox>
+            <Checkbox checked={findEnrichTme} onChange={(e) => setFindEnrichTme(e.target.checked)}>
+              访问 t.me 公开页，补简介和成员数（不登录）
+            </Checkbox>
             <span className="tg-muted">
-              选了地区后，会把「主题词 × 地区 / 城市 / 群组后缀」展开成多组查询（最多 120 条），比单词搜索覆盖更全；频道也会作为种子落档。
+              选了地区后，会把「主题词 × 地区 / 城市 / 本地语 / 中文 / 群组后缀」展开成多组查询（最多 120 条），
+              比单词搜索覆盖更全；频道也会作为种子落档。本轮的查询产出会记进绩效表，跑满 5 次且连续 3 次 0 产出的扩展词会自动停用。
             </span>
           </div>
           <Space size="large" wrap>

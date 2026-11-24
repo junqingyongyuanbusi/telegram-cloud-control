@@ -19,6 +19,7 @@ from sqlalchemy import (
     BigInteger,
     Boolean,
     DateTime,
+    Float,
     ForeignKey,
     Index,
     Integer,
@@ -206,4 +207,63 @@ class ReplyRule(Base, TimestampMixin):
     hit_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     created_by: Mapped[Optional[uuid.UUID]] = mapped_column(
         UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+
+
+class DiscoveryQueryStat(Base, TimestampMixin):
+    """查询绩效：同一个 query 全局一行，连续 0 产出自动停用。
+
+    `contacts.Search` 每次只能回十来条，真正决定覆盖面的是「查什么」。把每条查询的
+    产出记下来，才能把预算留给有效的词，而不是每轮把无效词重烧一遍。
+    """
+
+    __tablename__ = "discovery_query_stats"
+
+    id: Mapped[uuid.UUID] = uuid_pk()
+    query: Mapped[str] = mapped_column(String(128), nullable=False, unique=True, index=True)
+    region: Mapped[Optional[str]] = mapped_column(String(16), nullable=True)
+    lang: Mapped[Optional[str]] = mapped_column(String(8), nullable=True)
+    template: Mapped[str] = mapped_column(String(24), nullable=False, default="")
+    runs: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    raw: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    found_total: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    last_found: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    zero_streak: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    yield_rate: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    last_run_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, index=True)
+    last_error: Mapped[str] = mapped_column(Text, nullable=False, default="")
+
+
+class DiscoveryLead(Base, TimestampMixin):
+    """只有邀请链接、还拿不到 tg_chat_id 的私群线索。
+
+    `CheckChatInvite` 对未加入的私群只给标题/人数/简介，不给实体 id；先落成线索，
+    等后续加入或拿到实体时再升级成 `group_profiles`。它不是「已确认的群」，而是待验证候选。
+    """
+
+    __tablename__ = "discovery_leads"
+
+    id: Mapped[uuid.UUID] = uuid_pk()
+    account_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("tg_accounts.id", ondelete="CASCADE"), nullable=True, index=True
+    )
+    invite_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    invite_link: Mapped[str] = mapped_column(String(255), nullable=False, default="")
+    tg_chat_id: Mapped[Optional[int]] = mapped_column(BigInteger, nullable=True, index=True)
+    title: Mapped[str] = mapped_column(String(255), nullable=False, default="")
+    about: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    member_count: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    kind: Mapped[str] = mapped_column(String(16), nullable=False, default="group")
+    source: Mapped[str] = mapped_column(String(24), nullable=False, default="message_link")
+    query: Mapped[str] = mapped_column(String(128), nullable=False, default="")
+    seed_chat_id: Mapped[Optional[int]] = mapped_column(BigInteger, nullable=True)
+    depth: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    confidence: Mapped[float] = mapped_column(Float, nullable=False, default=0.5)
+    status: Mapped[str] = mapped_column(String(16), nullable=False, default="new", index=True)
+    raw: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
+
+    __table_args__ = (
+        UniqueConstraint("account_id", "invite_hash", name="uq_discovery_leads_account_invite"),
+        Index("ix_discovery_leads_seed_chat", "seed_chat_id"),
     )
