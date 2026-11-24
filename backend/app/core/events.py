@@ -138,6 +138,68 @@ async def clear_login_session(redis: aioredis.Redis, account_id: uuid.UUID | str
     await redis.delete(login_session_key(account_id))
 
 
+# ---------------- 扫码登录临时态 ----------------
+# 二维码会话由 Worker 持有（轮询 auth.ExportLoginToken），页面只读 Redis 里的快照；
+# 取消是独立的一个短 key，避免页面和 Worker 同时改写状态对象。
+
+def qr_login_key(login_id: uuid.UUID | str) -> str:
+    return f"account:qr-login:{login_id}"
+
+
+def qr_cancel_key(login_id: uuid.UUID | str) -> str:
+    return f"account:qr-login:{login_id}:cancel"
+
+
+async def save_qr_login(
+    redis: aioredis.Redis, login_id: uuid.UUID | str, state: dict, ttl: int
+) -> None:
+    await redis.setex(qr_login_key(login_id), ttl, _dumps(state))
+
+
+async def load_qr_login(redis: aioredis.Redis, login_id: uuid.UUID | str) -> Optional[dict]:
+    return await get_json(redis, qr_login_key(login_id))
+
+
+async def clear_qr_login(redis: aioredis.Redis, login_id: uuid.UUID | str) -> None:
+    await redis.delete(qr_login_key(login_id))
+
+
+async def request_qr_cancel(
+    redis: aioredis.Redis, login_id: uuid.UUID | str, ttl: int = 300
+) -> None:
+    await redis.setex(qr_cancel_key(login_id), ttl, "1")
+
+
+async def qr_cancel_requested(redis: aioredis.Redis, login_id: uuid.UUID | str) -> bool:
+    return bool(await redis.exists(qr_cancel_key(login_id)))
+
+
+async def clear_qr_cancel(redis: aioredis.Redis, login_id: uuid.UUID | str) -> None:
+    await redis.delete(qr_cancel_key(login_id))
+
+
+def qr_password_key(login_id: uuid.UUID | str) -> str:
+    return f"account:qr-login:{login_id}:password"
+
+
+async def save_qr_password(
+    redis: aioredis.Redis, login_id: uuid.UUID | str, password: str, ttl: int = 180
+) -> None:
+    """两步验证密码只作为一次性凭证短暂停留，Worker 取走即删，不写进状态快照。"""
+    await redis.setex(qr_password_key(login_id), ttl, password)
+
+
+async def take_qr_password(
+    redis: aioredis.Redis, login_id: uuid.UUID | str
+) -> Optional[str]:
+    key = qr_password_key(login_id)
+    password = await redis.get(key)
+    if password is not None:
+        await redis.delete(key)
+        return password if isinstance(password, str) else password.decode()
+    return None
+
+
 # ---------------- 检测请求 ----------------
 
 def check_request_key(account_id: uuid.UUID | str) -> str:

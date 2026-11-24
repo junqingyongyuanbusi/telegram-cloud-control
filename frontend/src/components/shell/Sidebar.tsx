@@ -21,7 +21,7 @@ import { healthApi } from '../../api/endpoints';
 import type { CSSProperties } from 'react';
 import { Link } from 'react-router-dom';
 import { Tooltip } from 'antd';
-import { DownOutlined, MenuFoldOutlined, MenuUnfoldOutlined, GithubOutlined, SendOutlined, HeartOutlined } from '@ant-design/icons';
+import { DownOutlined, MenuFoldOutlined, MenuUnfoldOutlined } from '@ant-design/icons';
 import { NAV_GROUPS, parentsOf, type NavGroup, type NavItem } from './nav';
 import { useLocalStorage } from '../../hooks/useLocalStorage';
 import type { ShellCounts } from './useShellData';
@@ -245,7 +245,7 @@ export function Sidebar({
         <span className="app-logo-mark">TG</span>
         {!collapsed ? (
           <span className="app-logo-text">
-            Telegram 云控
+            wikifxtg云控
             <span className="app-logo-sub">Telegram 运营控制台</span>
           </span>
         ) : null}
@@ -286,40 +286,7 @@ export function Sidebar({
             {collapsed ? <MenuUnfoldOutlined /> : <MenuFoldOutlined />}
           </button>
           {!collapsed ? (
-            <>
-              {/* 开源入口：GitHub 源码 / 交流群 / 赞助。
-                  放在侧栏底部而不是藏进设置页 —— 部署者天天看到，赞助商才有稳定曝光 */}
-              <div className="app-sider-links">
-                <a
-                  href="https://github.com/DuanNaiSheQu/telegram-cloud-control"
-                  target="_blank"
-                  rel="noreferrer"
-                  title="源码仓库"
-                  aria-label="源码仓库"
-                >
-                  <GithubOutlined />
-                </a>
-                <a
-                  href="https://t.me/TGCloudcontrol"
-                  target="_blank"
-                  rel="noreferrer"
-                  title="Telegram 交流群"
-                  aria-label="Telegram 交流群"
-                >
-                  <SendOutlined />
-                </a>
-                <a
-                  href="https://github.com/sponsors/DuanNaiSheQu"
-                  target="_blank"
-                  rel="noreferrer"
-                  title="赞助支持"
-                  aria-label="赞助支持"
-                >
-                  <HeartOutlined />
-                </a>
-                <span className="tg-muted app-sider-version">{`v${runningVersion}`}</span>
-              </div>
-            </>
+            <span className="tg-muted app-sider-version">{`v${runningVersion}`}</span>
           ) : null}
         </div>
       ) : null}

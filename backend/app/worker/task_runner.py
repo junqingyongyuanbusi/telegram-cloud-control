@@ -57,7 +57,7 @@ from app.worker.campaign_tasks import CampaignTasksMixin
 from app.worker.group_intel import GroupIntelMixin
 from app.worker.official_tasks import OfficialTasksMixin
 from app.worker.handlers import MessageData, message_data_from_telethon, persist_message
-from app.worker.entities import resolve_chat_entity, resolve_entity
+from app.worker.entities import resolve_can_send, resolve_chat_entity, resolve_entity
 from app.worker.humanize import pick_for_index, pick_random
 from app.worker.telethon_account import (
     AccountConnection,
@@ -477,6 +477,11 @@ class TaskRunner(CampaignTasksMixin, GroupIntelMixin, OfficialTasksMixin):
                 kind = DialogKind.group if (item.is_group or item.is_channel) else DialogKind.private
                 entity = getattr(item, "entity", None)
                 title = getattr(item, "title", None) or getattr(item, "name", "") or ""
+                # 群要单查一次发言权限：频道只有管理员能发、号可能被单独禁言，
+                # 这些群选进「目标群」也发不出去。查不到（None）就保留原值。
+                can_send = (
+                    await resolve_can_send(client, entity) if kind == DialogKind.group else None
+                )
                 async with session.begin_nested():
                     dialog = await upsert_dialog(
                         session,
@@ -491,6 +496,8 @@ class TaskRunner(CampaignTasksMixin, GroupIntelMixin, OfficialTasksMixin):
                     )
                     dialog.unread_count = int(getattr(item, "unread_count", 0) or 0)
                     dialog.is_pinned = bool(getattr(item, "pinned", False))
+                    if can_send is not None:
+                        dialog.can_send = can_send
                     date = getattr(item, "date", None)
                     if date is not None:
                         dialog.last_message_at = date

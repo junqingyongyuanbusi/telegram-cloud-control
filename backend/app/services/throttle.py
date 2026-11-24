@@ -231,8 +231,13 @@ async def allow_action(
     task_type: str = "send_message",
     cost: Optional[int] = None,
     now: Optional[datetime] = None,
+    ignore_active_hours: bool = False,
 ) -> ThrottleDecision:
-    """发送前的四道闸门检查。不通过时 `retry_after` 就是建议顺延的秒数。"""
+    """发送前的四道闸门检查。不通过时 `retry_after` 就是建议顺延的秒数。
+
+    `ignore_active_hours=True` 只跳过「活跃时段」这一道（用户明确要求立刻执行时用），
+    熔断 / 最小间隔 / 每日配额仍然生效。
+    """
     moment = now or _now()
     limit = daily_limit_for(account, now=moment)
     weight = action_cost(task_type, explicit=cost)
@@ -254,16 +259,17 @@ async def allow_action(
                 cost=weight,
             )
 
-    # 2) 活跃时段
-    wait_window = _outside_active_window(_local_now())
-    if wait_window is not None:
-        return ThrottleDecision(
-            ok=False,
-            reason=f"不在活跃时段（{settings.throttle_active_hours} 点），避开凌晨批量操作",
-            retry_after=wait_window,
-            limit=limit,
-            cost=weight,
-        )
+    # 2) 活跃时段（任务显式要求「现在就加」时跳过，其余三道闸门照常）
+    if not ignore_active_hours:
+        wait_window = _outside_active_window(_local_now())
+        if wait_window is not None:
+            return ThrottleDecision(
+                ok=False,
+                reason=f"不在活跃时段（{settings.throttle_active_hours} 点），避开凌晨批量操作",
+                retry_after=wait_window,
+                limit=limit,
+                cost=weight,
+            )
 
     # 3) 最小间隔
     interval = min_interval_for(account, now=moment)

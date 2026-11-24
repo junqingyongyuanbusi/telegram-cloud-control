@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Telegram 云控 —— Postgres 备份脚本
+# wikifxtg云控 —— Postgres 备份脚本
 #
 # 两件事：
 #   1) 每日逻辑备份：pg_dump -Fc        -> $BACKUP_DIR/daily-<UTC时间戳>.dump
@@ -346,7 +346,7 @@ main() {
     *) err "未知的备份类型：${BACKUP_KIND}（只支持 daily / base / all）"; usage >&2; exit 2 ;;
   esac
 
-  log "===== Telegram 云控备份开始（类型 ${BACKUP_KIND}，模式 ${BACKUP_MODE}，时间戳 ${TS}）====="
+  log "===== wikifxtg云控备份开始（类型 ${BACKUP_KIND}，模式 ${BACKUP_MODE}，时间戳 ${TS}）====="
   command -v curl >/dev/null 2>&1 || warn "找不到 curl，备份指标无法上报"
   mkdir -p "$BACKUP_DIR"
 

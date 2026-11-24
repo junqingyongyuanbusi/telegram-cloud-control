@@ -159,6 +159,58 @@ class LoginPasswordRequest(BaseModel):
     password: str = Field(min_length=1, max_length=128)
 
 
+class LoginStateResponse(BaseModel):
+    """验证码登录的实时进度：页面用它告诉用户验证码到底发到了哪里。"""
+
+    account_id: uuid.UUID
+    step: str
+    delivery: Optional[str] = None
+    next_type: Optional[str] = Field(
+        default=None, description="Telegram 提供的备选发送方式；为空表示没有短信等备选"
+    )
+    timeout: Optional[int] = None
+    phone_masked: Optional[str] = None
+
+
+class QrLoginStartRequest(BaseModel):
+    """扫码登录：不给手机号，授权成功后由 Telegram 返回号码再回填。
+
+    - 新号：只给可选的 group_id / proxy_id，后端先建一个待登录占位号；
+    - 已有号重新扫码：给 account_id，沿用该号的分组/代理（也可显式覆盖）。
+    """
+
+    account_id: Optional[uuid.UUID] = None
+    group_id: Optional[uuid.UUID] = None
+    proxy_id: Optional[uuid.UUID] = None
+
+
+class QrLoginStartResponse(BaseModel):
+    login_id: uuid.UUID
+    account_id: uuid.UUID
+    status: str = Field(
+        description="pending | password_required | done | expired | failed | cancelled"
+    )
+    task_id: Optional[uuid.UUID] = None
+
+
+class QrLoginPasswordRequest(BaseModel):
+    """扫码确认后账号若开了两步验证，页面补交一次密码。"""
+
+    password: str = Field(min_length=1, max_length=128)
+
+
+class QrLoginStateResponse(BaseModel):
+    login_id: uuid.UUID
+    account_id: uuid.UUID
+    status: str = Field(
+        description="pending | password_required | done | expired | failed | cancelled"
+    )
+    qr_url: Optional[str] = Field(default=None, description="tg://login?token=…，页面渲染成二维码")
+    expires_at: Optional[str] = None
+    message: str = ""
+    phone_masked: Optional[str] = None
+
+
 # ---------------- 检测 ----------------
 
 class CheckRequest(BaseModel):

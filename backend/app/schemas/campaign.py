@@ -142,6 +142,10 @@ class GroupBroadcastRequest(BulkScopeRequest, _TextPoolMixin):
         default=True,
         description="只发给「确实在那个群里」的号——不在群里的号发出去只会换一次失败，白占队列、还多挨一次限流",
     )
+    ignore_active_hours: bool = Field(
+        default=False,
+        description="跳过「活跃时段」闸门（默认 8-24 点）：用户要求立刻发时打开；最小间隔 / 每日配额 / 熔断照常",
+    )
 
 
     # ---- 内容形态：富文本 / 转发（可隐藏来源）/ 名片 ----
@@ -192,6 +196,13 @@ class JoinGroupRequest(BulkScopeRequest):
     )
     verify_timeout: int = Field(
         default=150, ge=30, le=600, description="等待验证消息的秒数（验证链接寿命很短，不宜过长）"
+    )
+    ignore_active_hours: bool = Field(
+        default=False,
+        description=(
+            "忽略活跃时段限制（默认 8-24 点）：勾选后凌晨也能立即加群；"
+            "熔断 / 最小间隔 / 每日配额仍然生效"
+        ),
     )
 
     @model_validator(mode="after")

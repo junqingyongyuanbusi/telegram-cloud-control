@@ -1,4 +1,4 @@
-# Telegram 云控 —— 部署编排（Docker Compose v2，无 version: 关键字）
+# wikifxtg云控 —— 部署编排（Docker Compose v2，无 version: 关键字）
 #
 # 默认启动：postgres / redis / api / worker / frontend
 # 监控栈（prometheus / alertmanager / pushgateway / postgres-exporter）在 profiles: monitoring 下，

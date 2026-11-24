@@ -80,7 +80,7 @@ async def resolve_entity(client: Any, raw: Any) -> Any:
     raise last_error
 
 
-__all__ = ["CHANNEL_ID_PREFIX", "candidate_ids", "resolve_entity"]
+__all__ = ["CHANNEL_ID_PREFIX", "candidate_ids", "resolve_can_send", "resolve_entity"]
 
 async def resolve_chat_entity(
     client: Any,
@@ -122,3 +122,38 @@ async def resolve_chat_entity(
         except Exception as exc:  # noqa: BLE001
             logger.debug("按用户名解析失败（改用 id）：%s", exc)
     return await resolve_entity(client, raw)
+
+
+async def resolve_can_send(client: Any, entity: Any) -> Optional[bool]:
+    """查询执行号能否在 entity（群 / 频道）里发言；查不到返回 None（调用方保留原值）。
+
+    为什么要单查：`Channel.default_banned_rights` 只说明「普通成员」的默认权限，
+    而这个号可能被单独禁言、被踢，或者频道里只有管理员能发——这些只有
+    `channels.GetParticipant(participant='me')` 能回答。
+    """
+
+    from telethon import functions
+    from telethon.errors import ChannelPrivateError, UserNotParticipantError
+    from telethon.tl import types as tl_types
+
+    from app.services.group_precision import can_send_verdict
+
+    name = type(entity).__name__
+    if "Forbidden" in name:  # ChatForbidden / ChannelForbidden：已经进不去了
+        return False
+    if isinstance(entity, tl_types.Chat):  # 普通群：没有禁言概念
+        return True
+    if not isinstance(entity, tl_types.Channel):
+        return None  # 不是群/频道（比如用户），不参与判断
+    try:
+        result = await client(
+            functions.channels.GetParticipantRequest(channel=entity, participant="me")
+        )
+    except (UserNotParticipantError, ChannelPrivateError):
+        return False  # 不在群里 / 私有群：发不出去
+    except Exception as exc:  # noqa: BLE001 - 查不到不能阻断同步
+        logger.warning(
+            "查询群发言权限失败：%s", exc, extra={"tg_chat_id": getattr(entity, "id", None)}
+        )
+        return None
+    return can_send_verdict(entity, getattr(result, "participant", None))

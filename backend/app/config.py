@@ -21,7 +21,7 @@ class Settings(BaseSettings):
     )
 
     # ---------- 基础 ----------
-    app_name: str = "Telegram 云控"
+    app_name: str = "wikifxtg云控"
     environment: str = "development"
     debug: bool = False
     log_level: str = "INFO"
@@ -52,6 +52,10 @@ class Settings(BaseSettings):
     telegram_system_version: str = "Linux"
     telegram_app_version: str = "1.0"
     login_session_ttl_seconds: int = 900
+    # 扫码登录：二维码总有效窗口（秒）× 轮询间隔（秒）。二维码 token 自己约 30 秒一换，
+    # Worker 会持续导出新 token 并把新 URL 写回 Redis，页面刷新二维码即可。
+    qr_login_ttl_seconds: int = 180
+    qr_poll_interval_seconds: float = 1.5
 
     # ---------- 租约 / 任务 ----------
     worker_id: str = ""

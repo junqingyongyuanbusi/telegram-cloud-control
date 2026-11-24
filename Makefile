@@ -1,4 +1,4 @@
-# Telegram 云控 —— 常用操作
+# wikifxtg云控 —— 常用操作
 #
 # 所有 docker 相关 target 都假设在仓库根目录执行（这里有 docker-compose.yml 和 .env）。
 # 本机没有 docker 时只用 dev-* 那几个 target 直接跑进程。
@@ -17,7 +17,7 @@ ADMIN_ENV := $(if $(ADMIN_PASSWORD),-e BOOTSTRAP_ADMIN_PASSWORD='$(ADMIN_PASSWOR
 
 ## 显示本帮助（默认）
 help:
-	@echo "Telegram 云控 —— 可用 target："
+	@echo "wikifxtg云控 —— 可用 target："
 	@awk '/^## /{desc=substr($$0,4); next} /^[a-zA-Z0-9_.-]+:/{if(desc!=""){n=$$1; sub(/:$$/,"",n); printf "  %-14s %s\n", n, desc; desc=""}}' $(MAKEFILE_LIST)
 	@echo ""
 	@echo "变量：COMPOSE='$(COMPOSE)'  VENV='$(VENV)'  API_PORT='$(API_PORT)'"

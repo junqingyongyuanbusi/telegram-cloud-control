@@ -166,8 +166,16 @@ async def _publish_account(worker: Any, account: TgAccount) -> None:
 
 
 async def login_start(session: Any, *, task: Task, account: TgAccount, worker: Any) -> dict:
-    """第一步：发验证码，把临时会话串加密后放 Redis。"""
+    """第一步：发验证码，把临时会话串加密后放 Redis。
+
+    `payload.mode == "qr"` 时走扫码登录（`worker/qr_login.py`）：同样复用本任务
+    类型，但任务会持续到扫码成功/取消/超时，期间一直持有该号租约。
+    """
     payload = dict(task.payload or {})
+    if str(payload.get("mode") or "") == "qr":
+        from app.worker import qr_login as qr_flow
+
+        return await qr_flow.run(session, task=task, account=account, worker=worker)
     phone = str(payload.get("phone") or "").strip()
     if not phone and account.phone_enc:
         try:
@@ -189,6 +197,10 @@ async def login_start(session: Any, *, task: Task, account: TgAccount, worker: A
         sent = await client.send_code_request(phone)
         session_string = client.session.save()
         delivery = delivery_label(sent)
+        next_type = (
+            delivery_label(sent.next_type) if getattr(sent, "next_type", None) is not None else ""
+        )
+        fallback_timeout = getattr(sent, "timeout", None)
         code_hash = getattr(sent, "phone_code_hash", "") or ""
     except TaskFailure:
         raise
@@ -203,6 +215,9 @@ async def login_start(session: Any, *, task: Task, account: TgAccount, worker: A
         "phone_code_hash": code_hash,
         "session": encrypt_secret(session_string),
         "delivery": delivery,
+        "next_type": next_type,
+        "timeout": fallback_timeout,
+        "phone_masked": mask_phone(phone),
         "created_at": _now().isoformat(),
     }
     await core_events.save_login_session(
@@ -228,7 +243,13 @@ async def login_start(session: Any, *, task: Task, account: TgAccount, worker: A
         "已发送登录验证码",
         extra={"worker_id": worker.worker_id, "account_id": str(account.id), "task_id": str(task.id), "delivery": delivery},
     )
-    return {"step": STEP_CODE, "phone_masked": account.phone_masked, "delivery": delivery}
+    return {
+        "step": STEP_CODE,
+        "phone_masked": account.phone_masked,
+        "delivery": delivery,
+        "next_type": next_type,
+        "timeout": fallback_timeout,
+    }
 
 
 async def login_code(session: Any, *, task: Task, account: TgAccount, worker: Any) -> dict:

@@ -457,6 +457,7 @@ async def group_broadcast(
         "forward_from_chat_id": payload.forward_from_chat_id,
         "forward_from_message_id": payload.forward_from_message_id,
         "drop_author": payload.drop_author,
+        "ignore_active_hours": payload.ignore_active_hours,
     }
     # 目标群：单个（target_group）或多选（target_groups）。多选时按「一个群一批」逐个提交，
     # 每个群都只派给「确实在那个群里」的号——各群的在群号本来就不同。
@@ -544,6 +545,8 @@ async def join_group(
             # 加群后自动过验证（佩奇 Cap / NuoMi Turnstile）
             "auto_verify": payload.auto_verify,
             "verify_timeout": payload.verify_timeout,
+            # 用户勾了「忽略活跃时段」：只跳过时段闸门，其余节流照常
+            "ignore_active_hours": payload.ignore_active_hours,
         },
         session=session,
         user=user,
@@ -967,6 +970,7 @@ async def group_options(
 
     数据来自已同步的会话列表：一个群只出现一次，带上是哪些号在里面——
     选群时就能看出「这个群我有几个号能发」，不会选到一个人都发不了的群。
+    不能发言的群（频道非管理员、被禁言、被踢）直接不列：选进去也发不出去。
     """
     visible = await visible_account_ids(session, user)
     stmt = select(Dialog.tg_chat_id, Dialog.title, Dialog.username, Dialog.account_id).where(
@@ -974,6 +978,7 @@ async def group_options(
         # 只要群/频道：个人私聊和 Bot（Spam Info Bot、PeiQiBot 这些）不是群发的目标，
         # 混进列表里既没用、还容易手滑选中
         Dialog.kind == DialogKind.group,
+        Dialog.can_send.is_(True),
     )
     if visible is not None:
         stmt = stmt.where(Dialog.account_id.in_(visible))

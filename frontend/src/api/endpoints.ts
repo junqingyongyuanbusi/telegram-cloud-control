@@ -59,11 +59,15 @@ import type {
   JoinGroupRequest,
   LeaveGroupRequest,
   LoginStartRequest,
+  LoginState,
   MaterialKind,
   MaterialListResponse,
   MaterialOut,
   MaterialSendRequest,
   LoginStepResponse,
+  QrLoginStartRequest,
+  QrLoginStartResponse,
+  QrLoginState,
   MessageListQuery,
   MessageListResponse,
   MessageSearchResponse,
@@ -213,6 +217,23 @@ export const accountLoginApi = {
       { account_id: accountId, password },
       { silent },
     ),
+  /** 等待输码时轮询：返回 Telegram 实际把验证码发到了哪里 */
+  state: (accountId: UUID, silent = true) =>
+    api.get<LoginState>(`/api/accounts/login/state/${accountId}`, undefined, { silent }),
+};
+
+export const accountQrLoginApi = {
+  /** 新号扫码：不传 account_id，后端先建待登录占位号 */
+  start: (payload: QrLoginStartRequest = {}, silent = false) =>
+    api.post<QrLoginStartResponse>('/api/accounts/login/qr', payload, { silent }),
+  /** 轮询二维码与进度；二维码 token 约 30 秒一换，拿到新 qr_url 就重绘 */
+  state: (loginId: UUID, silent = true) =>
+    api.get<QrLoginState>(`/api/accounts/login/qr/${loginId}`, undefined, { silent }),
+  cancel: (loginId: UUID, silent = true) =>
+    api.post<OkResponse>(`/api/accounts/login/qr/${loginId}/cancel`, {}, { silent }),
+  /** 扫码确认后若账号开了两步验证，补交一次密码 */
+  password: (loginId: UUID, password: string) =>
+    api.post<OkResponse>(`/api/accounts/login/qr/${loginId}/password`, { password }),
 };
 
 // ---------------------------------------------------------------- 账号矩阵（导入 / 健康 / 节流）

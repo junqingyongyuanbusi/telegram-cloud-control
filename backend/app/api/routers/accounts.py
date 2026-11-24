@@ -83,6 +83,11 @@ from app.schemas import (
     LoginPasswordRequest,
     LoginStartRequest,
     LoginStepResponse,
+    LoginStateResponse,
+    QrLoginPasswordRequest,
+    QrLoginStartRequest,
+    QrLoginStartResponse,
+    QrLoginStateResponse,
     TaskStats,
 )
 
@@ -996,8 +1001,37 @@ async def login_start(
     return LoginStepResponse(
         account_id=account.id,
         step="code_required",
-        message="已排队发送验证码，验证码只会发到这个号自己的 Telegram 客户端",
+        message="已排队发送验证码；发送方式以 Telegram 的返回为准（可能是短信，也可能是该号已登录的 Telegram 客户端）",
         task_id=task.id,
+    )
+
+
+@router.get(
+    "/login/state/{account_id}",
+    response_model=LoginStateResponse,
+    summary="登录进度：验证码发到了哪里",
+)
+async def login_state(
+    account_id: uuid.UUID,
+    session: AsyncSession = Depends(get_session),
+    user: User = Depends(get_current_user),
+) -> LoginStateResponse:
+    """页面在等待用户输码时轮询；delivery/next_type 是 Telegram 的真实返回。"""
+    await assert_account_access(session, user, account_id)
+    state = await events.load_login_session(get_redis(), account_id)
+    if not state:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="没有进行中的登录，或验证码已过期，请重新发送",
+        )
+    account = await session.get(TgAccount, account_id)
+    return LoginStateResponse(
+        account_id=account_id,
+        step=str(state.get("step") or ""),
+        delivery=state.get("delivery"),
+        next_type=state.get("next_type"),
+        timeout=state.get("timeout"),
+        phone_masked=state.get("phone_masked") or (account.phone_masked if account else None),
     )
 
 
@@ -1073,6 +1107,170 @@ async def login_password(
         message="两步密码已提交，Worker 完成后会把加密会话写回该账号（可刷新列表查看状态）",
         task_id=task.id,
     )
+
+
+# ---------------- 扫码登录 ----------------
+# 二维码由 Worker 生成并轮询（见 app/worker/qr_login.py），API 只写任务与读 Redis 快照。
+
+
+@router.post("/login/qr", response_model=QrLoginStartResponse, summary="扫码登录：生成二维码")
+async def login_qr_start(
+    payload: QrLoginStartRequest,
+    session: AsyncSession = Depends(get_session),
+    user: User = Depends(get_current_user),
+) -> QrLoginStartResponse:
+    """没有 account_id 时先建一个待登录占位号，扫码授权后再回填手机号。
+
+    二维码 token 每约 30 秒换一次，Worker 会把新 URL 持续写回 Redis；页面轮询
+    `GET /accounts/login/qr/{login_id}` 拿到最新二维码即可，不需要重新发任务。
+    """
+    await _validate_refs(session, payload.group_id, payload.proxy_id)
+    auto_created = payload.account_id is None
+    if payload.account_id is not None:
+        await assert_account_access(session, user, payload.account_id)
+        account = await _load_account(session, payload.account_id)
+        if payload.group_id is not None:
+            account.group_id = payload.group_id
+        if payload.proxy_id is not None:
+            account.proxy_id = payload.proxy_id
+    else:
+        account = TgAccount(
+            phone_masked="扫码登录",
+            group_id=payload.group_id,
+            proxy_id=payload.proxy_id,
+            status=AccountStatus.pending,
+            current_task=CurrentTask.idle,
+            last_error="",
+            import_source="manual",
+        )
+        session.add(account)
+        await session.flush()
+
+    login_id = uuid.uuid4()
+    task = await enqueue_task(
+        session,
+        type=TaskType.login_start,
+        account_id=account.id,
+        payload={
+            "mode": "qr",
+            "login_id": str(login_id),
+            "auto_created": auto_created,
+        },
+        created_by=user.id,
+        priority=10,
+    )
+    await write_audit(
+        session,
+        action="account.login_qr_start",
+        user_id=user.id,
+        account_id=account.id,
+        target_type="account",
+        target_id=str(account.id),
+        detail={"login_id": str(login_id), "task_id": str(task.id), "auto_created": auto_created},
+    )
+    await session.commit()
+
+    # 先放一份 pending 快照：页面在 Worker 领到任务之前轮询也不会 404
+    try:
+        await events.save_qr_login(
+            get_redis(),
+            login_id,
+            {
+                "account_id": str(account.id),
+                "status": "pending",
+                "qr_url": None,
+                "expires_at": None,
+                "message": "已排队生成二维码，请稍候…",
+                "phone_masked": account.phone_masked,
+            },
+            ttl=max(60, int(settings.qr_login_ttl_seconds)) + 120,
+        )
+    except Exception:  # noqa: BLE001 - Redis 抖动交给 Worker 随后覆盖
+        logger.warning("写入扫码登录初始状态失败 login_id=%s", login_id, exc_info=True)
+
+    logger.info(
+        "已排队扫码登录 account_id=%s login_id=%s task_id=%s",
+        account.id,
+        login_id,
+        task.id,
+    )
+    return QrLoginStartResponse(
+        login_id=login_id,
+        account_id=account.id,
+        status="pending",
+        task_id=task.id,
+    )
+
+
+@router.get(
+    "/login/qr/{login_id}",
+    response_model=QrLoginStateResponse,
+    summary="扫码登录：轮询二维码与进度",
+)
+async def login_qr_state(
+    login_id: uuid.UUID,
+    session: AsyncSession = Depends(get_session),
+    user: User = Depends(get_current_user),
+) -> QrLoginStateResponse:
+    state = await events.load_qr_login(get_redis(), login_id)
+    if not state:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="扫码会话已过期，请重新生成二维码",
+        )
+    account_id = state.get("account_id")
+    if not account_id:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="扫码会话缺少账号信息")
+    await assert_account_access(session, user, uuid.UUID(str(account_id)))
+    return QrLoginStateResponse(
+        login_id=login_id,
+        account_id=uuid.UUID(str(account_id)),
+        status=str(state.get("status") or "pending"),
+        qr_url=state.get("qr_url"),
+        expires_at=state.get("expires_at"),
+        message=str(state.get("message") or ""),
+        phone_masked=state.get("phone_masked"),
+    )
+
+
+@router.post("/login/qr/{login_id}/cancel", summary="扫码登录：取消")
+async def login_qr_cancel(
+    login_id: uuid.UUID,
+    session: AsyncSession = Depends(get_session),
+    user: User = Depends(get_current_user),
+) -> dict:
+    state = await events.load_qr_login(get_redis(), login_id)
+    if not state:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="扫码会话已过期")
+    account_id = state.get("account_id")
+    if account_id:
+        await assert_account_access(session, user, uuid.UUID(str(account_id)))
+    await events.request_qr_cancel(get_redis(), login_id)
+    logger.info("用户取消扫码登录 login_id=%s", login_id)
+    return {"ok": True, "message": "已请求取消，Worker 会断开这次扫码连接"}
+
+
+@router.post("/login/qr/{login_id}/password", summary="扫码登录：提交两步验证密码")
+async def login_qr_password(
+    login_id: uuid.UUID,
+    payload: QrLoginPasswordRequest,
+    session: AsyncSession = Depends(get_session),
+    user: User = Depends(get_current_user),
+) -> dict:
+    state = await events.load_qr_login(get_redis(), login_id)
+    if not state:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="扫码会话已过期")
+    account_id = state.get("account_id")
+    if account_id:
+        await assert_account_access(session, user, uuid.UUID(str(account_id)))
+    if state.get("status") != "password_required":
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="当前扫码会话不需要两步验证密码",
+        )
+    await events.save_qr_password(get_redis(), login_id, payload.password)
+    logger.info("用户提交扫码两步验证密码 login_id=%s", login_id)
+    return {"ok": True, "message": "密码已交给 Worker 校验"}
 
 
 # ---------------- 检测 ----------------

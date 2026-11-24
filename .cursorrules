@@ -1,0 +1,7 @@
+# Project guidance
+
+- Keep backend changes in `backend/` aligned with the existing FastAPI, SQLAlchemy, Alembic, and worker architecture.
+- Keep frontend changes in `frontend/` type-safe and consistent with the existing React, TypeScript, and Vite patterns.
+- Keep credentials and environment-specific values in local environment files. Never commit secrets.
+- Preserve existing API contracts and database migration ordering when changing backend behavior.
+- Run the narrowest relevant backend tests and `npm run build` in `frontend/` before completing substantial changes.

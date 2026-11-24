@@ -170,12 +170,59 @@ export interface LoginStepResponse {
   task_id?: UUID | null;
 }
 
+export interface LoginState {
+  account_id: UUID;
+  step: LoginStep;
+  /** Telegram 实际采用的投递方式，例如「Telegram App」「短信」 */
+  delivery?: string | null;
+  /** 备选方式；为空表示 Telegram 没给短信/语音备选 */
+  next_type?: string | null;
+  timeout?: number | null;
+  phone_masked?: string | null;
+}
+
 export interface LoginStartRequest {
-  phone: string;
+  /** 已有账号重新登录时可省略：后端会解密 phone_enc 里的号码 */
+  phone?: string;
   group_id?: UUID | null;
   proxy_id?: UUID | null;
   /** 对已有账号「重新登录」时传 */
   account_id?: UUID | null;
+}
+
+// ---------------------------------------------------------------- 扫码登录
+
+export type QrLoginStatus =
+  | 'pending'
+  | 'password_required'
+  | 'done'
+  | 'expired'
+  | 'failed'
+  | 'cancelled';
+
+export interface QrLoginStartRequest {
+  /** 新号扫码时为空：后端先建待登录占位号，授权后再回填手机号 */
+  account_id?: UUID | null;
+  group_id?: UUID | null;
+  proxy_id?: UUID | null;
+}
+
+export interface QrLoginStartResponse {
+  login_id: UUID;
+  account_id: UUID;
+  status: QrLoginStatus;
+  task_id?: UUID | null;
+}
+
+export interface QrLoginState {
+  login_id: UUID;
+  account_id: UUID;
+  status: QrLoginStatus;
+  /** tg://login?token=…，前端渲染成二维码 */
+  qr_url?: string | null;
+  expires_at?: string | null;
+  message: string;
+  phone_masked?: string | null;
 }
 
 // ---------------------------------------------------------------- 检测
@@ -961,6 +1008,8 @@ export interface GroupBroadcastRequest extends CampaignScopeRequest {
   text?: string | null;
   texts?: string[] | null;
   naturalize?: boolean;
+  /** 忽略活跃时段（默认 8-24 点）限制，凌晨也立即发 */
+  ignore_active_hours?: boolean;
 }
 
 export interface MaterialSendRequest extends CampaignScopeRequest, CampaignDispatchMixin {
@@ -973,6 +1022,8 @@ export interface MaterialSendRequest extends CampaignScopeRequest, CampaignDispa
 
 export interface JoinGroupRequest extends CampaignScopeRequest {
   target: string;
+  /** 忽略活跃时段（默认 8-24 点）限制，凌晨也立即加群 */
+  ignore_active_hours?: boolean;
 }
 
 export interface LeaveGroupRequest extends CampaignScopeRequest {

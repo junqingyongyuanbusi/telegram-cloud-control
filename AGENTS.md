@@ -1,4 +1,4 @@
-# Telegram 云控 —— 项目约定
+# wikifxtg云控 —— 项目约定
 
 > 文档索引：[docs/README.md](docs/README.md) · 相邻：贡献指南 [docs/CONTRIBUTING.md](docs/CONTRIBUTING.md) · 快速开始 [docs/GETTING_STARTED.md](docs/GETTING_STARTED.md)
 

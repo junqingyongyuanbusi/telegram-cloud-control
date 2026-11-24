@@ -18,7 +18,7 @@ export interface TestMessageModalProps {
   onClose: () => void;
 }
 
-const DEFAULT_TEXT = '这是一条测试消息（来自 Telegram 云控）';
+const DEFAULT_TEXT = '这是一条测试消息（来自 wikifxtg云控）';
 
 export function TestMessageModal({ open, botLabel, botId, chatId, onClose }: TestMessageModalProps) {
   const [text, setText] = useState(DEFAULT_TEXT);

@@ -1171,6 +1171,8 @@ export default function Campaigns() {
             drop_author: Boolean(values.drop_author),
             // 只发给「确实在目标群里」的号：提交时后端按会话列表自动过滤
             only_members: values.only_members !== false,
+            // 跳过「活跃时段」闸门：最小间隔 / 每日配额 / 熔断照常
+            ignore_active_hours: Boolean(values.ignore_active_hours),
           })}
           submit={(payload) => campaignApi.groupBroadcast(payload as unknown as GroupBroadcastRequest)}
           scheduleAction="group_broadcast"
@@ -1210,6 +1212,16 @@ export default function Campaigns() {
             tooltip="提交时自动过滤掉「不在这个群里」的号——它们发出去只会失败，还白占队列、多挨一次限流"
           >
             <Switch />
+          </Form.Item>
+          <Form.Item
+            label="忽略活跃时段"
+            name="ignore_active_hours"
+            valuePropName="checked"
+            initialValue={false}
+            className="tg-bc-toggle"
+            tooltip="打开后不受「活跃时段（默认 8-24 点）」限制，凌晨也立即发；最小间隔 / 每日配额 / 熔断照常"
+          >
+            <Switch checkedChildren="立即" unCheckedChildren="按时段" />
           </Form.Item>
         </ActionTab>
       ),
@@ -1298,6 +1310,8 @@ export default function Campaigns() {
             forward_from_chat_id: values.forward_from_chat_id ?? null,
             forward_from_message_id: values.forward_from_message_id ?? null,
             drop_author: Boolean(values.drop_author),
+            // 忽略活跃时段：凌晨也立即加群（熔断 / 最小间隔 / 每日配额照常）
+            ignore_active_hours: Boolean(values.ignore_active_hours),
           })}
           submit={(payload) => campaignApi.joinGroup(payload as unknown as JoinGroupRequest)}
         >
@@ -1349,6 +1363,16 @@ export default function Campaigns() {
             tooltip="等验证机器人发来验证消息的最长时间。验证链接寿命很短（NuoMi 60 秒、佩奇 300 秒），设太长没有意义"
           >
             <InputNumber min={30} max={600} step={30} style={{ width: 160 }} />
+          </Form.Item>
+          <Form.Item
+            label="忽略活跃时段"
+            name="ignore_active_hours"
+            valuePropName="checked"
+            initialValue={false}
+            className="tg-field-switch"
+            tooltip="默认只在本地 08:00–24:00 执行加群，避开凌晨批量操作这种机器特征；打开后凌晨也立即执行，熔断 / 最小间隔 / 每日配额仍然生效"
+          >
+            <Switch checkedChildren="立即" unCheckedChildren="按时段" />
           </Form.Item>
         </ActionTab>
       ),

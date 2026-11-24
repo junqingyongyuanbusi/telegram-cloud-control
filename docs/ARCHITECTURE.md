@@ -2,7 +2,7 @@
 
 > 文档索引：[docs/README.md](README.md) · 相邻：接口契约 [API_CONTRACT.md](API_CONTRACT.md) · 部署 [DEPLOYMENT.md](DEPLOYMENT.md)
 
-本文说明这套「Telegram 云控」控制台的结构、数据流与关键不变量。产品范围见 [规划.md](../规划.md)，
+本文说明这套「wikifxtg云控」控制台的结构、数据流与关键不变量。产品范围见 [规划.md](../规划.md)，
 接口细节见 [API_CONTRACT.md](API_CONTRACT.md)。
 
 ## 1. 进程与职责

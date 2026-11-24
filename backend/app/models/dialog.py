@@ -60,6 +60,10 @@ class Dialog(Base, TimestampMixin):
     # 对方是谁（私信时用于来源标注）
     peer_display: Mapped[str] = mapped_column(String(255), nullable=False, default="")
 
+    # 当前账号能否在该群发言：频道（非管理员）/ 被禁言 / 被踢的群为 False。
+    # 群发页的目标群只列能发言的，选进去也发不出去的群没有意义。
+    can_send: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+
     unread_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     is_pinned: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     last_message_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True, index=True)

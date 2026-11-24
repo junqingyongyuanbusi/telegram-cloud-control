@@ -2,7 +2,7 @@
 
 <img src="docs/assets/logo.png" width="132" alt="TGcloud">
 
-<h1>Telegram 云控</h1>
+<h1>wikifxtg云控</h1>
 
 <p><b>面向自有账号与官方 Bot 的 Telegram 运维控制台</b><br>
 在线状态 · 会话收件箱 · 任务队列 · Bot 转发 · 全链路审计</p>

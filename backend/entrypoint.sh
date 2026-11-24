@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Telegram 云控 —— API / Worker 统一入口
+# wikifxtg云控 —— API / Worker 统一入口
 #
 # 职责：
 #   ROLE=api    ：等 Postgres -> 生产密钥自检 -> alembic upgrade head -> 可选建管理员 -> exec 命令

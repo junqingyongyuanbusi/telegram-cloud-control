@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Alert, Form, Input, Modal, Select, Steps, Typography } from 'antd';
+import { Alert, Button, Form, Input, Modal, Select, Steps, Typography } from 'antd';
 import { accountLoginApi } from '../api/endpoints';
 import { ApiError } from '../api/client';
 import type { AccountOut, GroupOut, LoginStep, LoginStepResponse, ProxyOut } from '../api/types';
@@ -16,7 +16,8 @@ interface Props {
 }
 
 interface StartForm {
-  phone: string;
+  /** 已有账号重新登录时可以留空：后端用 phone_enc 里加密保存的号码 */
+  phone?: string;
   group_id?: string;
   proxy_id?: string;
 }
@@ -39,6 +40,9 @@ export function AccountLoginWizard({ open, account, groups, proxies, onCancel, o
   const [taskId, setTaskId] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [delivery, setDelivery] = useState<string | null>(null);
+  const [nextType, setNextType] = useState<string | null>(null);
+  const [stateEpoch, setStateEpoch] = useState(0);
 
   useEffect(() => {
     if (!open) return;
@@ -48,8 +52,37 @@ export function AccountLoginWizard({ open, account, groups, proxies, onCancel, o
     setMessage('');
     setTaskId(null);
     setError(null);
+    setDelivery(null);
+    setNextType(null);
+    setStateEpoch(0);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, account?.id]);
+
+  // 等待输码时轮询：Telegram 到底把码发到了短信还是已登录客户端
+  useEffect(() => {
+    if (!open || step !== 1 || !accountId) return;
+    let stopped = false;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    let tries = 0;
+    const poll = async () => {
+      tries += 1;
+      try {
+        const state = await accountLoginApi.state(accountId);
+        if (stopped) return;
+        setDelivery(state.delivery || null);
+        setNextType(state.next_type || null);
+        if (state.delivery) return; // 已知投递方式，停止轮询
+      } catch {
+        // Worker 可能还没把状态写进 Redis，继续重试
+      }
+      if (!stopped && tries < 20) timer = setTimeout(poll, 2500);
+    };
+    timer = setTimeout(poll, 1000);
+    return () => {
+      stopped = true;
+      if (timer) clearTimeout(timer);
+    };
+  }, [open, step, accountId, stateEpoch]);
 
   const applyStep = (res: LoginStepResponse) => {
     setAccountId(res.account_id);
@@ -71,12 +104,30 @@ export function AccountLoginWizard({ open, account, groups, proxies, onCancel, o
     try {
       applyStep(
         await accountLoginApi.start({
-          phone: values.phone.trim(),
+          phone: values.phone?.trim() || undefined,
           group_id: values.group_id || null,
           proxy_id: values.proxy_id || null,
           account_id: account?.id ?? null,
         }),
       );
+    } catch (err) {
+      fail(err);
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  // 同一 auth key 的 ResendCode 会被 Telegram 判为「方式已用尽」；
+  // 重新发起登录会换新的 auth key 和新码，这是唯一可靠的重发方式。
+  const handleResend = async () => {
+    if (!accountId) return;
+    setSubmitting(true);
+    setError(null);
+    setDelivery(null);
+    setNextType(null);
+    try {
+      applyStep(await accountLoginApi.start({ account_id: accountId }));
+      setStateEpoch((n) => n + 1);
     } catch (err) {
       fail(err);
     } finally {
@@ -117,6 +168,8 @@ export function AccountLoginWizard({ open, account, groups, proxies, onCancel, o
     return undefined;
   };
 
+  const appDelivery = !!delivery && delivery.includes('App');
+
   return (
     <Modal
       open={open}
@@ -155,6 +208,26 @@ export function AccountLoginWizard({ open, account, groups, proxies, onCancel, o
         />
       ) : null}
 
+      {step === 1 && delivery ? (
+        <Alert
+          type={appDelivery ? 'warning' : 'info'}
+          showIcon
+          style={{ marginBottom: 12 }}
+          message={
+            appDelivery
+              ? '验证码发到了 Telegram 客户端，不是短信'
+              : `验证码已通过「${delivery}」发送`
+          }
+          description={
+            appDelivery
+              ? nextType
+                ? `请打开这个号已登录的 Telegram 客户端，进官方「Telegram」聊天（777000）查看；Telegram 还提供「${nextType}」作为备选。`
+                : '请打开这个号已登录的 Telegram 客户端，进官方「Telegram」聊天（777000）查看。Telegram 没有给这个号提供短信备选，重发也只会再发到客户端；如果找不到任何已登录设备，请改用扫码登录。'
+              : '请留意对应渠道；没收到可以等倒计时结束后重发。'
+          }
+        />
+      ) : null}
+
       <Form form={form} layout="vertical" onFinish={handleFinish} autoComplete="off">
         {step === 0 ? (
           <>
@@ -162,14 +235,14 @@ export function AccountLoginWizard({ open, account, groups, proxies, onCancel, o
               label="完整手机号（带国家码）"
               name="phone"
               initialValue=""
-              rules={[{ required: true, message: '请输入完整手机号' }]}
+              rules={[{ required: !account, message: '请输入完整手机号' }]}
               extra={
                 account
-                  ? '列表里只存脱敏号，重新登录需要再填一次完整手机号；验证码仍然只发到这个号自己。'
-                  : '验证码只发到这个号自己，不导入别人的会话文件。'
+                  ? '可以留空：后端会用库里加密保存的号码发起登录；填了则以填的为准。发送方式是短信还是 Telegram 客户端，由 Telegram 决定。'
+                  : '只登录这个号自己，不导入别人的会话文件。发送方式是短信还是 Telegram 客户端，由 Telegram 决定。'
               }
             >
-              <Input placeholder="+12025550143" allowClear />
+              <Input placeholder={account ? '留空则用库里保存的号码' : '+12025550143'} allowClear />
             </Form.Item>
             <Form.Item label="分组（可选）" name="group_id">
               <Select
@@ -193,10 +266,16 @@ export function AccountLoginWizard({ open, account, groups, proxies, onCancel, o
             label="Telegram 发来的验证码"
             name="code"
             rules={[{ required: true, message: '请输入验证码' }]}
-            extra="验证码只填这个号收到的，不要填别人的。"
+            extra="只填这个号收到的码；没收到先看该号已登录客户端的官方「Telegram」聊天（777000）。"
           >
             <Input placeholder="12345" allowClear autoFocus />
           </Form.Item>
+        ) : null}
+
+        {step === 1 ? (
+          <Button type="link" size="small" onClick={handleResend} loading={submitting} style={{ padding: 0 }}>
+            没收到？重新发送验证码
+          </Button>
         ) : null}
 
         {step === 2 ? (

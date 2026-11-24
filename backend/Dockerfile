@@ -1,4 +1,4 @@
-# Telegram 云控 —— API / Worker 共用镜像
+# wikifxtg云控 —— API / Worker 共用镜像
 #
 # 构建上下文：backend/（见 docker-compose.yml 的 build.context）
 # api 与 worker 用同一镜像，靠 compose 的 command 区分：

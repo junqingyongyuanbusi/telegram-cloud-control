@@ -1,4 +1,4 @@
-# Telegram 云控 —— Postgres 备份 crontab 片段
+# wikifxtg云控 —— Postgres 备份 crontab 片段
 #
 # 装法（在仓库根目录执行，宿主 cron）：
 #   crontab -l 2>/dev/null > /tmp/tgcc.cron

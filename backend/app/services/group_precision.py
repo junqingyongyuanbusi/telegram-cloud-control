@@ -268,6 +268,40 @@ def permission_verdict(chat: Any) -> tuple[str, bool]:
     return "open", False
 
 
+def can_send_verdict(chat: Any, participant: Any = None) -> bool:
+    """当前账号能否在 chat 里发言。
+
+    `participant` 是 `channels.GetParticipant(participant='me')` 返回的成员信息（可为空）：
+
+    - 群主 / 管理员：不受默认禁言限制，能发；
+    - 被单独禁言（`banned_rights.send_messages/send_plain`）：不能发；
+    - 频道（`broadcast=True`）：非管理员不能发；
+    - 群默认禁言（`default_banned_rights`）：不能发。
+
+    只看 `default_banned_rights` 会漏掉「这个号被单独禁言」和「频道只有管理员能发」，
+    所以调用方应尽量把 participant 一起传进来。
+    """
+
+    if participant is not None:
+        name = type(participant).__name__
+        if name in ("ChannelParticipantCreator", "ChannelParticipantAdmin"):
+            return True
+        banned = getattr(participant, "banned_rights", None)
+        if banned is not None and (
+            bool(getattr(banned, "send_messages", False))
+            or bool(getattr(banned, "send_plain", False))
+        ):
+            return False
+    if bool(getattr(chat, "broadcast", False)):
+        return False
+    rights = getattr(chat, "default_banned_rights", None)
+    if rights is not None and (
+        bool(getattr(rights, "send_messages", False)) or bool(getattr(rights, "send_plain", False))
+    ):
+        return False
+    return True
+
+
 def is_public_entity(chat: Any) -> bool:
     return bool(str(getattr(chat, "username", "") or "").strip())
 

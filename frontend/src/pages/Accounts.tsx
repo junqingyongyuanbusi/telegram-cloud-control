@@ -13,6 +13,8 @@ import {
   ThunderboltOutlined,
   UserSwitchOutlined,
   ImportOutlined,
+  LoginOutlined,
+  QrcodeOutlined,
 } from '@ant-design/icons';
 import { api } from '../api/client';
 import { accountApi, accountBulkApiExtra, exportApi, groupApi, proxyApi, userApi } from '../api/endpoints';
@@ -42,6 +44,8 @@ import { BulkActionModal, CreateAccountModal, EditAccountModal, ProfileModal } f
 import BulkResultModal from '../features/accounts/BulkResultModal';
 import AccountAvatar, { forgetAvatar } from '../features/accounts/AccountAvatar';
 import AccountImportModal from '../features/accounts/AccountImportModal';
+import AccountLoginWizard from '../components/AccountLoginWizard';
+import QrLoginModal from '../components/QrLoginModal';
 import { useRowSelection } from '../features/accounts/useRowSelection';
 import type { AccountOut, AccountStatus, BulkAction, BulkResultOut, CurrentTask } from '../api/types';
 
@@ -95,6 +99,11 @@ export default function Accounts() {
   const [bulkResult, setBulkResult] = useState<BulkResultOut | null>(null);
   // 账号矩阵入口：导入向导、深度验活、节流设置
   const [importOpen, setImportOpen] = useState(false);
+  // 登录入口：验证码登录（已有号可留空手机号）与扫码登录
+  const [loginOpen, setLoginOpen] = useState(false);
+  const [loginAccount, setLoginAccount] = useState<AccountOut | null>(null);
+  const [qrOpen, setQrOpen] = useState(false);
+  const [qrAccount, setQrAccount] = useState<AccountOut | null>(null);
   // 申诉解封：模拟真人向官方 @SpamBot 走一遍流程（24 小时内不重复）
   // 批量删除：不可恢复，弹窗里要手打 DELETE 才让提交（接口也再挡一道）
   const [bulkDeleteOpen, setBulkDeleteOpen] = useState(false);
@@ -327,6 +336,8 @@ export default function Accounts() {
                 items: [
                   { key: 'check', icon: <SafetyCertificateOutlined />, label: '单号检测' },
                   { key: 'sync', icon: <CloudSyncOutlined />, label: '同步会话' },
+                  { key: 'login', icon: <LoginOutlined />, label: '验证码登录' },
+                  { key: 'qr', icon: <QrcodeOutlined />, label: '扫码登录' },
                   { key: 'edit', icon: <EditOutlined />, label: '改分组 / 代理' },
                   { key: 'profile', icon: <UserSwitchOutlined />, label: '改资料' },
                   { key: 'release', icon: <ThunderboltOutlined />, label: '清除租约' },
@@ -340,6 +351,14 @@ export default function Accounts() {
                 onClick: ({ key }) => {
                   if (key === 'check') void handleCheck(record);
                   if (key === 'sync') void handleSync(record);
+                  if (key === 'login') {
+                    setLoginAccount(record);
+                    setLoginOpen(true);
+                  }
+                  if (key === 'qr') {
+                    setQrAccount(record);
+                    setQrOpen(true);
+                  }
                   if (key === 'edit') setEditAccount(record);
                   if (key === 'profile') setProfileAccount(record);
                   if (key === 'release') void handleReleaseLease(record);
@@ -598,10 +617,27 @@ export default function Accounts() {
       description="状态、分组、心跳、当前任务；异常口径与工作台一致（不等于「正常」，也不是「待登录」）。"
       actions={
         <Space>
+          <Button
+            icon={<LoginOutlined />}
+            onClick={() => {
+              setLoginAccount(null);
+              setLoginOpen(true);
+            }}
+          >
+            验证码登录
+          </Button>
+          <Button
+            icon={<QrcodeOutlined />}
+            onClick={() => {
+              setQrAccount(null);
+              setQrOpen(true);
+            }}
+          >
+            扫码登录
+          </Button>
           <Button icon={<ImportOutlined />} onClick={() => setImportOpen(true)}>
             批量导入
           </Button>
-
         </Space>
       }
     >
@@ -809,6 +845,30 @@ export default function Accounts() {
         onCancel={() => setCreateOpen(false)}
         onSuccess={() => {
           setCreateOpen(false);
+          reloadAll();
+        }}
+      />
+
+      <AccountLoginWizard
+        open={loginOpen}
+        account={loginAccount}
+        groups={groups.data ?? []}
+        proxies={proxies.data ?? []}
+        onCancel={() => setLoginOpen(false)}
+        onDone={() => {
+          setLoginOpen(false);
+          reloadAll();
+        }}
+      />
+
+      <QrLoginModal
+        open={qrOpen}
+        account={qrAccount}
+        groups={groups.data ?? []}
+        proxies={proxies.data ?? []}
+        onClose={() => setQrOpen(false)}
+        onDone={() => {
+          setQrOpen(false);
           reloadAll();
         }}
       />

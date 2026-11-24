@@ -43,6 +43,8 @@ ACTION_LABELS = {
     "account.login_start": "发起登录",
     "account.login_code": "提交验证码",
     "account.login_password": "提交两步密码",
+    "account.login_qr_start": "发起扫码登录",
+    "account.login_qr": "扫码登录成功",
     "account.check": "账号检测",
     "account.update": "修改账号",
     "account.delete": "删除账号",

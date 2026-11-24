@@ -174,7 +174,7 @@ def create_app() -> FastAPI:
     app = FastAPI(
         title=settings.app_name,
         version=__version__,
-        description="Telegram 云控 API：HTTP + WebSocket + 官方 Bot Webhook",
+        description="wikifxtg云控 API：HTTP + WebSocket + 官方 Bot Webhook",
         lifespan=lifespan,
     )
 

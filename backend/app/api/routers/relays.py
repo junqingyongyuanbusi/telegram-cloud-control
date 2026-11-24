@@ -68,7 +68,7 @@ class RelayTestRequest(BaseModel):
 
 
 #: 测试消息默认文案
-RELAY_TEST_TEXT = "这是一条测试消息（Telegram 云控）"
+RELAY_TEST_TEXT = "这是一条测试消息（wikifxtg云控）"
 
 
 class RelayLinkListResponse(BaseModel):

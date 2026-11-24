@@ -118,8 +118,14 @@ def map_exception_to_status(exc: BaseException) -> Optional[AccountStatus]:
         # 临时限流：等几十秒就过去，**不是封号**——标成「临时受限」而不是「冻结」，
         # 这样界面上能一眼看出「它在歇，不是在死」
         return AccountStatus.limited
-    if isinstance(exc, (UserBannedInChannelError, ChatWriteForbiddenError)):
-        # 只是**某一个**群/频道里没发言权，号本身完全正常，不改账号状态
+    if isinstance(exc, UserBannedInChannelError):
+        # 账号级 spam 限制：Telegram 判定这个号在**所有**超级群/频道里都不能发言。
+        # 实测过 channels.getParticipant 仍返回 ChannelParticipantSelf、banned_rights 为空，
+        # 单看会话权限查不出来，只有真发一次才会撞上；私聊不受影响。
+        # 不标冻结的话，界面还挂着「正常」，换个群继续撞同一堵墙。
+        return AccountStatus.frozen
+    if isinstance(exc, ChatWriteForbiddenError):
+        # 只是**某一个**群/频道里没发言权（频道非管理员、群禁言），号本身完全正常
         return None
     if isinstance(exc, (PeerFloodError, UserRestrictedError)):
         # 这两个是账号级的：PeerFlood（被判定发垃圾信息）与 UserRestricted（整号受限），
@@ -139,6 +145,11 @@ FRIENDLY_ERROR_HINTS = (
         PeerFloodError,
         "触发发送频率限制（PeerFlood）：账号暂时不能主动发消息，先停手，"
         "降低每日额度、拉长间隔，过一两天再试。",
+    ),
+    (
+        UserBannedInChannelError,
+        "账号被 Telegram 判定为垃圾消息发送者：所有超级群/频道都不能发言（私聊正常）。"
+        "去 Telegram 里找 @SpamBot 申诉，限制解除前这个号不能做群发。",
     ),
     (
         AuthKeyDuplicatedError,
@@ -188,7 +199,7 @@ def describe_exception(exc: BaseException) -> str:
     elif isinstance(exc, PeerFloodError):
         text = "该号被 Telegram 限制发送（PeerFlood），已冻结"
     elif isinstance(exc, UserBannedInChannelError):
-        text = "该号在目标会话里被禁言"
+        text = "该号被 Telegram 限制，所有超级群/频道都不能发言"
     elif isinstance(exc, UserRestrictedError):
         text = "该号被 Telegram 限制"
     elif isinstance(exc, ChatWriteForbiddenError):

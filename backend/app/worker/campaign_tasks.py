@@ -32,6 +32,7 @@ from app.config import settings
 from app.models import (
     ACCOUNT_STATUS_LABELS,
     AccountStatus,
+    DialogChannel,
     DialogKind,
     MATERIAL_KIND_LABELS,
     Material,
@@ -43,10 +44,10 @@ from app.models import (
     TgAccount,
 )
 from app.services.ai import ai_service
-from app.services.inbound import publish_message
+from app.services.inbound import publish_message, upsert_dialog
 from app.services.throttle import action_cost, allow_action, note_flood, record_action
 from app.worker.handlers import MessageData, persist_message
-from app.worker.entities import resolve_chat_entity, resolve_entity
+from app.worker.entities import resolve_can_send, resolve_chat_entity, resolve_entity
 from app.worker.group_verify import GroupVerifier
 from app.worker.humanize import (
     naturalize,
@@ -133,14 +134,29 @@ class CampaignTasksMixin:
         await self._apply_status(session, account, exc)
 
     async def _throttle_gate(
-        self, account: TgAccount, task: Task, *, cost: Optional[int] = None, task_type: Optional[str] = None
+        self,
+        account: TgAccount,
+        task: Task,
+        *,
+        cost: Optional[int] = None,
+        task_type: Optional[str] = None,
+        ignore_active_hours: bool = False,
     ) -> None:
         """发出前的节流闸门：熔断 / 活跃时段 / 最小间隔 / 每日配额四道检查。
 
         不通过时按「可重试失败 + 顺延」处理，绝不硬发出去换个 PeerFlood 回来。
+        `ignore_active_hours` 只跳过活跃时段（用户要求立刻发），其余三道照常；
+        任务 payload 里带 `ignore_active_hours=true` 时同样生效，各任务类型不用各自接线。
         """
         kind = task_type or task.type.value
-        decision = await allow_action(self.worker.redis, account, task_type=kind, cost=cost)
+        decision = await allow_action(
+            self.worker.redis,
+            account,
+            task_type=kind,
+            cost=cost,
+            ignore_active_hours=ignore_active_hours
+            or bool((task.payload or {}).get("ignore_active_hours")),
+        )
         if not decision.ok:
             self.log.warning(
                 "节流拦下动作",
@@ -632,6 +648,40 @@ class CampaignTasksMixin:
             value = value.rsplit("+", 1)[1]
         return value.split("?")[0].strip()
 
+    async def _remember_joined_chat(
+        self, session: Any, account: TgAccount, client: Any, chat: Any, target: str
+    ) -> None:
+        """把刚加入的群写进 dialogs：群发页的「目标群」只认这张表，不写就选不到。"""
+        try:
+            if chat is None:
+                chat = await resolve_chat_entity(client, target, session=session)
+            title = getattr(chat, "title", "") or ""
+            dialog = await upsert_dialog(
+                session,
+                channel=DialogChannel.user_account,
+                kind=DialogKind.group,
+                tg_chat_id=int(chat.id),
+                account_id=account.id,
+                title=title,
+                username=getattr(chat, "username", None),
+                peer_display=title,
+                member_count=getattr(chat, "participants_count", None),
+            )
+            # 刚加的群不一定是能发言的（频道、默认禁言群），顺手把权限记下来
+            can_send = await resolve_can_send(client, chat)
+            if can_send is not None:
+                dialog.can_send = can_send
+        except Exception as exc:  # noqa: BLE001 - 写会话失败不该把「已加群」判成失败
+            self.log.warning(
+                "加群后写会话失败",
+                extra={
+                    "worker_id": self.worker.worker_id,
+                    "account_id": str(account.id),
+                    "target": target,
+                    "error": str(exc)[:200],
+                },
+            )
+
     async def _join_group(self, session: Any, task: Task, account: Optional[TgAccount]) -> dict:
         """加群：邀请链接（ImportChatInvite）或公开群 @username（JoinChannel）。"""
         assert account is not None
@@ -643,8 +693,11 @@ class CampaignTasksMixin:
             raw_targets.insert(0, single)
         if not raw_targets:
             raise TaskFailure("加群任务缺少目标", retryable=False)
-        # 加群是高风险动作：按权重预检，并在成功加入后记账
-        await self._throttle_gate(account, task)
+        # 加群是高风险动作：按权重预检，并在成功加入后记账。
+        # 勾了「忽略活跃时段」时只跳过时段闸门，熔断 / 最小间隔 / 每日配额照常。
+        await self._throttle_gate(
+            account, task, ignore_active_hours=bool(payload.get("ignore_active_hours"))
+        )
         client = self._client(account.id)
         rng = self._campaign_rng(task, payload)
         min_interval = self._interval_of(payload, "min_interval", 20.0)
@@ -663,7 +716,9 @@ class CampaignTasksMixin:
                 )
                 invite_hash = _invite_hash_of(target)
                 if invite_hash:
-                    await client(functions.messages.ImportChatInviteRequest(hash=invite_hash))
+                    updates = await client(functions.messages.ImportChatInviteRequest(hash=invite_hash))
+                    # 邀请链接的返回里带 chats，直接拿来写会话；拿不到再按链接反查
+                    chat = next(iter(getattr(updates, "chats", None) or []), None)
                     via = "invite"
                 else:
                     # 公开群 / 频道：必须用 contacts.ResolveUsername 解析。
@@ -690,6 +745,8 @@ class CampaignTasksMixin:
                     via = "username"
                 await self._throttle_record(account, task)
                 joined += 1
+                # 加群成功后立刻落会话：否则群发页的目标群列表里看不到刚加的群
+                await self._remember_joined_chat(session, account, client, chat, target)
                 results.append({"target": target, "joined": True, "via": via})
                 await self._report_progress(
                     session, task, stage="joining",

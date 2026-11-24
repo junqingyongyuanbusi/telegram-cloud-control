@@ -20,22 +20,3 @@ export function writeRememberedUsername(username: string | null): void {
     /* localStorage 不可用时忽略 */
   }
 }
-
-const HINT_KEY = 'tgcc_login_hint_dismissed';
-
-/** 首次进入登录页的引导提示：是否已被用户关掉 */
-export function isLoginHintDismissed(): boolean {
-  try {
-    return window.localStorage.getItem(HINT_KEY) === '1';
-  } catch {
-    return false;
-  }
-}
-
-export function dismissLoginHint(): void {
-  try {
-    window.localStorage.setItem(HINT_KEY, '1');
-  } catch {
-    /* 忽略 */
-  }
-}
