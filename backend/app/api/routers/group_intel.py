@@ -131,6 +131,11 @@ async def search_public_groups(
             "limit": payload.per_keyword,
             "min_members": payload.min_members,
             "kind": payload.kind,
+            "regions": payload.regions,
+            "languages": payload.languages,
+            "max_queries": payload.max_queries,
+            "expand_linked_chats": payload.expand_linked_chats,
+            "max_linked_chats": payload.max_linked_chats,
         },
         priority=65,
     )

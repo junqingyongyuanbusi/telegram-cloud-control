@@ -225,3 +225,29 @@ class SearchGroupsRequest(BulkScopeRequest):
     per_keyword: int = Field(default=50, ge=1, le=100, description="每个关键词最多取多少个结果")
     min_members: int = Field(default=0, ge=0, le=1000000, description="成员数门槛：小于这个数的不收")
     kind: str = Field(default="any", pattern="^(any|group|channel)$", description="只要群 / 只要频道 / 都要")
+    regions: List[str] = Field(
+        default_factory=list,
+        max_length=10,
+        description="地区扩展：MY/SG/ID/TH 或自定义地名；留空则只搜原始关键词",
+    )
+    languages: List[str] = Field(
+        default_factory=list,
+        max_length=5,
+        description="群组后缀语言：ms/en/zh/id/th；留空则用地区预设",
+    )
+    max_queries: int = Field(
+        default=120,
+        ge=1,
+        le=300,
+        description="本轮最多执行多少个查询（含原始关键词），防止展开过多触发限流",
+    )
+    expand_linked_chats: bool = Field(
+        default=True,
+        description="是否从公开频道展开 linked_chat 讨论群（只读，不加群）",
+    )
+    max_linked_chats: int = Field(
+        default=50,
+        ge=0,
+        le=200,
+        description="本轮最多展开多少个频道/群的 linked_chat",
+    )

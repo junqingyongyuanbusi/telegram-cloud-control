@@ -29,8 +29,10 @@ from app.services.group_intel import (
     upsert_member,
     upsert_profile,
 )
+from app.services.group_search import expand_queries
 from app.worker.entities import resolve_chat_entity, resolve_entity
 from app.worker.campaign_tasks import _invite_hash_of, _username_from_target
+from app.worker.humanize import sleep_human
 from app.worker.telethon_account import TaskFailure, describe_exception, flood_wait_seconds
 
 logger = logging.getLogger(__name__)
@@ -341,11 +343,15 @@ class GroupIntelMixin:
         return {"total": len(raw_links), "ok": ok_count, "failed": len(raw_links) - ok_count, "results": results[:200]}
 
     async def _search_groups(self, session: Any, task: Task, account: Optional[TgAccount]) -> dict:
-        """按关键词找公开群：走 **Telegram 原生搜索**（`contacts.Search`），不依赖第三方群目录站。
+        """按关键词找公开群：原生搜索 + 查询扩展 + linked_chat 讨论群展开。
 
-        对手（彩虹）是靠 hao123 / soso 这类站收集群链接的——要爬、会失效、结果还旧。
-        官方接口直接返回匹配的公开群/频道，**连成员数一起给**，实时且无反爬。
-        找到的群落进群档案（来源标记 `keyword_search`），之后用筛群工具判定值不值得投。
+        做法不是把 `contacts.Search` 的 limit 调大（它没有 offset，调大也没用），而是：
+
+        1. 把「主题词 + 地区 + 语言」展开成多条查询，原始关键词永远先跑；
+        2. 搜索阶段用 `kind=any` 的思路**把频道也落档当种子**，不再提前把频道滤掉；
+        3. 对公开频道调 `GetFullChannel`，顺着 `linked_chat_id` 把讨论群补进来。
+
+        全程只读：`contacts.Search` / `GetFullChannel` 都不加群、不发消息。
         """
         assert account is not None
         self._ensure_sendable(account)
@@ -356,71 +362,260 @@ class GroupIntelMixin:
         per_keyword = max(1, min(int(payload.get("limit") or 50), 100))
         min_members = max(0, int(payload.get("min_members") or 0))
         want = str(payload.get("kind") or "any")  # any / group / channel
+        regions = [str(item).strip() for item in (payload.get("regions") or []) if str(item).strip()][:10]
+        languages = [str(item).strip() for item in (payload.get("languages") or []) if str(item).strip()][:5]
+        max_queries = max(1, min(int(payload.get("max_queries") or 120), 300))
+        expand_linked = bool(payload.get("expand_linked_chats", True))
+        max_linked = max(0, min(int(payload.get("max_linked_chats") or 50), 200))
+
+        queries = expand_queries(
+            keywords,
+            regions=regions,
+            languages=languages,
+            max_queries=max_queries,
+        )
+        if not queries:
+            raise TaskFailure("找群任务没有生成可用查询", retryable=False)
         client = self._client(account.id)
+        rng = self._campaign_rng(task, payload)
 
         results: list[dict] = []
-        seen_ids: set[int] = set()
+        seen_entities: set[int] = set()
+        hit_ids: set[int] = set()
+        seed_channels: dict[int, Any] = {}
+        linked_hits: list[dict] = []
+        metrics = {
+            "raw_chats": 0,
+            "stored_entities": 0,
+            "duplicates": 0,
+            "dropped_kind": 0,
+            "dropped_members": 0,
+            "query_errors": 0,
+            "linked_expanded": 0,
+            "linked_found": 0,
+            "linked_errors": 0,
+        }
+
+        def chat_kind(chat: Any) -> str:
+            if getattr(chat, "megagroup", False):
+                return "group"
+            if getattr(chat, "broadcast", False):
+                return "channel"
+            return "group"
+
+        def hit_payload(chat: Any, kind: str, members: Optional[int]) -> dict:
+            return {
+                "title": getattr(chat, "title", None) or "",
+                "username": getattr(chat, "username", None),
+                "tg_chat_id": int(getattr(chat, "id", 0) or 0),
+                "kind": kind,
+                "members": members,
+            }
+
+        async def store_chat(
+            chat: Any,
+            *,
+            source: str,
+            raw: dict,
+            full: Any = None,
+        ) -> bool:
+            """落档一个群/频道；失败只记日志，不影响整批搜索。"""
+
+            chat_id = int(getattr(chat, "id", 0) or 0)
+            if not chat_id:
+                return False
+            try:
+                await upsert_profile(
+                    session,
+                    account_id=account.id,
+                    tg_chat_id=chat_id,
+                    source=source,
+                    touch_collected_at=False,
+                    raw=raw,
+                    **profile_fields_from_entity(chat, full),
+                )
+                return True
+            except BaseException:  # noqa: BLE001 - 单个群落档失败不影响整批
+                self.log.debug("落档失败 tg_chat_id=%s source=%s", chat_id, source)
+                return False
+
         try:
-            for index, keyword in enumerate(keywords):
+            for index, item in enumerate(queries):
                 try:
-                    res = await client(functions.contacts.SearchRequest(q=keyword, limit=per_keyword))
-                except BaseException as exc:  # noqa: BLE001 - 单个词失败继续下一个
-                    results.append({"keyword": keyword, "ok": False, "error": f"{type(exc).__name__}: {str(exc)[:100]}"})
-                    continue
-                hits = []
-                for chat in getattr(res, "chats", []) or []:
-                    chat_id = int(getattr(chat, "id", 0) or 0)
-                    if not chat_id or chat_id in seen_ids:
-                        continue
-                    is_megagroup = bool(getattr(chat, "megagroup", False))
-                    is_broadcast = bool(getattr(chat, "broadcast", False))
-                    kind = "group" if is_megagroup else ("channel" if is_broadcast else "group")
-                    if want != "any" and kind != want:
-                        continue
-                    members = getattr(chat, "participants_count", None)
-                    if min_members and (members or 0) < min_members:
-                        continue
-                    seen_ids.add(chat_id)
-                    # 落进群档案：之后可以直接用「筛群」「采集成员」接着处理
-                    try:
-                        await upsert_profile(
-                            session,
-                            account_id=account.id,
-                            tg_chat_id=chat_id,
-                            source="keyword_search",
-                            touch_collected_at=False,
-                            **profile_fields_from_entity(chat),
-                        )
-                    except BaseException:  # noqa: BLE001 - 单个群落档失败不影响整批
-                        self.log.debug("落档失败 tg_chat_id=%s", chat_id)
-                    hits.append(
+                    res = await client(functions.contacts.SearchRequest(q=item.query, limit=per_keyword))
+                except BaseException as exc:  # noqa: BLE001 - 单条查询失败继续下一条
+                    metrics["query_errors"] += 1
+                    results.append(
                         {
-                            "title": getattr(chat, "title", None) or "",
-                            "username": getattr(chat, "username", None),
-                            "tg_chat_id": chat_id,
-                            "kind": kind,
-                            "members": members,
+                            "query": item.query,
+                            "keyword": item.keyword,
+                            "region": item.region,
+                            "lang": item.lang,
+                            "ok": False,
+                            "error": f"{type(exc).__name__}: {str(exc)[:100]}",
                         }
                     )
-                results.append({"keyword": keyword, "ok": True, "found": len(hits), "chats": hits[:50]})
-                await self._report_progress(
-                    session, task, stage="searching",
-                    detail=f"关键词「{keyword}」找到 {len(hits)} 个群（累计 {len(seen_ids)} 个）",
-                    scanned=index + 1, found=len(seen_ids), total=len(keywords),
+                    continue
+
+                raw_chats = list(getattr(res, "chats", []) or [])
+                metrics["raw_chats"] += len(raw_chats)
+                hits: list[dict] = []
+                for chat in raw_chats:
+                    chat_id = int(getattr(chat, "id", 0) or 0)
+                    if not chat_id:
+                        continue
+                    kind = chat_kind(chat)
+                    members = getattr(chat, "participants_count", None)
+                    is_new = chat_id not in seen_entities
+                    if is_new:
+                        seen_entities.add(chat_id)
+                        # 频道也落档：即使本次只要群，频道仍是 linked_chat 的种子。
+                        if await store_chat(
+                            chat,
+                            source="keyword_search",
+                            raw={
+                                "role": "seed" if kind == "channel" else "result",
+                                "query": item.query,
+                                "keyword": item.keyword,
+                                "region": item.region,
+                                "lang": item.lang,
+                            },
+                        ):
+                            metrics["stored_entities"] += 1
+                        if kind == "channel" and getattr(chat, "broadcast", False):
+                            seed_channels.setdefault(chat_id, chat)
+                    else:
+                        metrics["duplicates"] += 1
+
+                    if want != "any" and kind != want:
+                        metrics["dropped_kind"] += 1
+                        continue
+                    if min_members and (members or 0) < min_members:
+                        metrics["dropped_members"] += 1
+                        continue
+                    if chat_id in hit_ids:
+                        continue
+                    hit_ids.add(chat_id)
+                    hits.append(hit_payload(chat, kind, members))
+
+                results.append(
+                    {
+                        "query": item.query,
+                        "keyword": item.keyword,
+                        "region": item.region,
+                        "lang": item.lang,
+                        "template": item.template,
+                        "ok": True,
+                        "found": len(hits),
+                        "chats": hits[:50],
+                    }
                 )
-                if index < len(keywords) - 1:
-                    await sleep_human(2.0, 5.0, self._campaign_rng(task, payload))
+                await self._report_progress(
+                    session,
+                    task,
+                    stage="searching",
+                    detail=(
+                        f"查询「{item.query}」找到 {len(hits)} 个（累计 {len(hit_ids)} 个，"
+                        f"已存 {len(seen_entities)} 个实体）"
+                    ),
+                    scanned=index + 1,
+                    found=len(hit_ids),
+                    total=len(queries),
+                )
+                if index < len(queries) - 1:
+                    await sleep_human(2.0, 5.0, rng)
+
+            # 第二段：从公开频道顺 linked_chat 找讨论群。只读，不需要入群。
+            candidates = list(seed_channels.values())
+            if expand_linked and max_linked and candidates:
+                candidates = candidates[:max_linked]
+                for index, seed in enumerate(candidates):
+                    seed_id = int(getattr(seed, "id", 0) or 0)
+                    metrics["linked_expanded"] += 1
+                    try:
+                        full = await client(functions.channels.GetFullChannelRequest(channel=seed))
+                        linked_id = int(getattr(getattr(full, "full_chat", None), "linked_chat_id", 0) or 0)
+                        if not linked_id:
+                            continue
+                        linked = next(
+                            (
+                                chat
+                                for chat in (getattr(full, "chats", []) or [])
+                                if int(getattr(chat, "id", 0) or 0) == linked_id
+                            ),
+                            None,
+                        )
+                        if linked is None:
+                            linked = await client.get_entity(tl_types.PeerChannel(linked_id))
+                        kind = chat_kind(linked)
+                        members = getattr(linked, "participants_count", None)
+                        if linked_id not in seen_entities:
+                            linked_full = None
+                            try:
+                                linked_full = await client(functions.channels.GetFullChannelRequest(channel=linked))
+                            except BaseException:  # noqa: BLE001 - 拿不到完整信息就先用实体字段
+                                linked_full = None
+                            if await store_chat(
+                                linked,
+                                source="linked_chat",
+                                raw={
+                                    "role": "linked",
+                                    "linked_from": seed_id,
+                                    "seed_username": getattr(seed, "username", None),
+                                },
+                                full=linked_full,
+                            ):
+                                metrics["stored_entities"] += 1
+                                seen_entities.add(linked_id)
+                        if want != "any" and kind != want:
+                            metrics["dropped_kind"] += 1
+                            continue
+                        if min_members and (members or 0) < min_members:
+                            metrics["dropped_members"] += 1
+                            continue
+                        if linked_id not in hit_ids:
+                            hit_ids.add(linked_id)
+                            linked_hits.append(hit_payload(linked, kind, members))
+                            metrics["linked_found"] += 1
+                    except BaseException as exc:  # noqa: BLE001 - 单个频道失败继续下一个
+                        metrics["linked_errors"] += 1
+                        self.log.debug("linked_chat 展开失败 seed=%s: %s", seed_id, exc)
+                        continue
+                    finally:
+                        await self._report_progress(
+                            session,
+                            task,
+                            stage="expanding_linked",
+                            detail=(
+                                f"已展开 {index + 1}/{len(candidates)} 个频道，"
+                                f"额外找到 {len(linked_hits)} 个讨论群"
+                            ),
+                            scanned=index + 1,
+                            found=len(hit_ids),
+                            total=len(candidates),
+                        )
+                    if index < len(candidates) - 1:
+                        await sleep_human(1.5, 3.0, rng)
         except BaseException as exc:  # noqa: BLE001
             await self._apply_status(session, account, exc)
             raise self._failure(exc, "按关键词找群失败") from exc
 
-        total = sum(item.get("found", 0) for item in results if item.get("ok"))
+        total = sum(item.get("found", 0) for item in results if item.get("ok")) + len(linked_hits)
         return {
             "keywords": keywords,
-            "unique_groups": len(seen_ids),
+            "queries": [item.query for item in queries],
+            "queries_run": len(queries),
+            "unique_groups": len(hit_ids),
+            "unique_entities": len(seen_entities),
             "total_hits": total,
+            "linked_chats": linked_hits[:100],
+            "metrics": metrics,
             "results": results,
-            "summary": f"{len(keywords)} 个关键词共找到 {len(seen_ids)} 个不同的群/频道（已落进群档案）",
+            "summary": (
+                f"{len(keywords)} 个原始关键词展开为 {len(queries)} 条查询，"
+                f"共找到 {len(hit_ids)} 个不同的群/频道（落档 {len(seen_entities)} 个实体）；"
+                f"展开 {metrics['linked_expanded']} 个频道，额外发现 {len(linked_hits)} 个讨论群"
+            ),
         }
 
     async def _collect_messages(self, session: Any, task: Task, account: Optional[TgAccount]) -> dict:
