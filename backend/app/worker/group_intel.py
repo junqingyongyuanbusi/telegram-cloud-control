@@ -785,7 +785,8 @@ class GroupIntelMixin:
         全程只读：`contacts.Search` / `GetFullChannel` 都不加群、不发消息。
         """
         assert account is not None
-        self._ensure_sendable(account)
+        # 只读搜索：冻结号也能连上并读取，只有写操作会被 Telegram 拒绝，
+        # 所以这里不能套 _ensure_sendable（它会把冻结号直接挡掉）。
         payload = dict(task.payload or {})
         if str(payload.get("mode") or "") == "precise":
             return await self._search_groups_precise(session, task, account, payload)
@@ -1169,7 +1170,7 @@ class GroupIntelMixin:
         - 评分满分 100，按名称/简介/地区/讨论意图/语言五项落库，便于解释排序。
         """
 
-        self._ensure_sendable(account)
+        # 只读搜索不做写权限前置检查：冻结号仍可搜索，只有写操作会被拒绝。
         keywords = [str(item).strip() for item in (payload.get("keywords") or []) if str(item).strip()][:20]
         if not keywords:
             raise TaskFailure("精准检索缺少关键词", retryable=False)

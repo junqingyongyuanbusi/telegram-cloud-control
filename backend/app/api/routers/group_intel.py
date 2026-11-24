@@ -158,6 +158,7 @@ async def search_public_groups(
             "max_links": payload.max_links,
         },
         priority=65,
+        usable_only=False,
     )
 
 
@@ -202,6 +203,7 @@ async def precise_search_groups(
             "candidate_links": payload.candidate_links,
         },
         priority=65,
+        usable_only=False,
     )
 
 
