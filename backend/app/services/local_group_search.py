@@ -41,8 +41,10 @@ async def search_local_profiles(
     limit: int = 30,
     account_ids: Optional[Iterable[uuid.UUID]] = None,
     only_public: bool = True,
+    only_groups: bool = False,
+    dedupe_by_chat: bool = True,
 ) -> list[LocalGroupMatch]:
-    """按关键词检索本地群档案，ts_rank 优先、trigram 相似度次之。"""
+    """按关键词检索本地群档案，ts_rank 优先、trigram 相似度次之；默认按 tg_chat_id 去重。"""
 
     term = (keyword or "").strip()
     if not term:
@@ -62,12 +64,19 @@ async def search_local_profiles(
     ]
     if only_public:
         conditions.append(GroupProfile.username.is_not(None))
+    if only_groups:
+        conditions.append(GroupProfile.kind.in_(("group", "megagroup", "chat")))
+        conditions.append(
+            or_(GroupProfile.send_permission.is_(None), GroupProfile.send_permission != "restricted")
+        )
     if account_ids is not None:
         ids = list(account_ids)
         if not ids:
             return []
         conditions.append(GroupProfile.account_id.in_(ids))
 
+    capped_limit = max(1, min(int(limit), 100))
+    fetch_limit = min(capped_limit * 3, 300) if dedupe_by_chat else capped_limit
     stmt = (
         select(GroupProfile, rank.label("rank"), similarity.label("similarity"))
         .where(*conditions)
@@ -77,10 +86,21 @@ async def search_local_profiles(
             GroupProfile.relevance_score.desc().nullslast(),
             GroupProfile.member_count.desc().nullslast(),
         )
-        .limit(max(1, min(int(limit), 100)))
+        .limit(fetch_limit)
     )
     rows = (await session.execute(stmt)).all()
-    return [
-        LocalGroupMatch(profile=row[0], rank=float(row[1] or 0.0), similarity=float(row[2] or 0.0))
-        for row in rows
-    ]
+    matches: list[LocalGroupMatch] = []
+    seen_chats: set[int] = set()
+    for row in rows:
+        profile = row[0]
+        chat_id = int(profile.tg_chat_id or 0)
+        if dedupe_by_chat and chat_id:
+            if chat_id in seen_chats:
+                continue
+            seen_chats.add(chat_id)
+        matches.append(
+            LocalGroupMatch(profile=profile, rank=float(row[1] or 0.0), similarity=float(row[2] or 0.0))
+        )
+        if len(matches) >= capped_limit:
+            break
+    return matches

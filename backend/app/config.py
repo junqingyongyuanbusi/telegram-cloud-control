@@ -128,6 +128,22 @@ class Settings(BaseSettings):
     # 单个任务最多采多少成员（大群不要一次性拉全量）
     group_intel_max_members_per_task: int = 500
 
+    # ---------- 精准找群：外部候选源适配器（默认关闭） ----------
+    external_search_enabled: bool = False
+    external_search_max_keywords: int = 3
+    external_search_per_keyword: int = 15
+    external_search_timeout_seconds: float = 10.0
+    # 搜索引擎："" / "serper" / "brave" / "custom_json"
+    external_search_engine_provider: str = ""
+    external_search_engine_base_url: str = ""
+    external_search_engine_api_key: str = ""
+    # 公开目录提供商："" / "custom_json"
+    external_search_directory_provider: str = ""
+    external_search_directory_base_url: str = ""
+    external_search_directory_api_key: str = ""
+    # 运营维护的种子清单 URL（逗号分隔，仅抓取 t.me 链接后送入 Telegram 实体验证）
+    external_search_seed_urls: str = ""
+
     # ---------- 属性 ----------
     @property
     def cors_origin_list(self) -> List[str]:

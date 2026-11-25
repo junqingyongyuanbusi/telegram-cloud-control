@@ -36,7 +36,7 @@ import {
   SearchOutlined,
 } from '@ant-design/icons';
 import { Progress } from 'antd';
-import { PageContainer, StatCard, StatGrid, RelativeTime, SoftTag } from '../components';
+import { PageContainer, StatCard, StatGrid, RelativeTime, SoftTag, CopyableText } from '../components';
 import { notifyError, toast } from '../utils/feedback';
 import { downloadBlob, filenameFromDisposition } from '../utils/download';
 import BulkResultModal from '../features/accounts/BulkResultModal';
@@ -46,10 +46,13 @@ import { notifySuccess } from '../utils/feedback';
 import type {
   BulkResultOut,
   CollectJob,
+  DiscoveryLeadOut,
   GroupEventOut,
   GroupMemberOut,
   GroupProfileOut,
   GroupSearchMatchOut,
+  PreciseBatchOut,
+  UnverifiedCandidateOut,
 } from '../api/types';
 
 const KIND_LABEL: Record<string, string> = {
@@ -59,8 +62,64 @@ const KIND_LABEL: Record<string, string> = {
   chat: '群聊',
 };
 
+const SEND_LABEL: Record<string, { text: string; color?: string }> = {
+  open: { text: '可发言', color: 'green' },
+  restricted: { text: '禁言', color: 'red' },
+  unknown: { text: '未校验' },
+};
+
+const SOURCE_LABEL: Record<string, string> = {
+  contacts_search: '原生搜索',
+  global_message_search: '消息反查',
+  short_query: '短词召回',
+  linked_chat: '频道讨论群',
+  channel_recommendation: '相似推荐',
+  channel_message_link: '频道外链',
+  joined_group_graph: '已入群图谱',
+  candidate_link: '人工候选链接',
+  tme_preview: 't.me公开页',
+  external_web: '外部网页/目录',
+  channel_posts: '频道帖子搜索',
+  common_chat_graph: '共同群扩展',
+  local_index: '本地历史群库',
+  // 兼容历史记录中的旧短键
+  contacts: '原生搜索',
+  short_core: '短词兜底',
+  message_search: '消息反查',
+  joined_dialog: '已入群',
+  joined_link: '已入群内链',
+  recommendation: '相似推荐',
+  channel_link: '频道外链',
+  web_candidate: '外部候选',
+};
+
+function extractCandidateLinks(raw: string): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  const push = (val: string) => {
+    const key = val.toLowerCase();
+    if (!seen.has(key) && out.length < 200) {
+      seen.add(key);
+      out.push(val);
+    }
+  };
+  const inviteRe = /(?:https?:\/\/)?(?:www\.)?t\.me\/(?:\+|joinchat\/)([A-Za-z0-9_-]{8,})/gi;
+  const userRe = /(?:https?:\/\/)?(?:www\.)?t\.me\/(?:s\/)?([A-Za-z][A-Za-z0-9_]{3,31})/gi;
+  const mentionRe = /(?:^|[\s,，;；(（])@([A-Za-z][A-Za-z0-9_]{3,31})/g;
+  for (const m of raw.matchAll(inviteRe)) push(`https://t.me/+${m[1]}`);
+  for (const m of raw.matchAll(userRe)) {
+    const u = m[1].toLowerCase();
+    if (u !== 'joinchat' && u !== 'addstickers' && u !== 'share' && u !== 'proxy') {
+      push(`https://t.me/${m[1]}`);
+    }
+  }
+  for (const m of raw.matchAll(mentionRe)) push(`@${m[1]}`);
+  return out;
+}
+
 export default function GroupIntel() {
   const [keyword, setKeyword] = useState('');
+  const [speakableOnly, setSpeakableOnly] = useState(false);
   const [page, setPage] = useState(1);
   const [selected, setSelected] = useState<GroupProfileOut | null>(null);
   // 采集群内对话：成员名单被群主隐藏时，靠「谁发过言」来淘成员
@@ -86,18 +145,59 @@ export default function GroupIntel() {
   const [findExpandMessages, setFindExpandMessages] = useState(true);
   const [findExpandRecommendations, setFindExpandRecommendations] = useState(true);
   const [findEnrichTme, setFindEnrichTme] = useState(true);
-  // 精准检索：多语言 + 类型/权限校验 + 评分
+  // 精准检索：多语言 + 类型/权限校验 + 评分 + 图扩散 + 验活 + 可选 AI
   const [preciseOpen, setPreciseOpen] = useState(false);
   const [preciseBusy, setPreciseBusy] = useState(false);
   const [preciseKeywords, setPreciseKeywords] = useState('');
-  const [preciseCountry, setPreciseCountry] = useState('TH');
+  const [preciseCountry, setPreciseCountry] = useState<string | undefined>('TH');
   const [preciseLanguages, setPreciseLanguages] = useState<string[]>(['th', 'en']);
   const [preciseMinScore, setPreciseMinScore] = useState(60);
+  const [preciseMinMembers, setPreciseMinMembers] = useState(0);
+  const [preciseFullLimit, setPreciseFullLimit] = useState(60);
+  const [preciseContactsSearch, setPreciseContactsSearch] = useState(true);
+  const [preciseContactsLimit, setPreciseContactsLimit] = useState(120);
+  const [preciseGlobalMessages, setPreciseGlobalMessages] = useState(true);
+  const [preciseMessageQueries, setPreciseMessageQueries] = useState(5);
+  const [preciseMessagePages, setPreciseMessagePages] = useState(2);
   const [preciseShortQueries, setPreciseShortQueries] = useState(true);
+  const [preciseShortLimit, setPreciseShortLimit] = useState(60);
+  const [preciseLinkedGroups, setPreciseLinkedGroups] = useState(true);
+  const [preciseLinkedLimit, setPreciseLinkedLimit] = useState(50);
+  const [preciseRecommendations, setPreciseRecommendations] = useState(true);
+  const [preciseRecommendationLimit, setPreciseRecommendationLimit] = useState(8);
+  const [preciseChannelMessages, setPreciseChannelMessages] = useState(true);
+  const [preciseChannelLimit, setPreciseChannelLimit] = useState(8);
+  const [preciseMessageLimit, setPreciseMessageLimit] = useState(100);
+  const [preciseJoinedGraph, setPreciseJoinedGraph] = useState(true);
+  const [preciseJoinedLimit, setPreciseJoinedLimit] = useState(15);
+  const [preciseEnrichTme, setPreciseEnrichTme] = useState(true);
+  const [preciseTmeLimit, setPreciseTmeLimit] = useState(30);
+  const [preciseExpandScope, setPreciseExpandScope] = useState(false);
+  const [preciseChannelPosts, setPreciseChannelPosts] = useState(false);
+  const [precisePostsLimit, setPrecisePostsLimit] = useState(5);
+  const [preciseAllowPaidPosts, setPreciseAllowPaidPosts] = useState(false);
+  const [precisePostStars, setPrecisePostStars] = useState(20);
+  const [preciseExternalWeb, setPreciseExternalWeb] = useState(false);
+  const [preciseWebCandidateLimit, setPreciseWebCandidateLimit] = useState(30);
+  const [preciseAllowPaidWeb, setPreciseAllowPaidWeb] = useState(false);
+  const [preciseCommonChats, setPreciseCommonChats] = useState(false);
+  const [preciseCommonUserLimit, setPreciseCommonUserLimit] = useState(8);
+  const [preciseRpcBudget, setPreciseRpcBudget] = useState(180);
+  const [preciseAllowDuplicateAccounts, setPreciseAllowDuplicateAccounts] = useState(false);
+  const [preciseVerifyActivity, setPreciseVerifyActivity] = useState(true);
+  const [preciseAiExpand, setPreciseAiExpand] = useState(false);
+  const [preciseAiReview, setPreciseAiReview] = useState(false);
   const [preciseCandidateLinks, setPreciseCandidateLinks] = useState('');
+  const [preciseResultTab, setPreciseResultTab] = useState<'verified' | 'pending'>('verified');
   const [preciseTaskId, setPreciseTaskId] = useState<string | null>(null);
+  const [preciseBatchId, setPreciseBatchId] = useState<string | null>(null);
+  const [preciseBatch, setPreciseBatch] = useState<PreciseBatchOut | null>(null);
   const [preciseRows, setPreciseRows] = useState<GroupSearchMatchOut[]>([]);
   const [preciseLoading, setPreciseLoading] = useState(false);
+  // 私群邀请线索弹窗
+  const [leadsOpen, setLeadsOpen] = useState(false);
+  const [leadsRows, setLeadsRows] = useState<DiscoveryLeadOut[]>([]);
+  const [leadsLoading, setLeadsLoading] = useState(false);
   const [memberScope, setMemberScope] = useState<'all' | 'human' | 'bot'>('all');
   const [collectOpen, setCollectOpen] = useState(false);
   const [collectBusy, setCollectBusy] = useState(false);
@@ -109,21 +209,32 @@ export default function GroupIntel() {
   const [linkForm] = Form.useForm();
 
   useEffect(() => {
-    if (!preciseTaskId) return;
+    if (!preciseBatchId && !preciseTaskId) return;
     let stopped = false;
     let attempts = 0;
     setPreciseLoading(true);
     const tick = async () => {
       attempts += 1;
       try {
-        const rows = await groupIntelApi.preciseMatches(preciseTaskId);
-        if (!stopped) setPreciseRows(rows);
+        if (preciseBatchId) {
+          const batch = await groupIntelApi.preciseBatch(preciseBatchId);
+          if (!stopped) {
+            setPreciseBatch(batch);
+            setPreciseRows(batch.matches.filter((row) => row.status !== 'rejected'));
+          }
+          if (batch.total_tasks > 0 && batch.active_tasks === 0) {
+            window.clearInterval(timer);
+          }
+        } else if (preciseTaskId) {
+          const rows = await groupIntelApi.preciseMatches(preciseTaskId);
+          if (!stopped) setPreciseRows(rows.filter((row) => row.status !== 'rejected'));
+        }
       } catch {
         /* 任务还没产出时保持旧表 */
       } finally {
         if (!stopped) setPreciseLoading(false);
       }
-      if (attempts >= 30) window.clearInterval(timer);
+      if (attempts >= 60) window.clearInterval(timer);
     };
     const timer = window.setInterval(() => void tick(), 3000);
     void tick();
@@ -131,7 +242,20 @@ export default function GroupIntel() {
       stopped = true;
       window.clearInterval(timer);
     };
-  }, [preciseTaskId]);
+  }, [preciseBatchId, preciseTaskId]);
+
+  const openLeadsModal = async () => {
+    setLeadsOpen(true);
+    setLeadsLoading(true);
+    try {
+      const items = await groupIntelApi.discoveryLeads({ limit: 200 });
+      setLeadsRows(items);
+    } catch {
+      /* client 已统一提示 */
+    } finally {
+      setLeadsLoading(false);
+    }
+  };
 
   const stats = useAsyncData(() => groupIntelApi.stats(), []);
   // 采集进度：进行中时每 5 秒刷新一次，避免黑盒等待
@@ -141,8 +265,14 @@ export default function GroupIntel() {
     if ((jobs.data?.summary.active ?? 0) > 0) void jobs.reload();
   }, 5000);
   const profiles = useAsyncData(
-    () => groupIntelApi.profiles({ q: keyword || undefined, page, page_size: 20 }),
-    [keyword, page],
+    () =>
+      groupIntelApi.profiles({
+        q: keyword || undefined,
+        speakable: speakableOnly || undefined,
+        page,
+        page_size: 20,
+      }),
+    [keyword, page, speakableOnly],
   );
   const members = useAsyncData(
     () =>
@@ -336,6 +466,15 @@ export default function GroupIntel() {
     },
     { title: '类型', dataIndex: 'kind', width: 90, render: (value: string) => <Tag>{KIND_LABEL[value] ?? value}</Tag> },
     {
+      title: '发言',
+      dataIndex: 'send_permission',
+      width: 84,
+      render: (value: string | null) => {
+        const label = value ? SEND_LABEL[value] : undefined;
+        return label ? <Tag color={label.color}>{label.text}</Tag> : <span className="tg-muted">—</span>;
+      },
+    },
+    {
       title: '相关性',
       dataIndex: 'relevance_score',
       width: 86,
@@ -457,6 +596,9 @@ export default function GroupIntel() {
           <Button type="primary" ghost icon={<AimOutlined />} onClick={() => setPreciseOpen(true)}>
             精准找群
           </Button>
+          <Button onClick={() => void openLeadsModal()}>
+            私群线索
+          </Button>
           <Button type="primary" icon={<CloudDownloadOutlined />} onClick={() => setCollectOpen(true)}>
             采集群情报
           </Button>
@@ -565,6 +707,18 @@ export default function GroupIntel() {
           <Button icon={<SearchOutlined />} onClick={() => { setPage(1); void profiles.reload(); }}>
             搜索
           </Button>
+          <Select
+            value={speakableOnly ? 'speakable' : 'all'}
+            onChange={(value) => {
+              setSpeakableOnly(value === 'speakable');
+              setPage(1);
+            }}
+            style={{ width: 168 }}
+            options={[
+              { label: '全部群', value: 'all' },
+              { label: '只看能发言的', value: 'speakable' },
+            ]}
+          />
           <Button
             icon={<CommentOutlined />}
             disabled={!selected}
@@ -963,16 +1117,19 @@ export default function GroupIntel() {
 
       <Modal
         open={preciseOpen}
-        width={920}
-        title="精准找群：多语言 · 类型校验 · 相关性评分"
-        okText={preciseTaskId ? '重新检索' : '开始检索'}
+        width={1040}
+        title="精准找群：多源召回 · 统一核验 · 分层展示"
+        okText={preciseBatchId || preciseTaskId ? '重新检索' : '开始检索'}
         cancelText="关闭"
         confirmLoading={preciseBusy}
         onCancel={() => setPreciseOpen(false)}
         onOk={async () => {
-          if (preciseTaskId) {
+          if (preciseBatchId || preciseTaskId) {
+            setPreciseBatchId(null);
             setPreciseTaskId(null);
+            setPreciseBatch(null);
             setPreciseRows([]);
+            setPreciseResultTab('verified');
             return;
           }
           const keywords = preciseKeywords
@@ -983,35 +1140,63 @@ export default function GroupIntel() {
             toast.warning('至少填一个关键词');
             return;
           }
-          const candidateLinks = preciseCandidateLinks
-            .split(/[\n,，]/)
-            .map((item) => item.trim())
-            .filter(Boolean)
-            .slice(0, 200);
+          const candidateLinks = extractCandidateLinks(preciseCandidateLinks);
           setPreciseBusy(true);
           try {
             const res = await groupIntelApi.preciseSearch({
               scope: 'all',
+              dispatch: preciseAllowDuplicateAccounts ? 'each' : 'round_robin',
               keywords,
-              country: preciseCountry,
+              country: preciseCountry || null,
               languages: preciseLanguages,
               per_keyword: 50,
-              min_members: 0,
+              min_members: preciseMinMembers,
               max_queries: 120,
               group_only: true,
               public_only: true,
-              include_linked_groups: true,
-              max_linked_chats: 50,
+              enable_contacts_search: preciseContactsSearch,
+              contacts_query_limit: preciseContactsLimit,
+              include_linked_groups: preciseLinkedGroups,
+              max_linked_chats: preciseLinkedLimit,
               exclude_readonly: true,
-              search_messages: true,
-              message_search_queries: 3,
-              full_check_limit: 40,
+              search_messages: preciseGlobalMessages,
+              message_search_queries: preciseMessageQueries,
+              message_search_pages: preciseMessagePages,
+              full_check_limit: preciseFullLimit,
               min_relevance_score: preciseMinScore,
               expand_short_queries: preciseShortQueries,
-              short_query_limit: 60,
+              short_query_limit: preciseShortLimit,
+              expand_recommendations: preciseRecommendations,
+              recommendation_channels: preciseRecommendationLimit,
+              expand_channel_messages: preciseChannelMessages,
+              message_channels: preciseChannelLimit,
+              message_limit: preciseMessageLimit,
+              scan_joined_groups: preciseJoinedGraph,
+              joined_group_limit: preciseJoinedLimit,
+              enrich_tme: preciseEnrichTme,
+              tme_limit: preciseTmeLimit,
+              expand_scope_preset: preciseExpandScope,
+              expand_channel_posts: preciseChannelPosts,
+              channel_posts_query_limit: precisePostsLimit,
+              allow_paid_channel_posts: preciseAllowPaidPosts,
+              channel_posts_max_stars: preciseAllowPaidPosts ? precisePostStars : 0,
+              expand_external_web: preciseExternalWeb,
+              external_web_query_limit: 3,
+              external_web_candidate_limit: preciseWebCandidateLimit,
+              allow_paid_external_search: preciseAllowPaidWeb,
+              expand_common_chats: preciseCommonChats,
+              common_chat_user_limit: preciseCommonUserLimit,
+              rpc_budget: preciseRpcBudget,
+              verify_activity: preciseVerifyActivity,
+              activity_check_limit: 25,
+              ai_expand: preciseAiExpand,
+              ai_review: preciseAiReview,
               candidate_links: candidateLinks,
             });
             setPreciseRows([]);
+            setPreciseBatch(null);
+            setPreciseResultTab('verified');
+            setPreciseBatchId(res.batch_id || null);
             setPreciseTaskId(res.task_ids[0] || null);
             void jobs.reload();
             void profiles.reload();
@@ -1022,38 +1207,52 @@ export default function GroupIntel() {
           }
         }}
       >
-        {!preciseTaskId ? (
-          <div className="tg-stack" style={{ gap: 'var(--tg-space-lg)' }}>
+        {!(preciseBatchId || preciseTaskId) ? (
+          <div className="tg-stack" style={{ gap: 'var(--tg-space-md)' }}>
             <Alert
               type="info"
               showIcon
-              message="先搜实体，再严格验类型和权限，最后按主题/地区/讨论意图打分"
-              description="同时用联系人搜索、全局消息搜索和频道关联讨论组召回候选；广播频道、只读群、私密群会被排除。结果写入群档案，分数和原因可在下方追溯。全程只读。"
+              message="多源召回 → 统一候选池 → 统一 Telegram 核验 → 交叉可信度评分"
+              description="所有外部网页/目录、帖子搜索与图扩展仅向候选池提供候选，绝不跳过讨论组类型、公开性、只读权限、活跃度与相关性评分。私群邀请单独进「私群线索」。"
             />
             <div className="tg-stack" style={{ gap: 2 }}>
               <span>关键词（逗号或换行分隔，最多 20 个）</span>
               <Input.TextArea
-                rows={3}
-                style={{ maxWidth: 540 }}
-                placeholder={'Forex Thailand\nกลุ่มเทรด Forex\nThai Forex'}
+                rows={2}
+                style={{ maxWidth: 620 }}
+                placeholder={'Forex Thailand\nกลุ่มเทรด Forex\nCrypto MY'}
                 value={preciseKeywords}
                 onChange={(e) => setPreciseKeywords(e.target.value)}
               />
             </div>
-            <Space size="large" wrap>
+            <Space size="middle" wrap>
               <span>
                 目标地区
                 <Select
+                  allowClear
+                  placeholder="不限地区"
                   value={preciseCountry}
                   onChange={setPreciseCountry}
-                  style={{ width: 140, marginLeft: 8 }}
+                  style={{ width: 135, marginLeft: 8 }}
                   options={[
                     { value: 'TH', label: '泰国 TH' },
                     { value: 'MY', label: '马来西亚 MY' },
                     { value: 'SG', label: '新加坡 SG' },
                     { value: 'ID', label: '印尼 ID' },
+                    { value: 'VN', label: '越南 VN' },
+                    { value: 'PH', label: '菲律宾 PH' },
+                    { value: 'TW', label: '台湾 TW' },
+                    { value: 'HK', label: '香港 HK' },
+                    { value: 'JP', label: '日本 JP' },
+                    { value: 'KR', label: '韩国 KR' },
+                    { value: 'AE', label: '阿联酋 AE' },
+                    { value: 'IN', label: '印度 IN' },
+                    { value: 'TR', label: '土耳其 TR' },
+                    { value: 'BR', label: '巴西 BR' },
                     { value: 'US', label: '美国 US' },
                     { value: 'GB', label: '英国 GB' },
+                    { value: 'AU', label: '澳大利亚 AU' },
+                    { value: 'DE', label: '德国 DE' },
                   ]}
                 />
               </span>
@@ -1068,8 +1267,13 @@ export default function GroupIntel() {
                     { value: 'th', label: '泰语' },
                     { value: 'en', label: '英语' },
                     { value: 'ms', label: '马来语' },
-                    { value: 'zh', label: '中文' },
                     { value: 'id', label: '印尼语' },
+                    { value: 'zh', label: '中文' },
+                    { value: 'vi', label: '越南语' },
+                    { value: 'ja', label: '日语' },
+                    { value: 'ko', label: '韩语' },
+                    { value: 'ru', label: '俄语' },
+                    { value: 'ar', label: '阿拉伯语' },
                   ]}
                 />
               </span>
@@ -1080,30 +1284,336 @@ export default function GroupIntel() {
                   max={100}
                   value={preciseMinScore}
                   onChange={(v) => setPreciseMinScore(Number(v) || 60)}
-                  style={{ width: 80, marginLeft: 8 }}
+                  style={{ width: 72, marginLeft: 6 }}
+                />
+              </span>
+              <span>
+                成员数 ≥
+                <InputNumber
+                  min={0}
+                  max={1000000}
+                  step={50}
+                  value={preciseMinMembers}
+                  onChange={(v) => setPreciseMinMembers(Number(v) || 0)}
+                  style={{ width: 90, marginLeft: 6 }}
+                />
+              </span>
+              <span>
+                全检上限
+                <InputNumber
+                  min={10}
+                  max={200}
+                  step={10}
+                  value={preciseFullLimit}
+                  onChange={(v) => setPreciseFullLimit(Number(v) || 60)}
+                  style={{ width: 74, marginLeft: 6 }}
                 />
               </span>
             </Space>
-            <Checkbox
-              checked={preciseShortQueries}
-              onChange={(e) => setPreciseShortQueries(e.target.checked)}
+
+            <Card
+              size="small"
+              title="高级搜索来源与预算控制"
+              extra={
+                <Checkbox
+                  checked={preciseExpandScope}
+                  onChange={(e) => {
+                    const next = e.target.checked;
+                    setPreciseExpandScope(next);
+                    setPreciseChannelPosts(next);
+                    setPreciseExternalWeb(next);
+                    setPreciseCommonChats(next);
+                  }}
+                >
+                  <strong>扩大搜索范围</strong>（开启帖子搜索 + 外部网页 + 共同群）
+                </Checkbox>
+              }
             >
-              追加短核心词兜底（forex / เทรด / ทองคำ / กลุ่มเทรด 等，最多 60 条）
-            </Checkbox>
-            <div className="tg-stack" style={{ gap: 2 }}>
-              <span>外部候选链接（可选，每行一个 t.me/xxx、@xxx 或邀请链接）</span>
+              <div className="tg-stack" style={{ gap: 10 }}>
+                <div>
+                  <div className="tg-muted" style={{ marginBottom: 4 }}>
+                    默认 Telegram 原生与图谱来源：
+                  </div>
+                  <Space size={[12, 6]} wrap>
+                    <Checkbox checked={preciseContactsSearch} onChange={(e) => setPreciseContactsSearch(e.target.checked)}>
+                      原生搜索 (contacts_search)
+                    </Checkbox>
+                    <Checkbox checked={preciseGlobalMessages} onChange={(e) => setPreciseGlobalMessages(e.target.checked)}>
+                      全局消息反查 (global_message_search)
+                    </Checkbox>
+                    <Checkbox checked={preciseShortQueries} onChange={(e) => setPreciseShortQueries(e.target.checked)}>
+                      短词召回 (short_query)
+                    </Checkbox>
+                    <Checkbox checked={preciseLinkedGroups} onChange={(e) => setPreciseLinkedGroups(e.target.checked)}>
+                      频道讨论群 (linked_chat)
+                    </Checkbox>
+                    <Checkbox checked={preciseRecommendations} onChange={(e) => setPreciseRecommendations(e.target.checked)}>
+                      相似推荐 (channel_recommendation)
+                    </Checkbox>
+                    <Checkbox checked={preciseChannelMessages} onChange={(e) => setPreciseChannelMessages(e.target.checked)}>
+                      频道外链 (channel_message_link)
+                    </Checkbox>
+                    <Checkbox checked={preciseJoinedGraph} onChange={(e) => setPreciseJoinedGraph(e.target.checked)}>
+                      已入群图谱 (joined_group_graph)
+                    </Checkbox>
+                    <Checkbox checked={preciseEnrichTme} onChange={(e) => setPreciseEnrichTme(e.target.checked)}>
+                      t.me 页面补充 (tme_preview)
+                    </Checkbox>
+                    <Checkbox checked={preciseVerifyActivity} onChange={(e) => setPreciseVerifyActivity(e.target.checked)}>
+                      近 20 条真人群验活
+                    </Checkbox>
+                  </Space>
+                </div>
+
+                <div>
+                  <div className="tg-muted" style={{ marginBottom: 4 }}>
+                    扩展补充来源与 AI 增强（按需开启，未配置或受限时自动降级）：
+                  </div>
+                  <Space size={[12, 6]} wrap>
+                    <Checkbox checked={preciseChannelPosts} onChange={(e) => setPreciseChannelPosts(e.target.checked)}>
+                      公开频道帖子搜索 (channel_posts)
+                    </Checkbox>
+                    <Checkbox
+                      checked={preciseAllowPaidPosts}
+                      disabled={!preciseChannelPosts}
+                      onChange={(e) => setPreciseAllowPaidPosts(e.target.checked)}
+                    >
+                      允许帖子搜索用 Stars
+                    </Checkbox>
+                    <Checkbox checked={preciseExternalWeb} onChange={(e) => setPreciseExternalWeb(e.target.checked)}>
+                      外部网页/目录候选 (external_web)
+                    </Checkbox>
+                    <Checkbox
+                      checked={preciseAllowPaidWeb}
+                      disabled={!preciseExternalWeb}
+                      onChange={(e) => setPreciseAllowPaidWeb(e.target.checked)}
+                    >
+                      允许外部付费 API 查询
+                    </Checkbox>
+                    <Checkbox checked={preciseCommonChats} onChange={(e) => setPreciseCommonChats(e.target.checked)}>
+                      已知用户共同群扩展 (common_chat_graph)
+                    </Checkbox>
+                    <Checkbox checked={preciseAiExpand} onChange={(e) => setPreciseAiExpand(e.target.checked)}>
+                      AI 同义扩词
+                    </Checkbox>
+                    <Checkbox checked={preciseAiReview} onChange={(e) => setPreciseAiReview(e.target.checked)}>
+                      AI 语义复核
+                    </Checkbox>
+                  </Space>
+                </div>
+
+                <Space size="middle" wrap>
+                  <span>
+                    消息查询词
+                    <InputNumber
+                      min={0}
+                      max={20}
+                      value={preciseMessageQueries}
+                      disabled={!preciseGlobalMessages}
+                      onChange={(v) => setPreciseMessageQueries(v == null ? 5 : Number(v))}
+                      style={{ width: 68, marginLeft: 6 }}
+                    />
+                  </span>
+                  <span>
+                    消息翻页
+                    <InputNumber
+                      min={1}
+                      max={5}
+                      value={preciseMessagePages}
+                      disabled={!preciseGlobalMessages}
+                      onChange={(v) => setPreciseMessagePages(Number(v) || 2)}
+                      style={{ width: 58, marginLeft: 6 }}
+                    />
+                  </span>
+                  <span>
+                    短词上限
+                    <InputNumber
+                      min={0}
+                      max={80}
+                      value={preciseShortLimit}
+                      disabled={!preciseShortQueries}
+                      onChange={(v) => setPreciseShortLimit(v == null ? 60 : Number(v))}
+                      style={{ width: 68, marginLeft: 6 }}
+                    />
+                  </span>
+                  <span>
+                    讨论群上限
+                    <InputNumber
+                      min={0}
+                      max={200}
+                      value={preciseLinkedLimit}
+                      disabled={!preciseLinkedGroups}
+                      onChange={(v) => setPreciseLinkedLimit(v == null ? 50 : Number(v))}
+                      style={{ width: 68, marginLeft: 6 }}
+                    />
+                  </span>
+                  <span>
+                    推荐频道
+                    <InputNumber
+                      min={0}
+                      max={30}
+                      value={preciseRecommendationLimit}
+                      disabled={!preciseRecommendations}
+                      onChange={(v) => setPreciseRecommendationLimit(v == null ? 8 : Number(v))}
+                      style={{ width: 60, marginLeft: 6 }}
+                    />
+                  </span>
+                  <span>
+                    频道源
+                    <InputNumber
+                      min={0}
+                      max={30}
+                      value={preciseChannelLimit}
+                      disabled={!preciseChannelMessages}
+                      onChange={(v) => setPreciseChannelLimit(v == null ? 8 : Number(v))}
+                      style={{ width: 60, marginLeft: 6 }}
+                    />
+                  </span>
+                  <span>
+                    每源消息
+                    <InputNumber
+                      min={20}
+                      max={300}
+                      value={preciseMessageLimit}
+                      disabled={!preciseChannelMessages}
+                      onChange={(v) => setPreciseMessageLimit(v == null ? 100 : Number(v))}
+                      style={{ width: 68, marginLeft: 6 }}
+                    />
+                  </span>
+                  <span>
+                    已入群群数
+                    <InputNumber
+                      min={0}
+                      max={100}
+                      value={preciseJoinedLimit}
+                      disabled={!preciseJoinedGraph}
+                      onChange={(v) => setPreciseJoinedLimit(v == null ? 15 : Number(v))}
+                      style={{ width: 68, marginLeft: 6 }}
+                    />
+                  </span>
+                  <span>
+                    t.me补充
+                    <InputNumber
+                      min={0}
+                      max={100}
+                      value={preciseTmeLimit}
+                      disabled={!preciseEnrichTme}
+                      onChange={(v) => setPreciseTmeLimit(v == null ? 30 : Number(v))}
+                      style={{ width: 68, marginLeft: 6 }}
+                    />
+                  </span>
+                  <span>
+                    单号总 RPC 上限
+                    <InputNumber
+                      min={20}
+                      max={500}
+                      step={20}
+                      value={preciseRpcBudget}
+                      onChange={(v) => setPreciseRpcBudget(Number(v) || 180)}
+                      style={{ width: 76, marginLeft: 6 }}
+                    />
+                  </span>
+                  <span>
+                    原生查询上限
+                    <InputNumber
+                      min={0}
+                      max={300}
+                      step={10}
+                      value={preciseContactsLimit}
+                      onChange={(v) => setPreciseContactsLimit(v == null ? 120 : Number(v))}
+                      style={{ width: 74, marginLeft: 6 }}
+                    />
+                  </span>
+                  <span>
+                    帖子搜索词上限
+                    <InputNumber
+                      min={0}
+                      max={20}
+                      value={precisePostsLimit}
+                      disabled={!preciseChannelPosts}
+                      onChange={(v) => setPrecisePostsLimit(v == null ? 5 : Number(v))}
+                      style={{ width: 68, marginLeft: 6 }}
+                    />
+                  </span>
+                  <span>
+                    帖子 Stars 上限
+                    <InputNumber
+                      min={0}
+                      max={500}
+                      value={precisePostStars}
+                      disabled={!preciseChannelPosts || !preciseAllowPaidPosts}
+                      onChange={(v) => setPrecisePostStars(v == null ? 20 : Number(v))}
+                      style={{ width: 68, marginLeft: 6 }}
+                    />
+                  </span>
+                  <span>
+                    外部候选上限
+                    <InputNumber
+                      min={0}
+                      max={200}
+                      step={10}
+                      value={preciseWebCandidateLimit}
+                      disabled={!preciseExternalWeb}
+                      onChange={(v) => setPreciseWebCandidateLimit(v == null ? 30 : Number(v))}
+                      style={{ width: 74, marginLeft: 6 }}
+                    />
+                  </span>
+                  <span>
+                    共同群用户上限
+                    <InputNumber
+                      min={0}
+                      max={25}
+                      value={preciseCommonUserLimit}
+                      disabled={!preciseCommonChats}
+                      onChange={(v) => setPreciseCommonUserLimit(v == null ? 8 : Number(v))}
+                      style={{ width: 68, marginLeft: 6 }}
+                    />
+                  </span>
+                  <Checkbox
+                    checked={preciseAllowDuplicateAccounts}
+                    onChange={(e) => setPreciseAllowDuplicateAccounts(e.target.checked)}
+                  >
+                    允许多个账号重复全量执行（不分片）
+                  </Checkbox>
+                </Space>
+              </div>
+            </Card>
+
+            <div className="tg-stack" style={{ gap: 4 }}>
+              <Space align="center" style={{ justifyContent: 'space-between', maxWidth: 620 }}>
+                <span>人工候选链接或网页文本（自动抽取 t.me/+邀请码、t.me/xxx 与 @username）</span>
+                <label style={{ cursor: 'pointer', color: 'var(--tg-color-primary, #1677ff)', fontSize: 12 }}>
+                  导入 .txt/.csv 链接文本
+                  <input
+                    type="file"
+                    accept=".txt,.csv,.md"
+                    style={{ display: 'none' }}
+                    onChange={async (e) => {
+                      const file = e.target.files?.[0];
+                      e.target.value = '';
+                      if (!file) return;
+                      const text = await file.text();
+                      const extracted = extractCandidateLinks(text);
+                      if (!extracted.length) {
+                        toast.warning('文件中未识别到 t.me 或 @username 链接');
+                        return;
+                      }
+                      setPreciseCandidateLinks((prev) =>
+                        [prev.trim(), ...extracted].filter(Boolean).join('\n'),
+                      );
+                      toast.success(`已从文件提取 ${extracted.length} 条链接`);
+                    }}
+                  />
+                </label>
+              </Space>
               <Input.TextArea
-                rows={3}
-                style={{ maxWidth: 540 }}
-                placeholder={'https://t.me/CitytraderEa\nhttps://t.me/+HASH'}
+                rows={2}
+                style={{ maxWidth: 620 }}
+                placeholder={'可直接粘贴整段网页或群目录文本，如：\nhttps://t.me/CitytraderEa  https://t.me/+HASH  @ExampleGroup'}
                 value={preciseCandidateLinks}
                 onChange={(e) => setPreciseCandidateLinks(e.target.value)}
               />
             </div>
-            <span className="tg-muted">
-              评分：名称 30 + 简介 25 + 地区 20 + 讨论意图 15 + 语言 10；≥ 门槛为「保留」，40 到门槛之间为「待确认」。
-              短词会先跑，长尾词随后；外部候选只做只读核验，不进群、不发消息。检索会消耗账号的搜索频率，账号越多越稳。
-            </span>
           </div>
         ) : (
           <div className="tg-stack" style={{ gap: 'var(--tg-space-md)' }}>
@@ -1111,65 +1621,278 @@ export default function GroupIntel() {
               type={preciseRows.length ? 'success' : 'info'}
               showIcon
               message={
-                preciseRows.length
-                  ? `已产出 ${preciseRows.length} 条匹配（按分数排序）`
-                  : '检索任务已排队，正在搜索/校验；结果每 3 秒刷新，通常 30–90 秒。'
+                preciseBatch
+                  ? preciseRows.length
+                    ? `已验证精准群 ${preciseRows.length} 个（已完成 ${preciseBatch.completed_tasks}/${preciseBatch.total_tasks} 个账号任务）`
+                    : `多号检索进行中（已完成 ${preciseBatch.completed_tasks}/${preciseBatch.total_tasks}，运行中 ${preciseBatch.active_tasks}）；每 3 秒自动刷新`
+                  : preciseRows.length
+                    ? `已产出 ${preciseRows.length} 条匹配（按分数排序）`
+                    : '检索任务已排队，正在搜索/校验；结果每 3 秒刷新。'
               }
-              description={`任务 ${preciseTaskId}；保留与待确认的群已写入群档案。`}
+              description={
+                preciseBatch
+                  ? `批次 ${preciseBatch.batch_id}${preciseBatch.failed_tasks ? `（${preciseBatch.failed_tasks} 个子任务失败）` : ''}；已验证公开群写入群档案，未核验公开链接见下方「待核验候选」，私群邀请请查右上角「私群线索」。`
+                  : `任务 ${preciseTaskId}；保留与待确认的群已写入群档案。`
+              }
             />
-            <Table<GroupSearchMatchOut>
+            {preciseBatch && preciseBatch.ai_notes.length > 0 ? (
+              <Alert
+                type="warning"
+                showIcon
+                message="渠道/预算/AI 降级提示"
+                description={preciseBatch.ai_notes.join('；')}
+              />
+            ) : null}
+            {preciseBatch?.source_stats && Object.keys(preciseBatch.source_stats).length > 0 ? (
+              <Space size={[6, 6]} wrap>
+                <Tag color="blue">原生搜索 {preciseBatch.source_stats.contacts_search ?? 0}</Tag>
+                <Tag color="cyan">消息反查 {preciseBatch.source_stats.global_message_search ?? 0}</Tag>
+                <Tag color="geekblue">
+                  频道关联{' '}
+                  {(preciseBatch.source_stats.linked_chat ?? 0) +
+                    (preciseBatch.source_stats.channel_recommendation ?? 0) +
+                    (preciseBatch.source_stats.channel_message_link ?? 0)}
+                </Tag>
+                <Tag>帖子种子 {preciseBatch.source_stats.channel_posts_seeds ?? 0}</Tag>
+                <Tag>外部链接 {preciseBatch.source_stats.external_links ?? 0}</Tag>
+                <Tag>
+                  关系图谱{' '}
+                  {(preciseBatch.source_stats.joined_group_graph ?? 0) +
+                    (preciseBatch.source_stats.common_chat_graph ?? 0)}
+                </Tag>
+                <Tag color="green">核验保留 {preciseBatch.source_stats.accepted ?? 0}</Tag>
+                <Tag color="gold">待确认 {preciseBatch.source_stats.needs_review ?? 0}</Tag>
+                <Tag>
+                  被过滤{' '}
+                  {(preciseBatch.source_stats.rejected ?? 0) +
+                    (preciseBatch.source_stats.dropped_members ?? 0)}
+                </Tag>
+                <Tag>RPC消耗 {preciseBatch.source_stats.rpc_used ?? 0}</Tag>
+                {((preciseBatch.source_stats.flood_stopped ?? 0) > 0 ||
+                  (preciseBatch.source_stats.budget_stopped ?? 0) > 0) ? (
+                  <Tag color="red">
+                    限流/预算停机{' '}
+                    {(preciseBatch.source_stats.flood_stopped ?? 0) +
+                      (preciseBatch.source_stats.budget_stopped ?? 0)}
+                  </Tag>
+                ) : null}
+              </Space>
+            ) : null}
+            <Tabs
               size="small"
-              rowKey="id"
-              loading={preciseLoading}
-              dataSource={preciseRows}
-              pagination={false}
-              scroll={{ y: 380 }}
-              columns={[
+              activeKey={preciseResultTab}
+              onChange={(key) => setPreciseResultTab(key as 'verified' | 'pending')}
+              items={[
                 {
-                  title: '分',
-                  dataIndex: 'relevance_score',
-                  width: 58,
-                  sorter: (a, b) => a.relevance_score - b.relevance_score,
-                  render: (value: number) => (
-                    <Tag color={value >= 80 ? 'green' : value >= 60 ? 'gold' : 'default'}>{value}</Tag>
+                  key: 'verified',
+                  label: `已验证精准群 (${preciseRows.length})`,
+                  children: (
+                    <Table<GroupSearchMatchOut>
+                      size="small"
+                      rowKey="id"
+                      loading={preciseLoading}
+                      dataSource={preciseRows}
+                      pagination={false}
+                      scroll={{ y: 360 }}
+                      columns={[
+                        {
+                          title: '分',
+                          dataIndex: 'relevance_score',
+                          width: 78,
+                          sorter: (a, b) => a.relevance_score - b.relevance_score,
+                          render: (value: number, row) => (
+                            <Space size={2}>
+                              <Tag color={value >= 80 ? 'green' : value >= 60 ? 'gold' : 'default'}>{value}</Tag>
+                              {(row.trust_bonus ?? 0) > 0 ? (
+                                <Tooltip title="多源交叉印证/关系图谱可信加分">
+                                  <Tag color="blue" style={{ marginInlineEnd: 0 }}>
+                                    +{row.trust_bonus}
+                                  </Tag>
+                                </Tooltip>
+                              ) : null}
+                            </Space>
+                          ),
+                        },
+                        {
+                          title: '结论/验证',
+                          dataIndex: 'status',
+                          width: 120,
+                          render: (value: string, row) => (
+                            <Space direction="vertical" size={2}>
+                              {value === 'accepted' ? (
+                                <Tag color="green">保留</Tag>
+                              ) : value === 'needs_review' ? (
+                                <Tag color="gold">待确认</Tag>
+                              ) : (
+                                <Tag>排除</Tag>
+                              )}
+                              {row.verification_tier === 'external_verified' ? (
+                                <Tag color="cyan" style={{ fontSize: 11 }}>
+                                  外部发现·TG已验证
+                                </Tag>
+                              ) : null}
+                            </Space>
+                          ),
+                        },
+                        {
+                          title: '群组',
+                          dataIndex: 'title',
+                          ellipsis: true,
+                          render: (value: string, row) =>
+                            row.username ? (
+                              <a href={`https://t.me/${row.username}`} target="_blank" rel="noreferrer">
+                                {value}
+                              </a>
+                            ) : (
+                              value
+                            ),
+                        },
+                        { title: '成员', dataIndex: 'member_count', width: 76 },
+                        {
+                          title: '来源与证据',
+                          dataIndex: 'discovery_sources',
+                          width: 210,
+                          render: (sources: string[] | undefined, row) => {
+                            const items = (sources && sources.length ? sources : [row.source]).slice(0, 4);
+                            const counts = row.source_counts || {};
+                            const evLines = (row.evidence || []).slice(0, 5).map((ev) => {
+                              const s = String(ev.source || '');
+                              const q = ev.query ? `词:${String(ev.query)}` : '';
+                              const l = ev.link ? `链:${String(ev.link)}` : '';
+                              return `${SOURCE_LABEL[s] ?? s} ${q} ${l}`.trim();
+                            });
+                            return (
+                              <Tooltip title={evLines.length ? evLines.join(' | ') : '无额外证据'}>
+                                <Space size={2} wrap>
+                                  {items.map((src) => {
+                                    const cnt = counts[src] || 0;
+                                    return (
+                                      <Tag key={src} style={{ marginInlineEnd: 0 }}>
+                                        {SOURCE_LABEL[src] ?? src}
+                                        {cnt > 1 ? ` ×${cnt}` : ''}
+                                      </Tag>
+                                    );
+                                  })}
+                                </Space>
+                              </Tooltip>
+                            );
+                          },
+                        },
+                        {
+                          title: '语言/地区',
+                          width: 90,
+                          render: (_: unknown, row) => `${row.language || '—'} / ${row.country || '—'}`,
+                        },
+                        {
+                          title: '判定原因',
+                          dataIndex: 'reasons',
+                          ellipsis: true,
+                          render: (value: string[]) => value.join('；'),
+                        },
+                      ]}
+                    />
                   ),
                 },
                 {
-                  title: '结论',
-                  dataIndex: 'status',
-                  width: 76,
-                  render: (value: string) =>
-                    value === 'accepted' ? <Tag color="green">保留</Tag> : value === 'needs_review' ? <Tag color="gold">待确认</Tag> : <Tag>排除</Tag>,
-                },
-                {
-                  title: '群组',
-                  dataIndex: 'title',
-                  ellipsis: true,
-                  render: (value: string, row) =>
-                    row.username ? (
-                      <a href={`https://t.me/${row.username}`} target="_blank" rel="noreferrer">
-                        {value}
-                      </a>
-                    ) : (
-                      value
-                    ),
-                },
-                { title: '成员', dataIndex: 'member_count', width: 84 },
-                {
-                  title: '语言/地区',
-                  width: 100,
-                  render: (_: unknown, row) => `${row.language || '—'} / ${row.country || '—'}`,
-                },
-                {
-                  title: '判定原因',
-                  dataIndex: 'reasons',
-                  ellipsis: true,
-                  render: (value: string[]) => value.join('；'),
+                  key: 'pending',
+                  label: `待核验候选 (${preciseBatch?.unverified_candidates?.length ?? 0})`,
+                  children: (
+                    <Table<UnverifiedCandidateOut>
+                      size="small"
+                      rowKey={(row) => `${row.kind}:${row.value}:${row.url}`}
+                      dataSource={preciseBatch?.unverified_candidates ?? []}
+                      pagination={{ pageSize: 10 }}
+                      scroll={{ y: 360 }}
+                      columns={[
+                        {
+                          title: '公开候选链接',
+                          dataIndex: 'url',
+                          width: 250,
+                          render: (value: string) => <CopyableText value={value} mono maxLength={38} />,
+                        },
+                        {
+                          title: '发现来源',
+                          dataIndex: 'source',
+                          width: 120,
+                          render: (value: string) => <Tag>{SOURCE_LABEL[value] ?? value}</Tag>,
+                        },
+                        {
+                          title: '状态',
+                          dataIndex: 'status_label',
+                          width: 150,
+                          render: (value: string | undefined) => (
+                            <Tag color="orange">{value || '外部发现，尚未验证'}</Tag>
+                          ),
+                        },
+                        {
+                          title: '查询 / 适配器',
+                          dataIndex: 'query',
+                          width: 160,
+                          ellipsis: true,
+                          render: (value: string | undefined, row) =>
+                            [row.adapter, value].filter(Boolean).join(' · ') || '—',
+                        },
+                        {
+                          title: '未核验原因',
+                          dataIndex: 'reason',
+                          ellipsis: true,
+                        },
+                      ]}
+                    />
+                  ),
                 },
               ]}
             />
           </div>
         )}
+      </Modal>
+
+      <Modal
+        open={leadsOpen}
+        width={900}
+        title="私群邀请线索（只读校验产出，未入群）"
+        footer={null}
+        onCancel={() => setLeadsOpen(false)}
+      >
+        <Table<DiscoveryLeadOut>
+          size="small"
+          rowKey="id"
+          loading={leadsLoading}
+          dataSource={leadsRows}
+          pagination={{ pageSize: 12 }}
+          columns={[
+            {
+              title: '名称',
+              dataIndex: 'title',
+              ellipsis: true,
+              render: (value: string, row) => (
+                <Space size={4}>
+                  <span>{value || '未命名'}</span>
+                  <Tag>{KIND_LABEL[row.kind] ?? row.kind}</Tag>
+                </Space>
+              ),
+            },
+            {
+              title: '成员',
+              dataIndex: 'member_count',
+              width: 84,
+              render: (v: number | null | undefined) => v ?? '—',
+            },
+            {
+              title: '邀请链接',
+              dataIndex: 'invite_link',
+              width: 240,
+              render: (value: string) => <CopyableText value={value} mono maxLength={32} />,
+            },
+            {
+              title: '来源',
+              dataIndex: 'source',
+              width: 110,
+              render: (value: string) => <Tag>{SOURCE_LABEL[value] ?? value}</Tag>,
+            },
+            { title: '状态', dataIndex: 'status', width: 88 },
+          ]}
+        />
       </Modal>
 
       <KeywordWatchPanel />

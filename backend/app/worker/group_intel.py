@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Any, Awaitable, Callable, Optional
@@ -23,24 +24,41 @@ from telethon.tl import types as tl_types
 from app.config import settings
 from app.db import session_scope
 from app.models import (
+    AccountStatus,
     Dialog,
     DialogChannel,
+    DialogKind,
     DiscoveryLead,
     DiscoveryQueryStat,
+    GroupMember,
     GroupProfile,
     GroupSearchKeyword,
     GroupSearchMatch,
     Task,
     TgAccount,
 )
-from app.services.group_discovery import extract_links, invite_url, parse_tme_page, tme_url
+from app.services.external_group_sources import fetch_external_candidates
+from app.services.group_ai import expand_queries_with_ai, review_candidates_with_ai
+from app.services.group_discovery import (
+    ExtractedLink,
+    extract_links,
+    invite_url,
+    parse_tme_channel_posts,
+    parse_tme_page,
+    tme_channel_preview_url,
+    tme_url,
+)
 from app.services.group_precision import (
-    classify,
+    TOPIC_TERMS,
+    _contains,
+    _keyword_tokens,
     canonical_topics,
+    classify,
     discussion_verdict,
     score_group,
     verification_flags,
 )
+from app.services.group_sources import SearchSource, compute_source_trust, normalize_search_source
 from app.services.group_intel import (
     describe_chat_action,
     display_name_of,
@@ -55,7 +73,12 @@ from app.services.local_group_search import search_local_profiles
 from app.worker.entities import resolve_chat_entity, resolve_entity
 from app.worker.campaign_tasks import _invite_hash_of, _username_from_target
 from app.worker.humanize import sleep_human
-from app.worker.telethon_account import TaskFailure, describe_exception, flood_wait_seconds
+from app.worker.telethon_account import (
+    TaskFailure,
+    describe_exception,
+    flood_wait_seconds,
+    map_exception_to_status,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -528,8 +551,12 @@ class GroupIntelMixin:
         query: str,
         seed_chat_id: Optional[int],
         metrics: dict,
+        store_directly: bool = True,
+        on_chat: Optional[Callable[[Any, str, Optional[int]], None]] = None,
+        extra_raw: Optional[dict] = None,
+        on_rpc: Optional[Callable[[], bool]] = None,
     ) -> Optional[dict]:
-        """验证一个用户名/邀请链接；公开群落档案，私群落线索。"""
+        """验证一个用户名/邀请链接；公开群按需落档或交付候选回调，私群落线索。"""
 
         raw = {
             "discovered_from": source,
@@ -537,8 +564,32 @@ class GroupIntelMixin:
             "link": link.url,
             "query": query,
             "depth": 1,
+            **(extra_raw or {}),
         }
+
+        async def _handle_chat(chat: Any) -> Optional[dict]:
+            chat_id = int(getattr(chat, "id", 0) or 0)
+            if not chat_id:
+                return None
+            if store_directly:
+                stored_id = await self._store_discovered_chat(session, account, chat, source=source, raw=raw)
+                if stored_id is None:
+                    return None
+                chat_id = stored_id
+            elif on_chat is not None:
+                on_chat(chat, source, seed_chat_id)
+            kind = "channel" if getattr(chat, "broadcast", False) else "group"
+            return {
+                "title": getattr(chat, "title", "") or "",
+                "username": getattr(chat, "username", None),
+                "tg_chat_id": chat_id,
+                "kind": kind,
+                "members": getattr(chat, "participants_count", None),
+            }
+
         if link.kind == "username":
+            if on_rpc is not None and not on_rpc():
+                return None
             res = await client(functions.contacts.ResolveUsernameRequest(username=link.value))
             chats = list(getattr(res, "chats", []) or [])
             chat = next(
@@ -547,34 +598,16 @@ class GroupIntelMixin:
             )
             if chat is None:
                 return None
-            chat_id = await self._store_discovered_chat(session, account, chat, source=source, raw=raw)
-            if chat_id is None:
-                return None
-            kind = "channel" if getattr(chat, "broadcast", False) else "group"
-            return {
-                "title": getattr(chat, "title", "") or "",
-                "username": getattr(chat, "username", None),
-                "tg_chat_id": chat_id,
-                "kind": kind,
-                "members": getattr(chat, "participants_count", None),
-            }
+            return await _handle_chat(chat)
 
+        if on_rpc is not None and not on_rpc():
+            return None
         res = await client(functions.messages.CheckChatInviteRequest(hash=link.value))
         if isinstance(res, (tl_types.ChatInviteAlready, tl_types.ChatInvitePeek)):
             chat = getattr(res, "chat", None)
             if chat is None:
                 return None
-            chat_id = await self._store_discovered_chat(session, account, chat, source=source, raw=raw)
-            if chat_id is None:
-                return None
-            kind = "channel" if getattr(chat, "broadcast", False) else "group"
-            return {
-                "title": getattr(chat, "title", "") or "",
-                "username": getattr(chat, "username", None),
-                "tg_chat_id": chat_id,
-                "kind": kind,
-                "members": getattr(chat, "participants_count", None),
-            }
+            return await _handle_chat(chat)
         if isinstance(res, tl_types.ChatInvite):
             created = await self._store_invite_lead(
                 session,
@@ -604,55 +637,115 @@ class GroupIntelMixin:
         max_links: int,
         rng: Any,
         metrics: dict,
+        store_directly: bool = True,
+        on_chat: Optional[Callable[[Any, str, Optional[int]], None]] = None,
+        source_tag: str = "message_link",
+        extra_raw: Optional[dict] = None,
+        on_rpc_error: Optional[Callable[[BaseException], Awaitable[Any]]] = None,
+        on_rpc: Optional[Callable[[], bool]] = None,
     ) -> list[dict]:
-        """读种子频道最近消息，抓 t.me/@username 反查，图扩散深度固定为 1。"""
+        """读种子频道/群最近消息，抓 t.me/@username 反查；若读不到且有公开频道页则兜底读 t.me/s/。"""
 
         found: list[dict] = []
         seen_links: set[tuple[str, str]] = set()
         channels = seeds[: max(0, channel_limit)]
+        if max_links <= 0 or not channels:
+            return []
+        http_headers = {"User-Agent": "tgcc-discovery/1.0 (public preview reader)"}
         for index, seed in enumerate(channels):
+            if len(seen_links) >= max_links:
+                break
             seed_id = int(getattr(seed, "id", 0) or 0)
+            seed_username = str(getattr(seed, "username", "") or "").strip()
+            extracted_for_seed: list[Any] = []
+            seed_seen: set[tuple[str, str]] = set()
+            remaining = max_links - len(seen_links)
+            if on_rpc is not None:
+                page_count = max(1, (message_limit + 99) // 100)
+                if any(not on_rpc() for _ in range(page_count)):
+                    break
+            flood_stop = False
             try:
                 async for message in client.iter_messages(seed, limit=message_limit):
-                    if len(seen_links) >= max_links:
+                    if len(seen_links) + len(extracted_for_seed) >= max_links:
                         break
-                    texts = [getattr(message, "message", "") or ""]
-                    for link in extract_links(texts, limit=max_links - len(seen_links)):
-                        key = (link.kind, link.value)
-                        if key in seen_links:
-                            continue
-                        seen_links.add(key)
-                        try:
-                            hit = await self._verify_discovered_link(
-                                client,
-                                session,
-                                account,
-                                link,
-                                source="message_link",
-                                query=query,
-                                seed_chat_id=seed_id,
-                                metrics=metrics,
-                            )
-                        except BaseException as exc:  # noqa: BLE001 - 单条链接失败继续下一条
-                            metrics["message_errors"] += 1
-                            self.log.debug("消息链接验证失败 %s: %s", link.url, exc)
-                            hit = None
-                        if hit is not None:
-                            found.append(hit)
-                            metrics["message_profiles"] += 1
-                        await sleep_human(1.0, 2.2, rng)
-                        if len(seen_links) >= max_links:
-                            break
-            except BaseException as exc:  # noqa: BLE001 - 单个频道读不到就跳过
+                    text = getattr(message, "message", "") or ""
+                    if text:
+                        for item in extract_links([text], limit=remaining):
+                            key = (item.kind, item.value)
+                            if key not in seen_links and key not in seed_seen:
+                                seed_seen.add(key)
+                                extracted_for_seed.append(item)
+                                if len(seen_links) + len(extracted_for_seed) >= max_links:
+                                    break
+            except BaseException as exc:  # noqa: BLE001 - 单个频道读不到就尝试 t.me/s 兜底
                 metrics["message_errors"] += 1
-                self.log.debug("读频道消息失败 seed=%s: %s", seed_id, exc)
+                self.log.debug("读消息提链失败 seed=%s: %s", seed_id, exc)
+                if on_rpc_error is not None and await on_rpc_error(exc):
+                    break
+
+            if (
+                not extracted_for_seed
+                and len(seen_links) < max_links
+                and seed_username
+                and bool(getattr(seed, "broadcast", False))
+            ):
+                try:
+                    async with httpx.AsyncClient(timeout=8.0, follow_redirects=True, headers=http_headers) as http:
+                        resp = await http.get(tme_channel_preview_url(seed_username))
+                    if resp.status_code == 200:
+                        extracted_for_seed = parse_tme_channel_posts(
+                            resp.text,
+                            channel_username=seed_username,
+                            limit=max_links - len(seen_links),
+                        )
+                except BaseException as exc:  # noqa: BLE001
+                    self.log.debug("t.me/s 频道帖抓链失败 username=%s: %s", seed_username, exc)
+
+            for link in extracted_for_seed:
+                if len(seen_links) >= max_links:
+                    break
+                key = (link.kind, link.value)
+                if key in seen_links:
+                    continue
+                seen_links.add(key)
+                try:
+                    hit = await self._verify_discovered_link(
+                        client,
+                        session,
+                        account,
+                        link,
+                        source=source_tag,
+                        query=query,
+                        seed_chat_id=seed_id,
+                        metrics=metrics,
+                        store_directly=store_directly,
+                        on_chat=on_chat,
+                        on_rpc=on_rpc,
+                        extra_raw=extra_raw,
+                    )
+                except BaseException as exc:  # noqa: BLE001 - 单条链接失败继续下一条
+                    metrics["message_errors"] += 1
+                    self.log.debug("消息链接验证失败 %s: %s", link.url, exc)
+                    if on_rpc_error is not None and await on_rpc_error(exc):
+                        flood_stop = True
+                        break
+                    hit = None
+                if hit is not None:
+                    found.append(hit)
+                    metrics["message_profiles"] += 1
+                if len(seen_links) >= max_links:
+                    break
+                await sleep_human(1.0, 2.2, rng)
+            if flood_stop:
+                break
             await self._report_progress(
                 session,
                 task,
                 stage="expanding_messages",
                 detail=(
-                    f"已读 {index + 1}/{len(channels)} 个频道，发现 {len(seen_links)} 个链接，"
-                    f"公开群 {len(found)} 个"
+                    f"已读 {index + 1}/{len(channels)} 个种子，发现 {len(seen_links)} 个链接，"
+                    f"公开实体 {len(found)} 个"
                 ),
                 scanned=index + 1,
                 found=len(found),
@@ -674,6 +767,10 @@ class GroupIntelMixin:
         channel_limit: int,
         rng: Any,
         metrics: dict,
+        store_directly: bool = True,
+        on_chat: Optional[Callable[[Any, str, Optional[int]], None]] = None,
+        on_rpc_error: Optional[Callable[[BaseException], Awaitable[Any]]] = None,
+        on_rpc: Optional[Callable[[], bool]] = None,
     ) -> list[dict]:
         """用 Telegram 的相似频道推荐扩展种子，仍然只读。"""
 
@@ -681,23 +778,32 @@ class GroupIntelMixin:
         channels = seeds[: max(0, channel_limit)]
         for index, seed in enumerate(channels):
             seed_id = int(getattr(seed, "id", 0) or 0)
+            if on_rpc is not None and not on_rpc():
+                break
             try:
                 res = await client(functions.channels.GetChannelRecommendationsRequest(channel=seed))
                 for chat in list(getattr(res, "chats", []) or []):
-                    chat_id = await self._store_discovered_chat(
-                        session,
-                        account,
-                        chat,
-                        source="recommendation",
-                        raw={
-                            "discovered_from": "recommendation",
-                            "seed_chat_id": seed_id,
-                            "query": query,
-                            "depth": 1,
-                        },
-                    )
-                    if chat_id is None:
+                    chat_id = int(getattr(chat, "id", 0) or 0)
+                    if not chat_id:
                         continue
+                    if store_directly:
+                        stored_id = await self._store_discovered_chat(
+                            session,
+                            account,
+                            chat,
+                            source="recommendation",
+                            raw={
+                                "discovered_from": "recommendation",
+                                "seed_chat_id": seed_id,
+                                "query": query,
+                                "depth": 1,
+                            },
+                        )
+                        if stored_id is None:
+                            continue
+                        chat_id = stored_id
+                    elif on_chat is not None:
+                        on_chat(chat, "recommendation", seed_id)
                     kind = "channel" if getattr(chat, "broadcast", False) else "group"
                     found.append(
                         {
@@ -712,6 +818,8 @@ class GroupIntelMixin:
             except BaseException as exc:  # noqa: BLE001 - 单个种子失败继续下一个
                 metrics["recommendation_errors"] += 1
                 self.log.debug("频道推荐失败 seed=%s: %s", seed_id, exc)
+                if on_rpc_error is not None and await on_rpc_error(exc):
+                    break
             await self._report_progress(
                 session,
                 task,
@@ -785,7 +893,8 @@ class GroupIntelMixin:
         全程只读：`contacts.Search` / `GetFullChannel` 都不加群、不发消息。
         """
         assert account is not None
-        self._ensure_sendable(account)
+        # 只读搜索：冻结号也能连上并读取，只有写操作会被 Telegram 拒绝，
+        # 所以这里不能套 _ensure_sendable（它会把冻结号直接挡掉）。
         payload = dict(task.payload or {})
         if str(payload.get("mode") or "") == "precise":
             return await self._search_groups_precise(session, task, account, payload)
@@ -1153,6 +1262,135 @@ class GroupIntelMixin:
             ),
         }
 
+    @staticmethod
+    def _shard_list(items: list[Any], account_index: int, account_count: int) -> list[Any]:
+        if account_count <= 1:
+            return list(items)
+        idx = max(0, int(account_index)) % int(account_count)
+        return list(items)[idx::account_count]
+
+    @staticmethod
+    def _peer_chat_id(peer: Any) -> Optional[int]:
+        chat_id = getattr(peer, "channel_id", None) or getattr(peer, "chat_id", None)
+        return int(chat_id) if chat_id else None
+
+    @staticmethod
+    def _chat_members_of(chat: Any, full_chat: Any = None, tme_info: Optional[dict] = None) -> Optional[int]:
+        raw = getattr(full_chat, "participants_count", None) if full_chat is not None else None
+        if raw is None or raw == 0:
+            raw = getattr(chat, "participants_count", None)
+        if (raw is None or raw == 0) and tme_info:
+            raw = tme_info.get("member_count")
+        if raw is None:
+            return None
+        count = int(raw)
+        # 未拉 GetFullChannel 时部分实体默认返回 0，按未知处理以免被当成小群误扣分。
+        if count == 0 and full_chat is None and not (tme_info and tme_info.get("member_count") == 0):
+            return None
+        return count
+
+    async def _sample_group_activity(
+        self,
+        client: Any,
+        chat: Any,
+        *,
+        keywords: list[str],
+        now: datetime,
+        on_rpc_error: Optional[Callable[[BaseException], Awaitable[Any]]] = None,
+        on_rpc: Optional[Callable[[], bool]] = None,
+    ) -> tuple[Optional[dict[str, Any]], list[str]]:
+        """只读抽样最近 20 条消息，统计 7 天活跃度、发言人数与广告链接占比。"""
+
+        cutoff = now - timedelta(days=7)
+        topics = canonical_topics(keywords)
+        match_terms = list(
+            dict.fromkeys(
+                [
+                    *keywords,
+                    *_keyword_tokens(keywords),
+                    *(term for topic in topics for term in TOPIC_TERMS.get(topic, ())),
+                ]
+            )
+        )
+        total_sampled = 0
+        recent_7d = 0
+        ad_count = 0
+        keyword_hits = 0
+        senders: set[int] = set()
+        samples: list[str] = []
+        try:
+            if on_rpc is not None and not on_rpc():
+                return None, []
+            async for message in client.iter_messages(chat, limit=20):
+                total_sampled += 1
+                msg_date = getattr(message, "date", None)
+                if msg_date is not None:
+                    aware = msg_date if msg_date.tzinfo else msg_date.replace(tzinfo=timezone.utc)
+                    if aware >= cutoff:
+                        recent_7d += 1
+                sender_id = getattr(message, "sender_id", None)
+                if sender_id:
+                    senders.add(int(sender_id))
+                text = " ".join(str(getattr(message, "message", "") or "").split())
+                if text:
+                    lowered = text.casefold()
+                    if (
+                        "http://" in lowered
+                        or "https://" in lowered
+                        or "t.me/" in lowered
+                        or re.search(r"(?<![\w/@])@[a-z0-9_]{4,}", lowered)
+                    ):
+                        ad_count += 1
+                    if any(_contains(text, term) for term in match_terms):
+                        keyword_hits += 1
+                    if len(samples) < 5:
+                        samples.append(text[:120])
+        except BaseException as exc:  # noqa: BLE001 - 未加群读不到历史属于正常受限，不能惩罚
+            if on_rpc_error is not None:
+                await on_rpc_error(exc)
+            return None, []
+
+        ad_ratio = (ad_count / total_sampled) if total_sampled else 0.0
+        return {
+            "checked": True,
+            "total_sampled": total_sampled,
+            "recent_7d": recent_7d,
+            "unique_senders": len(senders),
+            "ad_ratio": round(ad_ratio, 2),
+            "keyword_hits": keyword_hits,
+        }, samples
+
+    async def _enrich_candidates_from_tme(
+        self,
+        candidates: dict[int, dict[str, Any]],
+        target_ids: list[int],
+        *,
+        metrics: dict,
+    ) -> None:
+        """对未拉取 GetFullChannel 且缺少简介的公开候选补抓 t.me 公开页（零账号配额消耗）。"""
+
+        if not target_ids:
+            return
+        headers = {"User-Agent": "tgcc-discovery/1.0 (public preview reader)"}
+        async with httpx.AsyncClient(timeout=8.0, follow_redirects=True, headers=headers) as http:
+            for chat_id in target_ids:
+                entry = candidates.get(chat_id)
+                if not entry:
+                    continue
+                username = str(getattr(entry["chat"], "username", "") or "").strip()
+                if not username:
+                    continue
+                try:
+                    resp = await http.get(tme_url(username))
+                    if resp.status_code != 200:
+                        continue
+                    parsed = parse_tme_page(resp.text, username=username)
+                    if parsed.get("title") or parsed.get("about") or parsed.get("member_count") is not None:
+                        entry["tme"] = parsed
+                        metrics["tme_enriched"] += 1
+                except BaseException:  # noqa: BLE001
+                    metrics["tme_errors"] += 1
+
     async def _search_groups_precise(
         self,
         session: Any,
@@ -1160,41 +1398,77 @@ class GroupIntelMixin:
         account: TgAccount,
         payload: dict,
     ) -> dict:
-        """多语言精准检索：多源召回 → 严格类型/权限校验 → 相关性评分 → 匹配快照。
+        """多语言精准检索：AI/规则扩词 → 多源召回（含分片与图扩散） → 优先全检/验活 → 评分与 AI 复核。"""
 
-        与旧 `_search_groups` 的区别：
-        - 召回源不只 contacts.search，还支持 messages.searchGlobal、频道 linked_chat；
-        - 搜索阶段不提前过滤频道，频道只作为 linked_chat/图扩散种子；
-        - 每个群必须通过「超级群 + 非广播/非 gigagroup/非 monoforum」硬校验；
-        - 评分满分 100，按名称/简介/地区/讨论意图/语言五项落库，便于解释排序。
-        """
-
-        self._ensure_sendable(account)
         keywords = [str(item).strip() for item in (payload.get("keywords") or []) if str(item).strip()][:20]
         if not keywords:
             raise TaskFailure("精准检索缺少关键词", retryable=False)
 
+        def payload_int(name: str, default: int, lower: int, upper: int) -> int:
+            raw = payload.get(name)
+            try:
+                value = default if raw is None else int(raw)
+            except (TypeError, ValueError):
+                value = default
+            return max(lower, min(value, upper))
+
         country = str(payload.get("country") or "").strip().upper() or None
         languages = [str(item).strip() for item in (payload.get("languages") or []) if str(item).strip()][:6]
-        per_query = max(1, min(int(payload.get("limit") or 50), 100))
+        per_query = payload_int("limit", 50, 1, 100)
         min_members = max(0, int(payload.get("min_members") or 0))
-        max_queries = max(1, min(int(payload.get("max_queries") or 120), 300))
+        max_queries = payload_int("max_queries", 120, 1, 300)
         group_only = bool(payload.get("group_only", True))
         public_only = bool(payload.get("public_only", True))
         exclude_readonly = bool(payload.get("exclude_readonly", True))
+        enable_contacts_search = bool(payload.get("enable_contacts_search", True))
+        contacts_query_limit = payload_int("contacts_query_limit", max_queries, 0, 300)
         include_linked = bool(payload.get("include_linked_groups", True))
-        max_linked = max(0, min(int(payload.get("max_linked_chats") or 50), 200))
+        max_linked = payload_int("max_linked_chats", 50, 0, 200)
         search_messages = bool(payload.get("search_messages", True))
-        message_queries = max(0, min(int(payload.get("message_search_queries") or 3), 20))
-        full_check_limit = max(0, min(int(payload.get("full_check_limit") or 40), 100))
-        min_score = max(0, min(int(payload.get("min_relevance_score") or 60), 100))
+        message_queries = payload_int("message_search_queries", 5, 0, 20)
+        message_pages = payload_int("message_search_pages", 2, 1, 5)
+        full_check_limit = payload_int("full_check_limit", 60, 0, 200)
+        min_score = payload_int("min_relevance_score", 60, 0, 100)
         expand_short = bool(payload.get("expand_short_queries", True))
         raw_short_limit = payload.get("short_query_limit")
-        short_limit = 0 if raw_short_limit == 0 else max(0, min(int(raw_short_limit or 60), 80))
+        short_limit = 0 if raw_short_limit == 0 else payload_int("short_query_limit", 60, 0, 80)
+        expand_recommendations = bool(payload.get("expand_recommendations", True))
+        recommendation_channels = payload_int("recommendation_channels", 8, 0, 30)
+        expand_channel_messages = bool(payload.get("expand_channel_messages", True))
+        message_channels = payload_int("message_channels", 8, 0, 30)
+        message_limit = payload_int("message_limit", 100, 20, 300)
+        scan_joined_groups = bool(payload.get("scan_joined_groups", True))
+        joined_group_limit = payload_int("joined_group_limit", 15, 0, 100)
+        enrich_tme = bool(payload.get("enrich_tme", True))
+        tme_limit = payload_int("tme_limit", 30, 0, 100)
+        expand_scope_preset = bool(payload.get("expand_scope_preset", False))
+        expand_channel_posts = bool(payload.get("expand_channel_posts", False)) or expand_scope_preset
+        channel_posts_query_limit = payload_int("channel_posts_query_limit", 5, 0, 20)
+        allow_paid_channel_posts = bool(payload.get("allow_paid_channel_posts", False))
+        channel_posts_max_stars = payload_int("channel_posts_max_stars", 0, 0, 500)
+        expand_external_web = bool(payload.get("expand_external_web", False)) or expand_scope_preset
+        external_web_query_limit = payload_int("external_web_query_limit", 3, 1, 10)
+        external_web_candidate_limit = payload_int("external_web_candidate_limit", 30, 0, 200)
+        allow_paid_external_search = bool(payload.get("allow_paid_external_search", False))
+        expand_common_chats = bool(payload.get("expand_common_chats", False)) or expand_scope_preset
+        common_chat_user_limit = payload_int("common_chat_user_limit", 8, 0, 25)
+        rpc_budget = payload_int("rpc_budget", 180, 20, 500)
+        verify_activity = bool(payload.get("verify_activity", True))
+        activity_check_limit = payload_int("activity_check_limit", 25, 0, 60)
+        ai_expand = bool(payload.get("ai_expand", False))
+        ai_review = bool(payload.get("ai_review", False))
+
+        dispatch = str(payload.get("dispatch") or "round_robin").strip()
+        account_index = max(0, int(payload.get("account_index") or 0))
+        account_count = max(1, int(payload.get("account_count") or 1))
+        shard_mode = dispatch != "each" and account_count > 1
+        batch_id = str(payload.get("batch_id") or "") or None
+
         raw_candidate_links = payload.get("candidate_links") or []
         if isinstance(raw_candidate_links, str):
             raw_candidate_links = [raw_candidate_links]
         candidate_links = [str(item).strip() for item in raw_candidate_links if str(item).strip()][:200]
+        parsed_links = extract_links(candidate_links, limit=200) if candidate_links else []
 
         disabled_queries = list(
             await session.scalars(select(DiscoveryQueryStat.query).where(DiscoveryQueryStat.enabled.is_(False)))
@@ -1206,37 +1480,145 @@ class GroupIntelMixin:
             max_queries=max_queries,
             exclude=disabled_queries,
         )
-        if not queries and not candidate_links:
-            raise TaskFailure("精准检索没有生成可用查询", retryable=False)
+        has_any_channel = bool(
+            (enable_contacts_search and queries)
+            or (search_messages and message_queries and queries)
+            or parsed_links
+            or expand_external_web
+            or (expand_channel_posts and channel_posts_query_limit and queries)
+            or scan_joined_groups
+            or expand_common_chats
+        )
+        if not has_any_channel:
+            raise TaskFailure("精准检索没有生成可用查询或启用任何召回来源", retryable=False)
 
-        # 短核心词作为「第二段兜底」：先跑用户长尾词，只有候选不足时才补，
-        # 避免每次任务都无条件多打几十条搜索。短词仍参与评分与本地库检索。
         short_items: list[SearchQuery] = []
+        seen_query_keys = {item.query.casefold() for item in queries}
         if expand_short and short_limit and queries:
-            seen_query_keys = {item.query.casefold() for item in queries}
             short_items = [
                 item
                 for item in build_short_queries(
                     keywords,
                     regions=[country] if country else [],
                     limit=short_limit,
+                    strict_topic=True,
                 )
                 if item.query.casefold() not in seen_query_keys
             ]
-        all_queries = list(queries)
+
+        if shard_mode:
+            sharded_queries = self._shard_list(queries, account_index, account_count)
+            short_items = self._shard_list(short_items, account_index, account_count)
+            links = self._shard_list(parsed_links, account_index, account_count)
+        else:
+            sharded_queries = list(queries)
+            links = list(parsed_links)
+
+        # AI 扩词只在分片后追加给主分片，避免多账号索引错位导致重复搜或漏搜规则词。
+        ai_notes: list[str] = []
+        note_seen: set[str] = set()
+
+        def push_note(msg: str) -> None:
+            cleaned = str(msg or "").strip()
+            if cleaned and cleaned not in note_seen:
+                note_seen.add(cleaned)
+                ai_notes.append(cleaned)
+
+        if ai_expand and (not shard_mode or account_index == 0):
+            ai_extra_queries, ai_exp_note = await expand_queries_with_ai(
+                keywords,
+                country=country,
+                languages=languages,
+                limit=12,
+            )
+            if ai_exp_note:
+                push_note(ai_exp_note)
+            disabled_keys = {" ".join(str(x).split()).casefold() for x in disabled_queries if x}
+            short_keys = {item.query.casefold() for item in short_items}
+            for extra in ai_extra_queries:
+                cleaned = " ".join(str(extra or "").split())
+                key = cleaned.casefold()
+                if (
+                    not cleaned
+                    or len(cleaned) > 64
+                    or key in seen_query_keys
+                    or key in short_keys
+                    or key in disabled_keys
+                ):
+                    continue
+                seen_query_keys.add(key)
+                sharded_queries.append(
+                    SearchQuery(
+                        query=cleaned,
+                        keyword=keywords[0],
+                        template="ai_expand",
+                        region=country,
+                        lang=None,
+                    )
+                )
+
+        contacts_queries = sharded_queries[:contacts_query_limit] if (enable_contacts_search and contacts_query_limit) else []
+        msg_query_pool = sharded_queries[:message_queries] if (search_messages and message_queries) else []
+        post_query_pool = (
+            sharded_queries[:channel_posts_query_limit]
+            if (expand_channel_posts and channel_posts_query_limit)
+            else []
+        )
+
+        # 评分仅依据用户输入的原始关键词，绝不把 short_core 兜底词混入评分！
+        scoring_keywords = list(keywords)
         short_run = 0
-        if not all_queries and not candidate_links:
-            raise TaskFailure("精准检索没有生成可用查询", retryable=False)
+
+        has_shard_work = bool(
+            contacts_queries
+            or msg_query_pool
+            or (expand_short and short_items)
+            or links
+            or post_query_pool
+            or (expand_external_web and (not shard_mode or account_index == 0))
+            or scan_joined_groups
+            or (expand_common_chats and common_chat_user_limit > 0)
+        )
+        if shard_mode and not has_shard_work:
+            await self._report_progress(
+                session,
+                task,
+                stage="done",
+                detail="本账号分片未分配到额外查询（已由同批其他账号执行）",
+                scanned=0,
+                found=0,
+                total=0,
+            )
+            return {
+                "mode": "precise",
+                "keywords": keywords,
+                "country": country,
+                "languages": languages,
+                "queries_run": 0,
+                "short_queries_run": 0,
+                "candidate_links": 0,
+                "min_relevance_score": min_score,
+                "candidates": 0,
+                "accepted": 0,
+                "needs_review": 0,
+                "rejected": 0,
+                "average_score": 0,
+                "ai_notes": ai_notes,
+                "source_stats": {},
+                "pending_candidates": [],
+                "metrics": {},
+                "summary": "精准检索（分片空闲）：本账号未分到查询词",
+            }
 
         client = self._client(account.id)
         rng = self._campaign_rng(task, payload)
-        metrics = {
-            "queries": len(all_queries),
+        metrics: dict[str, Any] = {
+            "queries": len(contacts_queries),
             "short_queries": 0,
             "short_raw_chats": 0,
             "raw_chats": 0,
             "candidates": 0,
-            "candidate_links": len(candidate_links),
+            "candidate_links": len(links),
             "candidate_found": 0,
             "candidate_errors": 0,
             "invite_leads": 0,
@@ -1245,10 +1627,27 @@ class GroupIntelMixin:
             "query_errors": 0,
             "local_found": 0,
             "local_errors": 0,
+            "joined_found": 0,
             "linked_found": 0,
             "linked_errors": 0,
+            "message_profiles": 0,
+            "recommendation_profiles": 0,
+            "recommendation_errors": 0,
+            "channel_posts_seeds": 0,
+            "channel_posts_errors": 0,
+            "external_queries": 0,
+            "external_links": 0,
+            "external_errors": 0,
+            "common_chat_checked": 0,
+            "common_chat_found": 0,
+            "tme_enriched": 0,
+            "tme_errors": 0,
             "full_checked": 0,
+            "full_cached": 0,
             "full_errors": 0,
+            "activity_checked": 0,
+            "ai_reviewed": 0,
+            "rpc_used": 0,
             "accepted": 0,
             "needs_review": 0,
             "rejected": 0,
@@ -1257,28 +1656,129 @@ class GroupIntelMixin:
             "dropped_members": 0,
             "score_sum": 0,
         }
+        source_stats: dict[str, int] = {}
         candidates: dict[int, dict[str, Any]] = {}
+        pending_candidates: list[dict[str, Any]] = []
+        seen_pending: set[tuple[str, str]] = set()
 
-        def add_candidate(chat: Any, *, source: str, query: str, keyword: str) -> Optional[int]:
+        def record_source_meta(
+            entry: dict[str, Any],
+            *,
+            source: str,
+            query: str,
+            keyword: str,
+            evidence_extra: Optional[dict[str, Any]] = None,
+            joined: bool = False,
+        ) -> None:
+            norm_src = normalize_search_source(source)
+            if norm_src not in entry["sources"]:
+                entry["sources"].append(norm_src)
+            entry["source_counts"][norm_src] = entry["source_counts"].get(norm_src, 0) + 1
+            source_stats[norm_src] = source_stats.get(norm_src, 0) + 1
+            if joined or norm_src in (
+                SearchSource.JOINED_GROUP_GRAPH.value,
+                SearchSource.COMMON_CHAT_GRAPH.value,
+            ):
+                entry["joined"] = True
+            ev = {
+                "source": norm_src,
+                "query": str(query or "")[:120],
+                "keyword": str(keyword or "")[:80],
+                **(evidence_extra or {}),
+            }
+            ev_key = (ev["source"], ev.get("query"), ev.get("link"), ev.get("seed_chat_id"), ev.get("tg_user_id"))
+            if ev_key not in entry["_ev_keys"] and len(entry["evidence"]) < 15:
+                entry["_ev_keys"].add(ev_key)
+                entry["evidence"].append(ev)
+
+        def add_candidate(
+            chat: Any,
+            *,
+            source: str,
+            query: str,
+            keyword: str,
+            bump_message_hit: bool = False,
+            evidence_extra: Optional[dict[str, Any]] = None,
+            joined: bool = False,
+        ) -> Optional[int]:
             chat_id = int(getattr(chat, "id", 0) or 0)
             if not chat_id:
                 return None
+            norm_src = normalize_search_source(source)
             entry = candidates.get(chat_id)
             if entry is None:
                 entry = {
                     "chat": chat,
                     "sources": [],
+                    "source_counts": {},
+                    "evidence": [],
+                    "_ev_keys": set(),
                     "query": query,
                     "keyword": keyword,
                     "full": None,
+                    "cached": None,
+                    "tme": None,
+                    "activity": None,
+                    "samples": [],
+                    "message_hits": 0,
+                    "joined": False,
                 }
                 candidates[chat_id] = entry
                 metrics["candidates"] += 1
-            if source not in entry["sources"]:
-                entry["sources"].append(source)
+            elif not entry["query"] and query:
+                entry["query"] = query
+            record_source_meta(
+                entry,
+                source=norm_src,
+                query=query,
+                keyword=keyword,
+                evidence_extra=evidence_extra,
+                joined=joined,
+            )
+            if bump_message_hit:
+                entry["message_hits"] += 1
             return chat_id
 
-        async def record_keyword(query: str, source: str, *, status: str, raw: int, found: int, error: str = "") -> None:
+        def add_pending_candidate(
+            link: ExtractedLink,
+            *,
+            source: str,
+            query: str,
+            reason: str,
+            adapter: str = "",
+        ) -> None:
+            if link.kind != "username":
+                return
+            key = (link.kind, link.value.casefold())
+            if key in seen_pending or len(pending_candidates) >= 200:
+                return
+            seen_pending.add(key)
+            pending_candidates.append(
+                {
+                    "url": link.url,
+                    "kind": link.kind,
+                    "value": link.value,
+                    "source": normalize_search_source(source),
+                    "adapter": adapter,
+                    "query": str(query or "")[:120],
+                    "status_label": "外部发现，尚未验证",
+                    "reason": str(reason or "尚未通过 Telegram 实体验证")[:160],
+                }
+            )
+
+        def on_expanded_chat(chat: Any, source_tag: str, seed_id: Optional[int]) -> None:
+            add_candidate(
+                chat,
+                source=source_tag,
+                query="",
+                keyword=keywords[0],
+                evidence_extra={"seed_chat_id": seed_id} if seed_id else None,
+            )
+
+        async def record_keyword(
+            query: str, source: str, *, status: str, raw: int, found: int, error: str = ""
+        ) -> None:
+            norm_src = normalize_search_source(source)[:24]
             await session.execute(
                 pg_insert(GroupSearchKeyword)
                 .values(
@@ -1286,7 +1786,7 @@ class GroupIntelMixin:
                     task_id=task.id,
                     account_id=account.id,
                     query=query[:255],
-                    source=source,
+                    source=norm_src,
                     status=status,
                     raw_count=raw,
                     found_count=found,
@@ -1304,162 +1804,91 @@ class GroupIntelMixin:
                 )
             )
 
-        # 1) contacts.search：短核心词 + 原始关键词 + 地区扩展都跑。
-        for index, item in enumerate(all_queries):
-            try:
-                res = await client(functions.contacts.SearchRequest(q=item.query, limit=per_query))
-            except BaseException as exc:  # noqa: BLE001 - 单条失败不影响整批
-                metrics["query_errors"] += 1
-                err = f"{type(exc).__name__}: {str(exc)[:160]}"
-                await record_keyword(item.query, "contacts", status="error", raw=0, found=0, error=err)
+        flood_hit: Optional[int] = None
+        budget_hit = False
+
+        def take_rpc(cost: int = 1) -> bool:
+            nonlocal budget_hit
+            if flood_hit:
+                return False
+            if metrics["rpc_used"] + cost > rpc_budget:
+                if not budget_hit:
+                    budget_hit = True
+                    push_note(f"达到单账号 Telegram RPC 预算上限({rpc_budget})，已停止新增扩展并将现有候选送入核验")
+                return False
+            metrics["rpc_used"] += cost
+            return True
+        async def handle_rpc_exc(exc: BaseException) -> Optional[int]:
+            nonlocal flood_hit
+            mapped = map_exception_to_status(exc)
+            if mapped in (
+                AccountStatus.dead,
+                AccountStatus.invalid,
+                AccountStatus.needs_code,
+                AccountStatus.frozen,
+            ):
+                raise exc
+            wait = flood_wait_seconds(exc)
+            if wait:
+                flood_hit = max(flood_hit or 0, wait)
+                await self._apply_status(
+                    session,
+                    account,
+                    exc,
+                    status=mapped or AccountStatus.limited,
+                )
+            return wait
+
+        post_seed_ids: set[int] = set()
+        channel_post_seeds: list[Any] = []
+        post_extra_links: list[tuple[str, ExtractedLink, str, str]] = []
+        # Telegram does not return the exact Stars charge in this response. To
+        # enforce a hard per-task ceiling, reserve the remaining allowance for
+        # one paid request and disable further paid requests afterwards.
+        paid_stars_remaining: Optional[int] = (
+            channel_posts_max_stars
+            if allow_paid_channel_posts and channel_posts_max_stars > 0
+            else None
+        )
+        paid_stars_reserved = 0
+
+        try:
+            # 1) contacts.search：原生关键词 + 地区/AI 扩展词（分片执行）。
+            for index, item in enumerate(contacts_queries):
+                if flood_hit or not take_rpc():
+                    break
                 try:
-                    await _record_query_stat(session, item, raw_count=0, found_count=0, error=err)
-                except BaseException:  # noqa: BLE001
-                    pass
-                continue
-
-            chats = list(getattr(res, "chats", []) or [])
-            metrics["raw_chats"] += len(chats)
-            if item.template == "short_core":
-                metrics["short_raw_chats"] += len(chats)
-            found = 0
-            for chat in chats:
-                if add_candidate(chat, source="contacts", query=item.query, keyword=item.keyword):
-                    found += 1
-            await record_keyword(item.query, "contacts", status="ok", raw=len(chats), found=found)
-            try:
-                await _record_query_stat(session, item, raw_count=len(chats), found_count=found)
-            except BaseException:  # noqa: BLE001
-                self.log.debug("查询绩效记录失败 query=%s", item.query)
-
-            await self._report_progress(
-                session,
-                task,
-                stage="searching",
-                detail=(
-                    f"{'短词' if item.template == 'short_core' else '联系人'}"
-                    f"搜索「{item.query}」返回 {len(chats)} 个实体（候选 {len(candidates)}）"
-                ),
-                scanned=index + 1,
-                found=len(candidates),
-                total=len(all_queries),
-            )
-            if index < len(all_queries) - 1:
-                await sleep_human(2.0, 5.0, rng)
-
-        # 1b) 外部候选链接：网页/目录/人工找到的 t.me 用户名或邀请链接。
-        # 只做只读核验，不入群、不发消息；私群只有邀请链接时落 DiscoveryLead。
-        if candidate_links:
-            links = extract_links(candidate_links, limit=200)
-            for index, link in enumerate(links):
-                raw = {"discovered_from": "web_candidate", "link": link.url}
-                link_found = 0
-                try:
-                    if link.kind == "username":
-                        resolved = await client(
-                            functions.contacts.ResolveUsernameRequest(username=link.value)
-                        )
-                        chats = list(getattr(resolved, "chats", []) or [])
-                        chat = next(
-                            (
-                                item
-                                for item in chats
-                                if str(getattr(item, "username", "") or "").casefold()
-                                == link.value.casefold()
-                            ),
-                            chats[0] if chats else None,
-                        )
-                        if chat is not None and add_candidate(
-                            chat,
-                            source="web_candidate",
-                            query=link.url,
-                            keyword=keywords[0],
-                        ):
-                            metrics["candidate_found"] += 1
-                            link_found = 1
-                    else:
-                        invite = await client(
-                            functions.messages.CheckChatInviteRequest(hash=link.value)
-                        )
-                        if isinstance(invite, (tl_types.ChatInviteAlready, tl_types.ChatInvitePeek)):
-                            chat = getattr(invite, "chat", None)
-                            if chat is not None and add_candidate(
-                                chat,
-                                source="web_candidate",
-                                query=link.url,
-                                keyword=keywords[0],
-                            ):
-                                metrics["candidate_found"] += 1
-                                link_found = 1
-                        elif isinstance(invite, tl_types.ChatInvite):
-                            created = await self._store_invite_lead(
-                                session,
-                                account,
-                                link.value,
-                                invite,
-                                source="web_candidate",
-                                query="",
-                                seed_chat_id=None,
-                                raw=raw,
-                            )
-                            if created:
-                                metrics["invite_leads"] += 1
-                    await record_keyword(
-                        link.url,
-                        "candidate",
-                        status="ok",
-                        raw=1,
-                        found=link_found,
-                    )
-                except BaseException as exc:  # noqa: BLE001 - 单条候选失败不影响整批
-                    metrics["candidate_errors"] += 1
-                    await record_keyword(
-                        link.url,
-                        "candidate",
-                        status="error",
-                        raw=0,
-                        found=0,
-                        error=f"{type(exc).__name__}: {str(exc)[:160]}",
-                    )
-                    self.log.debug("外部候选链接验证失败 %s: %s", link.url, exc)
-                if index < len(links) - 1:
-                    await sleep_human(1.0, 2.5, rng)
-
-        # 1c) 长尾召回不足时补短核心词。阈值用 per_query：长尾词通常每个只回 ~10 条，
-        # 候选数低于单查询上限就说明召回不够，值得再打一轮高命中的短词。
-        if expand_short and short_items and len(candidates) < per_query:
-            short_run = len(short_items)
-            for index, item in enumerate(short_items):
-                try:
-                    res = await client(
-                        functions.contacts.SearchRequest(q=item.query, limit=per_query)
-                    )
-                except BaseException as exc:  # noqa: BLE001 - 单条失败不影响整批
+                    res = await client(functions.contacts.SearchRequest(q=item.query, limit=per_query))
+                except BaseException as exc:  # noqa: BLE001
                     metrics["query_errors"] += 1
                     err = f"{type(exc).__name__}: {str(exc)[:160]}"
                     await record_keyword(
-                        item.query, "short_core", status="error", raw=0, found=0, error=err
+                        item.query, SearchSource.CONTACTS_SEARCH.value, status="error", raw=0, found=0, error=err
                     )
                     try:
                         await _record_query_stat(session, item, raw_count=0, found_count=0, error=err)
                     except BaseException:  # noqa: BLE001
                         pass
+                    wait = await handle_rpc_exc(exc)
+                    if wait:
+                        if not candidates and not links and not expand_external_web:
+                            raise self._failure(exc, "精准找群触发限流") from exc
+                        break
                     continue
 
                 chats = list(getattr(res, "chats", []) or [])
                 metrics["raw_chats"] += len(chats)
-                metrics["short_raw_chats"] += len(chats)
                 found = 0
                 for chat in chats:
                     if add_candidate(
                         chat,
-                        source="short_core",
+                        source=SearchSource.CONTACTS_SEARCH.value,
                         query=item.query,
                         keyword=item.keyword,
                     ):
                         found += 1
                 await record_keyword(
-                    item.query, "short_core", status="ok", raw=len(chats), found=found
+                    item.query, SearchSource.CONTACTS_SEARCH.value, status="ok", raw=len(chats), found=found
                 )
                 try:
                     await _record_query_stat(session, item, raw_count=len(chats), found_count=found)
@@ -1470,322 +1899,1199 @@ class GroupIntelMixin:
                     session,
                     task,
                     stage="searching",
-                    detail=f"短词补充「{item.query}」返回 {len(chats)} 个实体（候选 {len(candidates)}）",
+                    detail=f"联系人搜索「{item.query}」返回 {len(chats)} 个实体（候选 {len(candidates)}）",
                     scanned=index + 1,
                     found=len(candidates),
-                    total=short_run,
+                    total=len(contacts_queries),
                 )
-                if index < short_run - 1:
+                if index < len(contacts_queries) - 1:
                     await sleep_human(2.0, 5.0, rng)
 
-        metrics["queries"] += short_run
-        metrics["short_queries"] = short_run
-        total_queries = len(all_queries) + short_run
-        scoring_keywords = [
-            *keywords,
-            *[item.query for item in short_items[:short_run]],
-        ]
-
-        # 2) messages.searchGlobal：只搜群消息，补 contacts.search 召回不到的长尾。
-        if search_messages and message_queries:
-            fallback_done: set[str] = set()
-            for index, item in enumerate(all_queries[:message_queries]):
-                # 组合查询命中 0 时回退到基础词/首词：SearchGlobal 默认所有词都要命中，
-                # 「Forex Thailand」这类组合常因地区词而整条落空。
-                attempts = [item.query]
-                for candidate in (item.keyword, item.query.split()[0] if item.query.split() else ""):
-                    candidate = str(candidate or "").strip()
-                    if candidate and all(candidate.casefold() != seen.casefold() for seen in attempts):
-                        attempts.append(candidate)
-
-                raw_total = 0
-                used_queries: list[str] = []
-                for attempt in attempts:
-                    if attempt != item.query and attempt in fallback_done:
-                        continue
-                    try:
-                        res = await client(
-                            functions.messages.SearchGlobalRequest(
-                                q=attempt,
-                                filter=tl_types.InputMessagesFilterEmpty(),
-                                min_date=None,
-                                max_date=None,
-                                offset_rate=0,
-                                offset_peer=tl_types.InputPeerEmpty(),
-                                offset_id=0,
-                                limit=min(per_query, 50),
-                                groups_only=True,
-                            )
+            # 1b) 外部候选：人工粘贴链接 + 可插拔外部网页/目录适配器（只提 t.me 链接后再走 TG 实体验证）。
+            link_queue: list[tuple[str, ExtractedLink, str, str]] = [
+                (SearchSource.CANDIDATE_LINK.value, link, link.url, "") for link in links
+            ]
+            if expand_external_web and not flood_hit and (not shard_mode or account_index == 0):
+                ext_res = await fetch_external_candidates(
+                    keywords,
+                    country=country,
+                    max_keywords=external_web_query_limit,
+                    max_candidates=external_web_candidate_limit,
+                    allow_paid=allow_paid_external_search,
+                )
+                for n in ext_res.notes:
+                    push_note(n)
+                metrics["external_queries"] += ext_res.queries_run
+                metrics["external_links"] += len(ext_res.links)
+                metrics["external_errors"] += ext_res.errors
+                source_stats["external_queries"] = ext_res.queries_run
+                source_stats["external_links"] = len(ext_res.links)
+                source_stats["external_errors"] = ext_res.errors
+                for hit in ext_res.hits:
+                    link_queue.append(
+                        (
+                            SearchSource.EXTERNAL_WEB.value,
+                            ExtractedLink(kind=hit.kind, value=hit.value, url=hit.url),
+                            hit.query,
+                            hit.adapter,
                         )
+                    )
+
+            if link_queue:
+                lead_extra = {"batch_id": batch_id} if batch_id else None
+                for index, (link_src, link, link_query, link_adapter) in enumerate(link_queue):
+                    if flood_hit or not take_rpc():
+                        for rem_src, rem_link, rem_q, rem_ad in link_queue[index:]:
+                            add_pending_candidate(
+                                rem_link,
+                                source=rem_src,
+                                query=rem_q,
+                                adapter=rem_ad,
+                                reason="受限流或 RPC 预算上限约束，本轮未及实体验证",
+                            )
+                        break
+
+                    def _on_link_chat(chat: Any, _src: str, _sid: Optional[int]) -> None:
+                        extra = {"link": link.url}
+                        if link_adapter:
+                            extra["adapter"] = link_adapter
+                        add_candidate(
+                            chat,
+                            source=link_src,
+                            query=link_query,
+                            keyword=keywords[0],
+                            evidence_extra=extra,
+                        )
+
+                    link_found = 0
+                    try:
+                        hit = await self._verify_discovered_link(
+                            client,
+                            session,
+                            account,
+                            link,
+                            source=link_src[:24],
+                            query=link_query[:128],
+                            seed_chat_id=None,
+                            metrics=metrics,
+                            store_directly=False,
+                            on_chat=_on_link_chat,
+                            extra_raw={**(lead_extra or {}), **({"adapter": link_adapter} if link_adapter else {})},
+                        )
+                        if hit is not None:
+                            metrics["candidate_found"] += 1
+                            link_found = 1
+                        elif link.kind == "username":
+                            add_pending_candidate(
+                                link,
+                                source=link_src,
+                                query=link_query,
+                                adapter=link_adapter,
+                                reason="Telegram 未解析到该公开用户名",
+                            )
+                        await record_keyword(link.url, link_src, status="ok", raw=1, found=link_found)
                     except BaseException as exc:  # noqa: BLE001
-                        metrics["message_errors"] += 1
+                        metrics["candidate_errors"] += 1
                         await record_keyword(
-                            attempt,
-                            "message_search",
+                            link.url,
+                            link_src,
                             status="error",
                             raw=0,
                             found=0,
                             error=f"{type(exc).__name__}: {str(exc)[:160]}",
                         )
-                        if attempt != item.query:
-                            fallback_done.add(attempt)
-                        continue
+                        if link.kind == "username":
+                            add_pending_candidate(
+                                link,
+                                source=link_src,
+                                query=link_query,
+                                adapter=link_adapter,
+                                reason=f"核验异常：{type(exc).__name__}",
+                            )
+                        if await handle_rpc_exc(exc):
+                            for rem_src, rem_link, rem_q, rem_ad in link_queue[index + 1 :]:
+                                add_pending_candidate(
+                                    rem_link,
+                                    source=rem_src,
+                                    query=rem_q,
+                                    adapter=rem_ad,
+                                    reason="触发 Telegram 限流，尚未完成验证",
+                                )
+                            break
+                    if index < len(link_queue) - 1:
+                        await sleep_human(1.0, 2.5, rng)
 
+            # 1c) 长尾召回不足时补主题限定短核心词（不参与评分）。
+            if expand_short and short_items and not flood_hit and not budget_hit and len(candidates) < per_query:
+                short_run = len(short_items)
+                for index, item in enumerate(short_items):
+                    if flood_hit or not take_rpc():
+                        short_run = index
+                        break
+                    try:
+                        res = await client(functions.contacts.SearchRequest(q=item.query, limit=per_query))
+                    except BaseException as exc:  # noqa: BLE001
+                        metrics["query_errors"] += 1
+                        err = f"{type(exc).__name__}: {str(exc)[:160]}"
+                        await record_keyword(
+                            item.query, SearchSource.SHORT_QUERY.value, status="error", raw=0, found=0, error=err
+                        )
+                        if await handle_rpc_exc(exc):
+                            short_run = index + 1
+                            break
+                        continue
                     chats = list(getattr(res, "chats", []) or [])
-                    raw_total += len(chats)
+                    metrics["raw_chats"] += len(chats)
+                    metrics["short_raw_chats"] += len(chats)
                     found = 0
                     for chat in chats:
-                        if add_candidate(chat, source="message_search", query=attempt, keyword=item.keyword):
+                        if add_candidate(
+                            chat,
+                            source=SearchSource.SHORT_QUERY.value,
+                            query=item.query,
+                            keyword=item.keyword,
+                        ):
                             found += 1
-                    used_queries.append(attempt)
-                    await record_keyword(attempt, "message_search", status="ok", raw=len(chats), found=found)
-                    if attempt != item.query:
-                        fallback_done.add(attempt)
-                    if chats:
-                        break
-
-                metrics["message_raw_chats"] += raw_total
-                await self._report_progress(
-                    session,
-                    task,
-                    stage="searching",
-                    detail=(
-                        f"消息搜索「{item.query}」返回 {raw_total} 个实体"
-                        f"（回退 {', '.join(used_queries[1:]) or '无'}；候选 {len(candidates)}）"
-                    ),
-                    scanned=index + 1,
-                    found=len(candidates),
-                    total=message_queries,
-                )
-                if index < message_queries - 1:
-                    await sleep_human(3.0, 6.0, rng)
-
-        # 2b) 本地历史群档案：tsvector + pg_trgm 检索，标题/用户名/简介都能命中。
-        local_profiles: list[GroupProfile] = []
-        local_seen: set[int] = set()
-        local_keywords = [*keywords, *([item.query for item in short_items[:10]] if short_run else [])]
-        for keyword in local_keywords:
-            try:
-                matches = await search_local_profiles(
-                    session,
-                    keyword,
-                    limit=20,
-                    account_ids=[account.id],
-                )
-            except BaseException as exc:  # noqa: BLE001
-                metrics["local_errors"] += 1
-                self.log.debug("本地群库检索失败 keyword=%s error=%s", keyword, exc)
-                continue
-            for match in matches:
-                profile = match.profile
-                chat_id = int(profile.tg_chat_id or 0)
-                if not chat_id or chat_id in local_seen:
-                    continue
-                local_seen.add(chat_id)
-                local_profiles.append(profile)
-        for index, profile in enumerate(local_profiles):
-            username = str(profile.username or "").lstrip("@")
-            if not username or int(profile.tg_chat_id or 0) in candidates:
-                continue
-            try:
-                resolved = await client(functions.contacts.ResolveUsernameRequest(username=username))
-                chats = list(getattr(resolved, "chats", []) or [])
-                if chats and add_candidate(chats[0], source="local_index", query="", keyword=keywords[0]):
-                    metrics["local_found"] += 1
-            except BaseException:  # noqa: BLE001
-                metrics["local_errors"] += 1
-            if index < len(local_profiles) - 1:
-                await sleep_human(1.0, 2.0, rng)
-
-        # 3) 频道 linked_chat：只读，不需要入群。
-        if include_linked and max_linked:
-            seeds = [
-                entry["chat"]
-                for entry in candidates.values()
-                if bool(getattr(entry["chat"], "broadcast", False)) and getattr(entry["chat"], "username", None)
-            ][:max_linked]
-            for index, seed in enumerate(seeds):
-                seed_id = int(getattr(seed, "id", 0) or 0)
-                try:
-                    full = await client(functions.channels.GetFullChannelRequest(channel=seed))
-                    linked_id = int(getattr(getattr(full, "full_chat", None), "linked_chat_id", 0) or 0)
-                    if not linked_id:
-                        continue
-                    linked = next(
-                        (
-                            chat
-                            for chat in (getattr(full, "chats", []) or [])
-                            if int(getattr(chat, "id", 0) or 0) == linked_id
-                        ),
-                        None,
+                    await record_keyword(
+                        item.query, SearchSource.SHORT_QUERY.value, status="ok", raw=len(chats), found=found
                     )
-                    if linked is None:
-                        linked = await client.get_entity(tl_types.PeerChannel(linked_id))
-                    if add_candidate(linked, source="linked_chat", query="", keyword=keywords[0]):
-                        metrics["linked_found"] += 1
-                except BaseException:  # noqa: BLE001
-                    metrics["linked_errors"] += 1
-                if index < len(seeds) - 1:
-                    await sleep_human(2.0, 4.0, rng)
-                if (index + 1) % 10 == 0:
+                    try:
+                        await _record_query_stat(session, item, raw_count=len(chats), found_count=found)
+                    except BaseException:  # noqa: BLE001
+                        pass
                     await self._report_progress(
                         session,
                         task,
-                        stage="expanding",
-                        detail=f"已检查 {index + 1}/{len(seeds)} 个频道，找到 {metrics['linked_found']} 个讨论群",
+                        stage="searching",
+                        detail=f"短词补充「{item.query}」返回 {len(chats)} 个实体（候选 {len(candidates)}）",
                         scanned=index + 1,
                         found=len(candidates),
-                        total=len(seeds),
+                        total=short_run,
+                    )
+                    if index < short_run - 1:
+                        await sleep_human(2.0, 5.0, rng)
+
+            metrics["queries"] += short_run
+            metrics["short_queries"] = short_run
+            total_queries = len(contacts_queries) + short_run
+
+            # 2) messages.searchGlobal（支持翻页 + 精准记录群内消息命中次数）。
+            if msg_query_pool and not flood_hit and not budget_hit:
+                fallback_done: set[str] = set()
+                for index, item in enumerate(msg_query_pool):
+                    if flood_hit or budget_hit:
+                        break
+                    attempts = [item.query]
+                    for candidate in (item.keyword, item.query.split()[0] if item.query.split() else ""):
+                        candidate = str(candidate or "").strip()
+                        if candidate and all(candidate.casefold() != seen.casefold() for seen in attempts):
+                            attempts.append(candidate)
+
+                    raw_total = 0
+                    used_queries: list[str] = []
+                    for attempt in attempts:
+                        if flood_hit or budget_hit:
+                            break
+                        if attempt != item.query and attempt in fallback_done:
+                            continue
+                        offset_rate = 0
+                        offset_peer: Any = tl_types.InputPeerEmpty()
+                        offset_id = 0
+                        page_limit = min(per_query, 50)
+                        attempt_raw = 0
+                        attempt_found = 0
+                        errored = False
+                        for page_num in range(message_pages):
+                            if not take_rpc():
+                                errored = True
+                                break
+                            try:
+                                res = await client(
+                                    functions.messages.SearchGlobalRequest(
+                                        q=attempt,
+                                        filter=tl_types.InputMessagesFilterEmpty(),
+                                        min_date=None,
+                                        max_date=None,
+                                        offset_rate=offset_rate,
+                                        offset_peer=offset_peer,
+                                        offset_id=offset_id,
+                                        limit=page_limit,
+                                        groups_only=True,
+                                    )
+                                )
+                            except BaseException as exc:  # noqa: BLE001
+                                metrics["message_errors"] += 1
+                                await record_keyword(
+                                    attempt,
+                                    SearchSource.GLOBAL_MESSAGE_SEARCH.value,
+                                    status="error",
+                                    raw=attempt_raw,
+                                    found=attempt_found,
+                                    error=f"{type(exc).__name__}: {str(exc)[:160]}",
+                                )
+                                errored = True
+                                await handle_rpc_exc(exc)
+                                break
+
+                            chats = list(getattr(res, "chats", []) or [])
+                            msgs = list(getattr(res, "messages", []) or [])
+                            hit_chat_counts: dict[int, int] = {}
+                            for msg in msgs:
+                                cid = self._peer_chat_id(getattr(msg, "peer_id", None))
+                                if cid:
+                                    hit_chat_counts[cid] = hit_chat_counts.get(cid, 0) + 1
+
+                            attempt_raw += len(chats)
+                            for chat in chats:
+                                cid = int(getattr(chat, "id", 0) or 0)
+                                page_msg_hits = hit_chat_counts.get(cid, 0)
+                                if add_candidate(
+                                    chat,
+                                    source=SearchSource.GLOBAL_MESSAGE_SEARCH.value,
+                                    query=attempt,
+                                    keyword=item.keyword,
+                                    bump_message_hit=page_msg_hits > 0,
+                                    evidence_extra={"page": page_num + 1, "msg_hits": page_msg_hits},
+                                ):
+                                    attempt_found += 1
+
+                            if len(msgs) < page_limit or page_num >= message_pages - 1:
+                                break
+                            last_msg = msgs[-1]
+                            offset_id = int(getattr(last_msg, "id", 0) or 0)
+                            next_rate = int(getattr(res, "next_rate", 0) or 0)
+                            if not next_rate:
+                                msg_dt = getattr(last_msg, "date", None)
+                                next_rate = int(msg_dt.timestamp()) if msg_dt else 0
+                            offset_rate = next_rate
+                            try:
+                                offset_peer = await client.get_input_entity(getattr(last_msg, "peer_id", None))
+                            except BaseException as exc:  # noqa: BLE001
+                                await handle_rpc_exc(exc)
+                                break
+                            await sleep_human(1.5, 3.0, rng)
+
+                        raw_total += attempt_raw
+                        if not errored:
+                            used_queries.append(attempt)
+                            await record_keyword(
+                                attempt,
+                                SearchSource.GLOBAL_MESSAGE_SEARCH.value,
+                                status="ok",
+                                raw=attempt_raw,
+                                found=attempt_found,
+                            )
+                        if attempt != item.query:
+                            fallback_done.add(attempt)
+                        if flood_hit or budget_hit or attempt_raw > 0:
+                            break
+
+                    metrics["message_raw_chats"] += raw_total
+                    await self._report_progress(
+                        session,
+                        task,
+                        stage="searching",
+                        detail=(
+                            f"消息搜索「{item.query}」返回 {raw_total} 个实体"
+                            f"（回退 {', '.join(used_queries[1:]) or '无'}；候选 {len(candidates)}）"
+                        ),
+                        scanned=index + 1,
+                        found=len(candidates),
+                        total=len(msg_query_pool),
+                    )
+                    if flood_hit or budget_hit:
+                        break
+                    if index < len(msg_query_pool) - 1:
+                        await sleep_human(3.0, 6.0, rng)
+
+            # 2b) 跨账号共享本地历史群库（tsvector + pg_trgm），按账号分片核验。
+            if not flood_hit and not budget_hit:
+                local_profiles: list[GroupProfile] = []
+                local_seen: set[int] = set()
+                local_keywords = list(dict.fromkeys([*keywords, *_keyword_tokens(keywords)]))[:12]
+                for keyword in local_keywords:
+                    try:
+                        matches = await search_local_profiles(
+                            session,
+                            keyword,
+                            limit=20,
+                            account_ids=None,
+                            only_public=True,
+                            only_groups=True,
+                            dedupe_by_chat=True,
+                        )
+                    except BaseException as exc:  # noqa: BLE001
+                        metrics["local_errors"] += 1
+                        self.log.debug("本地群库检索失败 keyword=%s error=%s", keyword, exc)
+                        continue
+                    for match in matches:
+                        profile = match.profile
+                        chat_id = int(profile.tg_chat_id or 0)
+                        if not chat_id or chat_id in local_seen:
+                            continue
+                        local_seen.add(chat_id)
+                        local_profiles.append(profile)
+                if shard_mode:
+                    local_profiles = self._shard_list(local_profiles, account_index, account_count)
+                for index, profile in enumerate(local_profiles):
+                    if flood_hit or not take_rpc():
+                        break
+                    username = str(profile.username or "").lstrip("@")
+                    if not username or int(profile.tg_chat_id or 0) in candidates:
+                        continue
+                    try:
+                        resolved = await client(functions.contacts.ResolveUsernameRequest(username=username))
+                        chats = list(getattr(resolved, "chats", []) or [])
+                        if chats and add_candidate(
+                            chats[0],
+                            source=SearchSource.LOCAL_INDEX.value,
+                            query="",
+                            keyword=keywords[0],
+                        ):
+                            metrics["local_found"] += 1
+                    except BaseException as exc:  # noqa: BLE001
+                        metrics["local_errors"] += 1
+                        if await handle_rpc_exc(exc):
+                            break
+                    if index < len(local_profiles) - 1:
+                        await sleep_human(1.0, 2.0, rng)
+
+            # 2c) 已入群图扩散：匹配同主题已加入的群，并从最近消息挖外链与邀请码。
+            matched_dialog_ids: list[int] = []
+            if scan_joined_groups and not flood_hit and not budget_hit:
+                joined_rows = list(
+                    await session.scalars(
+                        select(Dialog)
+                        .where(
+                            Dialog.account_id == account.id,
+                            Dialog.channel == DialogChannel.user_account,
+                            Dialog.kind == DialogKind.group,
+                        )
+                        .order_by(Dialog.member_count.desc().nulls_last(), Dialog.id)
+                        .limit(200)
+                    )
+                )
+                match_terms = [*keywords, *_keyword_tokens(keywords)]
+                matched_dialogs = [
+                    dlg
+                    for dlg in joined_rows
+                    if any(_contains(f"{dlg.title or ''} {dlg.username or ''}", term) for term in match_terms)
+                ][:joined_group_limit]
+                matched_dialog_ids = [int(dlg.tg_chat_id) for dlg in matched_dialogs if getattr(dlg, "tg_chat_id", None)]
+                joined_entities: list[Any] = []
+                for dlg in matched_dialogs:
+                    if flood_hit or not take_rpc():
+                        break
+                    try:
+                        entity = await self._resolve_entity(client, dlg, session)
+                        if entity is not None:
+                            if add_candidate(
+                                entity,
+                                source=SearchSource.JOINED_GROUP_GRAPH.value,
+                                query="",
+                                keyword=keywords[0],
+                                joined=True,
+                            ):
+                                metrics["joined_found"] += 1
+                            joined_entities.append(entity)
+                    except BaseException as exc:  # noqa: BLE001
+                        if await handle_rpc_exc(exc):
+                            break
+                        continue
+                if expand_channel_messages and joined_entities and not flood_hit and not budget_hit:
+                    await self._expand_from_messages(
+                        client,
+                        session,
+                        account,
+                        joined_entities[:3],
+                        task=task,
+                        query=", ".join(keywords[:3]),
+                        channel_limit=3,
+                        message_limit=40,
+                        max_links=15,
+                        rng=rng,
+                        metrics=metrics,
+                        store_directly=False,
+                        on_chat=on_expanded_chat,
+                        source_tag=SearchSource.JOINED_GROUP_GRAPH.value,
+                        extra_raw={"batch_id": batch_id} if batch_id else None,
+                        on_rpc_error=handle_rpc_exc,
+                        on_rpc=take_rpc,
                     )
 
-        # 4) 只对讨论组候选拉 GetFullChannel（拿 about/权限），频道不浪费配额。
-        full_targets = [
-            cid
-            for cid, entry in candidates.items()
-            if discussion_verdict(entry["chat"])[0]
-        ][:full_check_limit]
-        for index, chat_id in enumerate(full_targets):
-            entry = candidates[chat_id]
-            try:
-                entry["full"] = await client(functions.channels.GetFullChannelRequest(channel=entry["chat"]))
-                metrics["full_checked"] += 1
-            except BaseException:  # noqa: BLE001
-                metrics["full_errors"] += 1
-            if index < len(full_targets) - 1:
-                await sleep_human(1.0, 2.5, rng)
+            # 2d) 可选：公开频道帖子搜索（channels.searchPosts，默认关闭）。仅产频道种子/贴内链接，绝不直接当精准群。
+            if post_query_pool and not flood_hit and not budget_hit:
+                for index, item in enumerate(post_query_pool):
+                    if flood_hit or not take_rpc():
+                        break
+                    paid_request_stars = paid_stars_remaining
+                    try:
+                        res = await client(
+                            functions.channels.SearchPostsRequest(
+                                offset_rate=0,
+                                offset_peer=tl_types.InputPeerEmpty(),
+                                offset_id=0,
+                                limit=min(per_query, 30),
+                                hashtag=None,
+                                query=item.query,
+                                allow_paid_stars=paid_request_stars if paid_request_stars and paid_request_stars > 0 else None,
+                            )
+                        )
+                        if paid_request_stars:
+                            paid_stars_reserved += paid_request_stars
+                            paid_stars_remaining = None
+                            source_stats["channel_posts_stars_reserved"] = paid_stars_reserved
+                    except BaseException as exc:  # noqa: BLE001
+                        if paid_request_stars:
+                            # A rejected paid request should not be retried for
+                            # every remaining query in the same task.
+                            paid_stars_remaining = None
+                            source_stats["channel_posts_stars_reserved"] = paid_stars_reserved
+                        metrics["channel_posts_errors"] += 1
+                        source_stats["channel_posts_errors"] = source_stats.get("channel_posts_errors", 0) + 1
+                        err = f"{type(exc).__name__}: {str(exc)[:160]}"
+                        await record_keyword(
+                            item.query, SearchSource.CHANNEL_POSTS.value, status="error", raw=0, found=0, error=err
+                        )
+                        wait = await handle_rpc_exc(exc)
+                        if wait:
+                            break
+                        push_note("公开频道帖子搜索受 Telegram Premium / Stars 配额限制，已自动降级跳过，不影响其余渠道")
+                        break
 
-        # 5) 校验 + 评分 + 落库。
-        for chat_id, entry in candidates.items():
-            chat = entry["chat"]
-            full = entry.get("full")
-            full_chat = getattr(full, "full_chat", None) if full is not None else None
-            title = str(getattr(chat, "title", "") or "")
-            about = str(getattr(full_chat, "about", "") or "") if full_chat is not None else ""
-            username = getattr(chat, "username", None)
-            members = (
-                getattr(full_chat, "participants_count", None)
-                if full_chat is not None
-                else None
-            ) or getattr(chat, "participants_count", None)
-            if min_members and (members or 0) < min_members:
-                metrics["dropped_members"] += 1
-                continue
+                    post_chats = list(getattr(res, "chats", []) or [])
+                    post_msgs = list(getattr(res, "messages", []) or [])
+                    seed_cnt = 0
+                    for ch in post_chats:
+                        cid = int(getattr(ch, "id", 0) or 0)
+                        if not cid:
+                            continue
+                        if bool(getattr(ch, "broadcast", False)) and getattr(ch, "username", None):
+                            if cid not in post_seed_ids:
+                                post_seed_ids.add(cid)
+                                channel_post_seeds.append(ch)
+                                metrics["channel_posts_seeds"] += 1
+                                source_stats["channel_posts_seeds"] = source_stats.get("channel_posts_seeds", 0) + 1
+                                seed_cnt += 1
+                        elif discussion_verdict(ch)[0]:
+                            add_candidate(
+                                ch,
+                                source=SearchSource.CHANNEL_POSTS.value,
+                                query=item.query,
+                                keyword=item.keyword,
+                            )
+                    msg_texts = [str(getattr(m, "message", "") or "") for m in post_msgs if getattr(m, "message", None)]
+                    if msg_texts:
+                        for p_link in extract_links(msg_texts, limit=15):
+                            post_extra_links.append((SearchSource.CHANNEL_POSTS.value, p_link, item.query, ""))
+                    await record_keyword(
+                        item.query, SearchSource.CHANNEL_POSTS.value, status="ok", raw=len(post_chats), found=seed_cnt
+                    )
+                    if index < len(post_query_pool) - 1:
+                        await sleep_human(2.0, 4.0, rng)
 
-            type_ok, type_reason = discussion_verdict(chat)
-            flags = verification_flags(chat, full)
-            score = score_group(
-                title=title,
-                about=about,
-                username=username,
-                keywords=scoring_keywords,
-                country=country,
-                languages=languages,
+                if post_extra_links:
+                    lead_extra = {"batch_id": batch_id} if batch_id else None
+                    for idx_p, (p_src, p_link, p_q, _) in enumerate(post_extra_links[:20]):
+                        if flood_hit or not take_rpc():
+                            add_pending_candidate(
+                                p_link,
+                                source=p_src,
+                                query=p_q,
+                                reason="受限流或 RPC 预算上限约束，帖子内链接本轮未核验",
+                            )
+                            continue
+                        try:
+                            await self._verify_discovered_link(
+                                client,
+                                session,
+                                account,
+                                p_link,
+                                source=p_src[:24],
+                                query=p_q[:128],
+                                seed_chat_id=None,
+                                metrics=metrics,
+                                store_directly=False,
+                                on_chat=lambda ch, _s, _sid: add_candidate(
+                                    ch,
+                                    source=p_src,
+                                    query=p_q,
+                                    keyword=keywords[0],
+                                    evidence_extra={"link": p_link.url},
+                                ),
+                                extra_raw=lead_extra,
+                            )
+                        except BaseException as exc:  # noqa: BLE001
+                            if p_link.kind == "username":
+                                add_pending_candidate(
+                                    p_link,
+                                    source=p_src,
+                                    query=p_q,
+                                    reason=f"帖子内链核验失败：{type(exc).__name__}",
+                                )
+                            if await handle_rpc_exc(exc):
+                                break
+                        if idx_p < min(len(post_extra_links), 20) - 1:
+                            await sleep_human(1.0, 2.0, rng)
+
+            # 3) 频道图扩散：linked_chat + 相似频道推荐 + 频道消息提链（全部只进候选，不跳过审核落库）。
+            channel_seeds: list[Any] = []
+            seen_seed_ids: set[int] = set()
+            for ch in [
+                *(
+                    entry["chat"]
+                    for entry in candidates.values()
+                    if bool(getattr(entry["chat"], "broadcast", False)) and getattr(entry["chat"], "username", None)
+                ),
+                *channel_post_seeds,
+            ]:
+                cid = int(getattr(ch, "id", 0) or 0)
+                if cid and cid not in seen_seed_ids:
+                    seen_seed_ids.add(cid)
+                    channel_seeds.append(ch)
+            # 优先按标题相关性 + 成员数排序频道种子，避免无关大频道占满配额
+            channel_seeds.sort(
+                key=lambda ch: (
+                    score_group(
+                        title=str(getattr(ch, "title", "") or ""),
+                        username=getattr(ch, "username", None),
+                        keywords=scoring_keywords,
+                        country=country,
+                        languages=languages,
+                    ).score,
+                    int(getattr(ch, "participants_count", 0) or 0),
+                ),
+                reverse=True,
             )
-            reasons = list(score.reasons)
-            status = classify(score.score, min_score=min_score)
-            if group_only and not type_ok:
-                status = "rejected"
-                reasons.append(f"类型不合格：{type_reason}")
-                metrics["channels"] += 1
-            if public_only and not flags["is_public"]:
-                status = "rejected"
-                reasons.append("没有公开用户名")
-            if exclude_readonly and flags["readonly"]:
-                status = "rejected"
-                reasons.append("默认权限为只读")
-                metrics["readonly"] += 1
 
-            metrics[status] += 1
-            metrics["score_sum"] += score.score
+            def _on_channel_graph_chat(chat: Any, source_tag: str, seed_id: Optional[int]) -> None:
+                extra = {"seed_chat_id": seed_id} if seed_id else None
+                add_candidate(chat, source=source_tag, query="", keyword=keywords[0], evidence_extra=extra)
+                if seed_id and seed_id in post_seed_ids:
+                    add_candidate(
+                        chat,
+                        source=SearchSource.CHANNEL_POSTS.value,
+                        query="",
+                        keyword=keywords[0],
+                        evidence_extra={"seed_chat_id": seed_id, "via": normalize_search_source(source_tag)},
+                    )
 
-            try:
-                profile = await upsert_profile(
+            if expand_recommendations and recommendation_channels and channel_seeds and not flood_hit and not budget_hit:
+                rec_hits = await self._expand_recommendations(
+                    client,
                     session,
-                    account_id=account.id,
-                    tg_chat_id=chat_id,
-                    source="precise_search",
-                    touch_collected_at=False,
-                    raw={
-                        "precise": True,
-                        "type_reason": type_reason,
-                        "sources": entry["sources"],
-                        "query": entry["query"],
-                        "keyword": entry["keyword"],
-                    },
-                    **profile_fields_from_entity(chat, full),
-                    language=score.language,
-                    country=score.country,
-                    topic=score.topic,
-                    relevance_score=score.score,
-                    send_permission=flags["send_permission"],
-                    join_request=flags["join_request"],
-                    linked_channel_id=flags["linked_channel_id"],
-                    verification_status=flags["verification_status"],
-                    last_verified_at=_now(),
-                    discovery_sources=entry["sources"],
-                    matched_keywords=score.matched_keywords,
+                    account,
+                    channel_seeds,
+                    task=task,
+                    query=", ".join(keywords[:3]),
+                    channel_limit=recommendation_channels,
+                    rng=rng,
+                    metrics=metrics,
+                    store_directly=False,
+                    on_chat=_on_channel_graph_chat,
+                    on_rpc_error=handle_rpc_exc,
+                    on_rpc=take_rpc,
                 )
-            except BaseException:  # noqa: BLE001 - 单个群落档失败不影响整批
-                self.log.debug("精准检索落档失败 tg_chat_id=%s", chat_id)
-                continue
+                # 相似频道推荐出来的新频道也加入 linked_chat 种子列表
+                for item in rec_hits:
+                    cid = int(item.get("tg_chat_id") or 0)
+                    if cid and cid not in seen_seed_ids and cid in candidates:
+                        ch = candidates[cid]["chat"]
+                        if bool(getattr(ch, "broadcast", False)) and getattr(ch, "username", None):
+                            channel_seeds.append(ch)
+                            seen_seed_ids.add(cid)
 
-            await session.execute(
-                pg_insert(GroupSearchMatch)
-                .values(
-                    id=uuid.uuid4(),
-                    task_id=task.id,
-                    account_id=account.id,
-                    profile_id=profile.id,
-                    tg_chat_id=chat_id,
-                    title=title[:255],
-                    username=username,
-                    member_count=int(members) if members is not None else None,
-                    source=str(entry["sources"][0] if entry["sources"] else "contacts"),
-                    query=str(entry["query"] or "")[:255],
+            if expand_channel_messages and message_channels and channel_seeds and not flood_hit and not budget_hit:
+                await self._expand_from_messages(
+                    client,
+                    session,
+                    account,
+                    channel_seeds,
+                    task=task,
+                    query=", ".join(keywords[:3]),
+                    channel_limit=message_channels,
+                    message_limit=message_limit,
+                    max_links=30,
+                    rng=rng,
+                    metrics=metrics,
+                    store_directly=False,
+                    on_chat=_on_channel_graph_chat,
+                    source_tag=SearchSource.CHANNEL_MESSAGE_LINK.value,
+                    extra_raw={"batch_id": batch_id} if batch_id else None,
+                    on_rpc_error=handle_rpc_exc,
+                    on_rpc=take_rpc,
+                )
+
+            if include_linked and max_linked and channel_seeds and not flood_hit and not budget_hit:
+                seeds = channel_seeds[:max_linked]
+                for index, seed in enumerate(seeds):
+                    if flood_hit or not take_rpc():
+                        break
+                    seed_id = int(getattr(seed, "id", 0) or 0)
+                    try:
+                        full = await client(functions.channels.GetFullChannelRequest(channel=seed))
+                        linked_id = int(getattr(getattr(full, "full_chat", None), "linked_chat_id", 0) or 0)
+                        if not linked_id:
+                            continue
+                        linked = next(
+                            (
+                                chat
+                                for chat in (getattr(full, "chats", []) or [])
+                                if int(getattr(chat, "id", 0) or 0) == linked_id
+                            ),
+                            None,
+                        )
+                        if linked is None:
+                            if not take_rpc():
+                                continue
+                            linked = await client.get_entity(tl_types.PeerChannel(linked_id))
+                        added_linked = add_candidate(
+                            linked,
+                            source=SearchSource.LINKED_CHAT.value,
+                            query="",
+                            keyword=keywords[0],
+                            evidence_extra={"seed_chat_id": seed_id} if seed_id else None,
+                        )
+                        if seed_id and seed_id in post_seed_ids:
+                            add_candidate(
+                                linked,
+                                source=SearchSource.CHANNEL_POSTS.value,
+                                query="",
+                                keyword=keywords[0],
+                                evidence_extra={"seed_chat_id": seed_id, "via": SearchSource.LINKED_CHAT.value},
+                            )
+                        if added_linked:
+                            metrics["linked_found"] += 1
+                    except BaseException as exc:  # noqa: BLE001
+                        metrics["linked_errors"] += 1
+                        if await handle_rpc_exc(exc):
+                            break
+                    if index < len(seeds) - 1:
+                        await sleep_human(2.0, 4.0, rng)
+                    if (index + 1) % 10 == 0:
+                        await self._report_progress(
+                            session,
+                            task,
+                            stage="expanding",
+                            detail=f"已检查 {index + 1}/{len(seeds)} 个频道，找到 {metrics['linked_found']} 个讨论群",
+                            scanned=index + 1,
+                            found=len(candidates),
+                            total=len(seeds),
+                        )
+
+            # 3b) 可选：已知用户 → 共同群图扩展（默认关闭，低优先级执行，仅限本账号可解析实体且受严格人数上限约束）。
+            if expand_common_chats and common_chat_user_limit > 0 and not flood_hit and not budget_hit:
+                seed_chat_scope = list(dict.fromkeys([*list(candidates.keys()), *matched_dialog_ids]))[:50]
+                member_stmt = select(GroupMember).where(GroupMember.is_bot.is_(False))
+                if seed_chat_scope:
+                    member_stmt = member_stmt.where(
+                        or_(GroupMember.tg_chat_id.in_(seed_chat_scope), GroupMember.account_id == account.id)
+                    )
+                else:
+                    member_stmt = member_stmt.where(GroupMember.account_id == account.id)
+                member_rows = list(
+                    await session.scalars(
+                        member_stmt.order_by(
+                            GroupMember.message_count.desc(),
+                            GroupMember.last_seen_at.desc().nulls_last(),
+                            GroupMember.id,
+                        ).limit(common_chat_user_limit * 6)
+                    )
+                )
+                # 当前账号自身采集的成员排前面（本地 session 缓存 access_hash 命中率最高）
+                member_rows.sort(
+                    key=lambda m: (
+                        1 if getattr(m, "account_id", None) == account.id else 0,
+                        1 if getattr(m, "username", None) else 0,
+                        int(getattr(m, "message_count", 0) or 0),
+                    ),
+                    reverse=True,
+                )
+                user_ids_pool: list[int] = []
+                seen_uids: set[int] = set()
+                for m in member_rows:
+                    uid = int(getattr(m, "tg_user_id", 0) or 0)
+                    if uid and uid not in seen_uids:
+                        seen_uids.add(uid)
+                        user_ids_pool.append(uid)
+                if shard_mode:
+                    user_ids_pool = self._shard_list(user_ids_pool, account_index, account_count)
+
+                common_checked = 0
+                for uid in user_ids_pool:
+                    if common_checked >= common_chat_user_limit or flood_hit or budget_hit:
+                        break
+                    try:
+                        input_user = await client.get_input_entity(uid)
+                    except ValueError:
+                        # 本地 session 缓存不存在该用户 access_hash：静默跳过，不烧 RPC 也不计失败
+                        continue
+                    except BaseException as exc:  # noqa: BLE001
+                        if await handle_rpc_exc(exc):
+                            break
+                        continue
+                    if not take_rpc():
+                        break
+                    try:
+                        res = await client(
+                            functions.messages.GetCommonChatsRequest(user_id=input_user, max_id=0, limit=20)
+                        )
+                        common_checked += 1
+                        metrics["common_chat_checked"] += 1
+                        source_stats["common_chat_checked"] = source_stats.get("common_chat_checked", 0) + 1
+                        for chat in list(getattr(res, "chats", []) or []):
+                            if add_candidate(
+                                chat,
+                                source=SearchSource.COMMON_CHAT_GRAPH.value,
+                                query="",
+                                keyword=keywords[0],
+                                joined=True,
+                                evidence_extra={"tg_user_id": uid},
+                            ):
+                                metrics["common_chat_found"] += 1
+                    except BaseException as exc:  # noqa: BLE001
+                        if await handle_rpc_exc(exc):
+                            break
+                    if common_checked < common_chat_user_limit:
+                        await sleep_human(1.2, 2.5, rng)
+
+            # 4) 优先排序后再调 GetFullChannel（先过滤硬淘汰项、复用 24h 内已完整校验的本地档案）。
+            eligible_ids: list[int] = []
+            for cid, entry in candidates.items():
+                chat = entry["chat"]
+                if group_only and not discussion_verdict(chat)[0]:
+                    continue
+                flags_pre = verification_flags(chat, None)
+                if public_only and not flags_pre["is_public"]:
+                    continue
+                if exclude_readonly and flags_pre["readonly"]:
+                    continue
+                pre_members = self._chat_members_of(chat)
+                if min_members and pre_members is not None and pre_members < min_members:
+                    continue
+                eligible_ids.append(cid)
+
+            if eligible_ids:
+                fresh_cutoff = _now() - timedelta(hours=24)
+                cached_rows = list(
+                    await session.scalars(
+                        select(GroupProfile)
+                        .where(
+                            GroupProfile.tg_chat_id.in_(eligible_ids),
+                            GroupProfile.verification_status == "full",
+                            GroupProfile.last_verified_at >= fresh_cutoff,
+                        )
+                        .order_by(GroupProfile.last_verified_at.desc())
+                    )
+                )
+                for row in cached_rows:
+                    cid = int(row.tg_chat_id)
+                    if cid in candidates and candidates[cid]["cached"] is None:
+                        candidates[cid]["cached"] = row
+                        metrics["full_cached"] += 1
+
+            uncached_ids = [cid for cid in eligible_ids if candidates[cid]["cached"] is None]
+            uncached_ids.sort(
+                key=lambda cid: (
+                    score_group(
+                        title=str(getattr(candidates[cid]["chat"], "title", "") or ""),
+                        username=getattr(candidates[cid]["chat"], "username", None),
+                        keywords=scoring_keywords,
+                        country=country,
+                        languages=languages,
+                        member_count=self._chat_members_of(candidates[cid]["chat"]),
+                        message_hits=candidates[cid]["message_hits"],
+                    ).score,
+                    self._chat_members_of(candidates[cid]["chat"]) or 0,
+                ),
+                reverse=True,
+            )
+            full_targets = uncached_ids[:full_check_limit]
+            if full_targets and not flood_hit and not budget_hit:
+                for index, chat_id in enumerate(full_targets):
+                    if flood_hit or not take_rpc():
+                        break
+                    entry = candidates[chat_id]
+                    try:
+                        entry["full"] = await client(functions.channels.GetFullChannelRequest(channel=entry["chat"]))
+                        metrics["full_checked"] += 1
+                    except BaseException as exc:  # noqa: BLE001
+                        metrics["full_errors"] += 1
+                        if await handle_rpc_exc(exc):
+                            break
+                    if index < len(full_targets) - 1:
+                        await sleep_human(1.0, 2.5, rng)
+
+            if enrich_tme:
+                need_tme = [
+                    cid
+                    for cid in eligible_ids
+                    if candidates[cid]["full"] is None and candidates[cid]["cached"] is None
+                ][:tme_limit]
+                if need_tme:
+                    await self._enrich_candidates_from_tme(candidates, need_tme, metrics=metrics)
+                    for cid in need_tme:
+                        if candidates[cid].get("tme"):
+                            record_source_meta(
+                                candidates[cid],
+                                source=SearchSource.TME_PREVIEW.value,
+                                query="",
+                                keyword=keywords[0],
+                            )
+
+            # 4b) 对高潜力讨论组抽样近期 20 条公开消息，核验真人群活跃度。
+            if verify_activity and activity_check_limit > 0 and eligible_ids and not flood_hit and not budget_hit:
+                pre_ranked: list[tuple[int, int]] = []
+                for cid in eligible_ids:
+                    entry = candidates[cid]
+                    chat = entry["chat"]
+                    full = entry.get("full")
+                    full_chat = getattr(full, "full_chat", None) if full is not None else None
+                    cached = entry.get("cached")
+                    tme_info = entry.get("tme") or {}
+                    about_pre = (
+                        (getattr(full_chat, "about", "") if full_chat is not None else "")
+                        or (cached.about if cached is not None else "")
+                        or str(tme_info.get("about") or "")
+                    )
+                    members_pre = self._chat_members_of(chat, full_chat, tme_info)
+                    s_pre = score_group(
+                        title=str(getattr(chat, "title", "") or ""),
+                        about=about_pre,
+                        username=getattr(chat, "username", None),
+                        keywords=scoring_keywords,
+                        country=country,
+                        languages=languages,
+                        member_count=members_pre,
+                        message_hits=entry["message_hits"],
+                        sources=entry["sources"],
+                        source_counts=entry["source_counts"],
+                        joined=entry["joined"],
+                    ).score
+                    if s_pre >= 35 or entry["message_hits"] > 0:
+                        pre_ranked.append((cid, s_pre))
+                pre_ranked.sort(
+                    key=lambda pair: (pair[1], self._chat_members_of(candidates[pair[0]]["chat"]) or 0),
+                    reverse=True,
+                )
+                now_utc = _now()
+                for idx, (cid, _) in enumerate(pre_ranked[:activity_check_limit]):
+                    if flood_hit or budget_hit:
+                        break
+                    entry = candidates[cid]
+                    act, samples = await self._sample_group_activity(
+                        client,
+                        entry["chat"],
+                        keywords=scoring_keywords,
+                        now=now_utc,
+                        on_rpc_error=handle_rpc_exc,
+                        on_rpc=take_rpc,
+                    )
+                    if act is not None:
+                        entry["activity"] = act
+                        entry["samples"] = samples
+                        metrics["activity_checked"] += 1
+                    if flood_hit:
+                        break
+                    if idx < min(len(pre_ranked), activity_check_limit) - 1:
+                        await sleep_human(0.8, 1.8, rng)
+
+            if flood_hit and not candidates and not pending_candidates:
+                raise TaskFailure(
+                    f"精准找群触发 Telegram 限流，{flood_hit} 秒后重试",
+                    retryable=True,
+                    requeue_after=flood_hit + 1,
+                )
+            if flood_hit:
+                metrics["flood_wait_seconds"] = flood_hit
+                push_note(f"检索过程中触发 Telegram {flood_hit}s 限流，已提前收敛并输出已召回候选")
+
+            # 4c) 可选 AI 语义复核（未配置 AI 时返回降级提示，不阻塞评分）。
+            ai_reviews: dict[int, dict[str, Any]] = {}
+            if ai_review and eligible_ids:
+                ai_pool: list[dict[str, Any]] = []
+                for cid in eligible_ids:
+                    entry = candidates[cid]
+                    chat = entry["chat"]
+                    full = entry.get("full")
+                    full_chat = getattr(full, "full_chat", None) if full is not None else None
+                    cached = entry.get("cached")
+                    tme_info = entry.get("tme") or {}
+                    about_val = (
+                        (getattr(full_chat, "about", "") if full_chat is not None else "")
+                        or (cached.about if cached is not None else "")
+                        or str(tme_info.get("about") or "")
+                    )
+                    s_val = score_group(
+                        title=str(getattr(chat, "title", "") or ""),
+                        about=about_val,
+                        username=getattr(chat, "username", None),
+                        keywords=scoring_keywords,
+                        country=country,
+                        languages=languages,
+                        member_count=self._chat_members_of(chat, full_chat, tme_info),
+                        message_hits=entry["message_hits"],
+                        activity=entry.get("activity"),
+                        sources=entry["sources"],
+                        source_counts=entry["source_counts"],
+                        joined=entry["joined"],
+                    ).score
+                    if s_val >= 35:
+                        ai_pool.append(
+                            {
+                                "tg_chat_id": cid,
+                                "title": str(getattr(chat, "title", "") or ""),
+                                "username": getattr(chat, "username", None),
+                                "about": about_val,
+                                "sample_messages": entry.get("samples") or [],
+                                "_pre_score": s_val,
+                            }
+                        )
+                ai_pool.sort(key=lambda item: item["_pre_score"], reverse=True)
+                ai_reviews, ai_rev_note = await review_candidates_with_ai(
+                    ai_pool[:15],
                     keywords=scoring_keywords,
-                    relevance_score=score.score,
-                    breakdown=score.breakdown,
-                    matched_keywords=score.matched_keywords,
-                    discovery_sources=entry["sources"],
-                    language=score.language,
-                    country=score.country,
-                    topic=score.topic,
-                    status=status,
-                    reasons=reasons,
-                    raw={"type_reason": type_reason, **flags},
+                    country=country,
+                    languages=languages,
                 )
-                .on_conflict_do_update(
-                    index_elements=["task_id", "tg_chat_id"],
-                    set_={
-                        "profile_id": profile.id,
-                        "title": title[:255],
-                        "username": username,
-                        "member_count": int(members) if members is not None else None,
-                        "relevance_score": score.score,
-                        "breakdown": score.breakdown,
-                        "matched_keywords": score.matched_keywords,
-                        "discovery_sources": entry["sources"],
-                        "status": status,
-                        "reasons": reasons,
-                        "raw": {"type_reason": type_reason, **flags},
-                        "updated_at": _now(),
-                    },
+                if ai_rev_note:
+                    push_note(ai_rev_note)
+                metrics["ai_reviewed"] = len(ai_reviews)
+
+            # 5) 最终校验 + 评分 + 落库（每条候选使用 SAVEPOINT，防止单条异常拖垮整批事务）。
+            for chat_id, entry in candidates.items():
+                chat = entry["chat"]
+                full = entry.get("full")
+                full_chat = getattr(full, "full_chat", None) if full is not None else None
+                cached = entry.get("cached")
+                tme_info = entry.get("tme") or {}
+
+                title = str(getattr(chat, "title", "") or "") or str(tme_info.get("title") or "")
+                about = (
+                    (str(getattr(full_chat, "about", "") or "") if full_chat is not None else "")
+                    or (str(cached.about or "") if cached is not None else "")
+                    or str(tme_info.get("about") or "")
                 )
+                username = getattr(chat, "username", None)
+                members = self._chat_members_of(chat, full_chat, tme_info)
+                if members is None and cached is not None:
+                    members = cached.member_count
+                if min_members and (members or 0) < min_members:
+                    metrics["dropped_members"] += 1
+                    continue
+
+                type_ok, type_reason = discussion_verdict(chat)
+                flags = verification_flags(chat, full)
+                if flags["verification_status"] == "entity_only" and cached is not None:
+                    flags["verification_status"] = "cached_full"
+                    if flags["linked_channel_id"] is None:
+                        flags["linked_channel_id"] = cached.linked_channel_id
+
+                score = score_group(
+                    title=title,
+                    about=about,
+                    username=username,
+                    keywords=scoring_keywords,
+                    country=country,
+                    languages=languages,
+                    member_count=members,
+                    message_hits=entry["message_hits"],
+                    activity=entry.get("activity"),
+                    sources=entry["sources"],
+                    source_counts=entry["source_counts"],
+                    joined=entry["joined"],
+                )
+                trust_bonus, verification_tier, _ = compute_source_trust(
+                    entry["sources"],
+                    source_counts=entry["source_counts"],
+                    joined=entry["joined"],
+                )
+                final_score = score.score
+                breakdown = dict(score.breakdown)
+                reasons = list(score.reasons)
+                ai_row = ai_reviews.get(chat_id)
+                if ai_row:
+                    delta = int(ai_row.get("delta") or 0)
+                    if delta:
+                        breakdown["ai"] = delta
+                    final_score = max(0, min(100, final_score + delta))
+                    if ai_row.get("reason"):
+                        reasons.append(f"AI复核({delta:+d})：{ai_row['reason']}")
+                    elif not ai_row.get("relevant", True):
+                        reasons.append("AI复核：疑似跑题或广告群")
+
+                status = classify(final_score, min_score=min_score)
+                if ai_row and not ai_row.get("relevant", True) and status == "accepted":
+                    status = "needs_review"
+                if group_only and not type_ok:
+                    status = "rejected"
+                    reasons.append(f"类型不合格：{type_reason}")
+                    metrics["channels"] += 1
+                if public_only and not flags["is_public"]:
+                    status = "rejected"
+                    reasons.append("没有公开用户名")
+                if exclude_readonly and flags["readonly"]:
+                    status = "rejected"
+                    reasons.append("默认权限为只读")
+                    metrics["readonly"] += 1
+
+                fields = profile_fields_from_entity(chat, full)
+                if about and not fields.get("about"):
+                    fields["about"] = about
+                if members is not None and not fields.get("member_count"):
+                    fields["member_count"] = members
+
+                match_raw: dict[str, Any] = {
+                    "type_reason": type_reason,
+                    **flags,
+                    "message_hits": entry["message_hits"],
+                    "source_counts": dict(entry["source_counts"]),
+                    "evidence": list(entry["evidence"][:15]),
+                    "verification_tier": verification_tier,
+                    "trust_bonus": trust_bonus,
+                    "joined": entry["joined"],
+                }
+                if entry.get("activity"):
+                    match_raw["activity"] = entry["activity"]
+                if ai_row:
+                    match_raw["ai_review"] = ai_row
+                if tme_info:
+                    match_raw["tme_preview"] = tme_info
+
+                primary_source = str(entry["sources"][0] if entry["sources"] else SearchSource.CONTACTS_SEARCH.value)[:24]
+                try:
+                    async with session.begin_nested():
+                        profile = await upsert_profile(
+                            session,
+                            account_id=account.id,
+                            tg_chat_id=chat_id,
+                            source="precise_search",
+                            touch_collected_at=False,
+                            raw={
+                                "precise": True,
+                                "type_reason": type_reason,
+                                "sources": entry["sources"],
+                                "source_counts": dict(entry["source_counts"]),
+                                "verification_tier": verification_tier,
+                                "query": entry["query"],
+                                "keyword": entry["keyword"],
+                                **({"activity": entry["activity"]} if entry.get("activity") else {}),
+                            },
+                            **fields,
+                            language=score.language,
+                            country=score.country,
+                            topic=score.topic,
+                            relevance_score=final_score,
+                            send_permission=flags["send_permission"],
+                            join_request=flags["join_request"],
+                            linked_channel_id=flags["linked_channel_id"],
+                            verification_status=flags["verification_status"],
+                            last_verified_at=_now(),
+                            discovery_sources=entry["sources"],
+                            matched_keywords=score.matched_keywords,
+                        )
+                        await session.execute(
+                            pg_insert(GroupSearchMatch)
+                            .values(
+                                id=uuid.uuid4(),
+                                task_id=task.id,
+                                account_id=account.id,
+                                profile_id=profile.id,
+                                tg_chat_id=chat_id,
+                                title=title[:255],
+                                username=username,
+                                member_count=int(members) if members is not None else None,
+                                source=primary_source,
+                                query=str(entry["query"] or "")[:255],
+                                keywords=scoring_keywords,
+                                relevance_score=final_score,
+                                breakdown=breakdown,
+                                matched_keywords=score.matched_keywords,
+                                discovery_sources=entry["sources"],
+                                language=score.language,
+                                country=score.country,
+                                topic=score.topic,
+                                status=status,
+                                reasons=reasons,
+                                raw=match_raw,
+                            )
+                            .on_conflict_do_update(
+                                index_elements=["task_id", "tg_chat_id"],
+                                set_={
+                                    "profile_id": profile.id,
+                                    "title": title[:255],
+                                    "username": username,
+                                    "member_count": int(members) if members is not None else None,
+                                    "source": primary_source,
+                                    "relevance_score": final_score,
+                                    "breakdown": breakdown,
+                                    "matched_keywords": score.matched_keywords,
+                                    "discovery_sources": entry["sources"],
+                                    "status": status,
+                                    "reasons": reasons,
+                                    "raw": match_raw,
+                                    "updated_at": _now(),
+                                },
+                            )
+                        )
+                except BaseException as exc:  # noqa: BLE001
+                    metrics["persist_errors"] = metrics.get("persist_errors", 0) + 1
+                    self.log.debug("精准检索落档失败 tg_chat_id=%s: %s", chat_id, exc)
+                    continue
+
+                metrics[status] += 1
+                metrics["score_sum"] += final_score
+
+            # 移除已在候选池成功通过实体验证的 username，避免重复挂进未核验列表
+            verified_usernames = {
+                str(getattr(entry["chat"], "username", "") or "").strip().lstrip("@").casefold()
+                for entry in candidates.values()
+                if getattr(entry["chat"], "username", None)
+            }
+            filtered_pending = [
+                item
+                for item in pending_candidates
+                if not (item.get("kind") == "username" and str(item.get("value") or "").casefold() in verified_usernames)
+            ]
+
+            source_stats.update(
+                {
+                    "accepted": metrics["accepted"],
+                    "needs_review": metrics["needs_review"],
+                    "rejected": metrics["rejected"],
+                    "dropped_members": metrics["dropped_members"],
+                    "channels": metrics["channels"],
+                    "readonly": metrics["readonly"],
+                    "flood_stopped": 1 if flood_hit else 0,
+                    "budget_stopped": 1 if budget_hit else 0,
+                    "rpc_used": metrics["rpc_used"],
+                    "unverified_pending": len(filtered_pending),
+                }
             )
 
-        await self._report_progress(
-            session,
-            task,
-            stage="done",
-            detail=(
-                f"精准检索完成：{len(candidates)} 个候选，{metrics['accepted']} 个保留，"
-                f"{metrics['needs_review']} 个待确认，{metrics['rejected']} 个排除"
-            ),
-            scanned=total_queries,
-            found=metrics["accepted"],
-            total=total_queries,
+            flood_suffix = f"（触发 {flood_hit}s 限流已提前收敛）" if flood_hit else ""
+            await self._report_progress(
+                session,
+                task,
+                stage="done",
+                detail=(
+                    f"精准检索完成：{len(candidates)} 个候选，{metrics['accepted']} 个保留，"
+                    f"{metrics['needs_review']} 个待确认，{metrics['rejected']} 个排除{flood_suffix}"
+                ),
+                scanned=total_queries,
+                found=metrics["accepted"],
+                total=total_queries,
+            )
+        except TaskFailure:
+            raise
+        except BaseException as exc:  # noqa: BLE001
+            await self._apply_status(session, account, exc)
+            raise self._failure(exc, "精准找群失败") from exc
+
+        average = round(
+            metrics["score_sum"] / max(metrics["accepted"] + metrics["needs_review"] + metrics["rejected"], 1), 1
         )
-        average = round(metrics["score_sum"] / max(metrics["accepted"] + metrics["needs_review"] + metrics["rejected"], 1), 1)
+        flood_suffix = f"（触发 {flood_hit}s 限流提前收敛）" if flood_hit else ""
         return {
             "mode": "precise",
             "keywords": keywords,
@@ -1793,17 +3099,20 @@ class GroupIntelMixin:
             "languages": languages,
             "queries_run": total_queries,
             "short_queries_run": short_run,
-            "candidate_links": len(candidate_links),
+            "candidate_links": len(links),
             "min_relevance_score": min_score,
             "candidates": len(candidates),
             "accepted": metrics["accepted"],
             "needs_review": metrics["needs_review"],
             "rejected": metrics["rejected"],
             "average_score": average,
+            "ai_notes": ai_notes,
+            "source_stats": source_stats,
+            "pending_candidates": filtered_pending,
             "metrics": metrics,
             "summary": (
-                f"精准检索：{total_queries} 条查询（短词 {short_run} 条，外部候选 {len(candidate_links)} 个），{len(candidates)} 个候选，"
-                f"保留 {metrics['accepted']} 个、待确认 {metrics['needs_review']} 个、排除 {metrics['rejected']} 个"
+                f"精准检索：{total_queries} 条查询（短词 {short_run} 条，外部候选 {len(links)} 个），{len(candidates)} 个候选，"
+                f"保留 {metrics['accepted']} 个、待确认 {metrics['needs_review']} 个、排除 {metrics['rejected']} 个{flood_suffix}"
             ),
         }
 

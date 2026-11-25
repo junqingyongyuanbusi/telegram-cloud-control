@@ -235,9 +235,14 @@ async def _submit_campaign(
     per_account: Optional[Callable[[TgAccount, int, int], dict]] = None,
     priority: int = 80,
     account_filter: Optional[Callable[[List[TgAccount]], Any]] = None,
+    usable_only: bool = True,
 ) -> BulkResultResponse:
-    """公共提交流程：解析账号范围 → 生成 batch_id → 每号一条任务（错峰入队）→ 审计 + 回执。"""
-    accounts, scope, truncated = await _resolve_accounts(session, user, payload_scope, usable_only=True)
+    """公共提交流程：解析账号范围 → 生成 batch_id → 每号一条任务（错峰入队）→ 审计 + 回执。
+
+    `usable_only=False` 用于**只读**动作（关键词找群等）：冻结号仍能连接、读取和搜索，
+    只有写操作会被 Telegram 拒绝，不应在这里被过滤掉。
+    """
+    accounts, scope, truncated = await _resolve_accounts(session, user, payload_scope, usable_only=usable_only)
     if account_filter is not None:
         # 动作专属的二次筛选（群发用「这个号在不在目标群」）
         before = len(accounts)
@@ -346,6 +351,7 @@ async def _submit_campaign(
         failed=failed,
         skipped=quota_skipped,
         truncated=truncated,
+        batch_id=batch_id,
         task_ids=task_ids,
         items=items,
     )

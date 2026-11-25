@@ -160,8 +160,40 @@ def parse_tme_page(html_text: str, *, username: str = "") -> dict:
     }
 
 
+_MSG_TEXT_RE = re.compile(
+    r'<div[^>]+class=["\'][^"\']*tgme_widget_message_text[^"\']*["\'][^>]*>(.*?)</div>',
+    re.I | re.S,
+)
+_MSG_LINK_HREF_RE = re.compile(r'href=["\'](https?://t\.me/[^"\']+)["\']', re.I)
+
+
+def parse_tme_channel_posts(
+    html_text: str, *, channel_username: str = "", limit: int = 100
+) -> list[ExtractedLink]:
+    """从 `t.me/s/<username>` 公开频道预览页提取消息正文与链接（无需账号登录）。"""
+
+    self_name = _clean_username(channel_username)
+    texts: list[str] = []
+    for match in _MSG_TEXT_RE.finditer(html_text or ""):
+        chunk = match.group(1)
+        hrefs = _MSG_LINK_HREF_RE.findall(chunk)
+        plain = _strip_tags(chunk)
+        texts.append(f"{plain} {' '.join(hrefs)}".strip())
+    if not texts:
+        # 兜底：部分结构变化或精简 HTML 时直接抽 href 里的 t.me 链接
+        texts = _MSG_LINK_HREF_RE.findall(html_text or "")
+    links = extract_links(texts, limit=limit)
+    if not self_name:
+        return links
+    return [item for item in links if not (item.kind == "username" and item.value == self_name)]
+
+
 def tme_url(username: str) -> str:
     return f"https://t.me/{quote(_clean_username(username))}"
+
+
+def tme_channel_preview_url(username: str) -> str:
+    return f"https://t.me/s/{quote(_clean_username(username))}"
 
 
 def invite_url(invite_hash: str) -> str:

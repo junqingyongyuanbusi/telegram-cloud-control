@@ -98,5 +98,6 @@ class BulkResultResponse(BaseModel):
     failed: int = 0
     skipped: int = 0
     truncated: bool = False
+    batch_id: Optional[uuid.UUID] = None
     task_ids: List[uuid.UUID] = Field(default_factory=list)
     items: List[BulkAccountResult] = Field(default_factory=list)

@@ -17,7 +17,7 @@ import uuid
 import zipfile
 import uuid
 from datetime import datetime, timedelta, timezone
-from typing import List, Optional
+from typing import Any, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.responses import StreamingResponse
@@ -29,6 +29,7 @@ from app.api.routers.campaigns import _submit_campaign
 from app.api.routers import build_order_by, enum_value, publish_task_safely
 from app.api.routers.accounts_bulk import scope_clause
 from app.services.account_label import account_label
+from app.services.group_sources import compute_source_trust, normalize_search_source, normalize_source_list
 from app.services.local_group_search import SEARCH_TEXT, search_local_profiles
 from app.api.routers.accounts_bulk import _empty, _item, _resolve_accounts, _response
 from app.config import settings
@@ -82,6 +83,7 @@ from app.schemas.group_intel import (
     DiscoveryQueryStatOut,
     GroupSearchKeywordOut,
     GroupSearchMatchOut,
+    PreciseBatchOut,
     PreciseSearchRequest,
 )
 
@@ -158,6 +160,7 @@ async def search_public_groups(
             "max_links": payload.max_links,
         },
         priority=65,
+        usable_only=False,
     )
 
 
@@ -167,12 +170,7 @@ async def precise_search_groups(
     session: AsyncSession = Depends(get_session),
     user: User = Depends(get_current_user),
 ) -> BulkResultResponse:
-    """按目标地区/语言精准检索公开讨论组。
-
-    与 `/search-groups` 的区别：多源召回（contacts.search + messages.searchGlobal +
-    linked_chat）、严格排除广播频道/只读群，并按名称/简介/地区/讨论意图/语言五项打分。
-    结果写入 `group_search_matches`，可用 `/search/tasks/{task_id}/matches` 查看解释。
-    """
+    """按目标地区/语言精准检索公开讨论组（支持多号分片并行、图扩散、活跃度验活与可选 AI 复核）。"""
 
     return await _submit_campaign(
         session=session,
@@ -182,6 +180,7 @@ async def precise_search_groups(
         payload_scope=payload,
         params={
             "mode": "precise",
+            "dispatch": payload.dispatch,
             "keywords": payload.keywords,
             "country": payload.country,
             "languages": payload.languages,
@@ -195,14 +194,52 @@ async def precise_search_groups(
             "exclude_readonly": payload.exclude_readonly,
             "search_messages": payload.search_messages,
             "message_search_queries": payload.message_search_queries,
+            "message_search_pages": payload.message_search_pages,
             "full_check_limit": payload.full_check_limit,
             "min_relevance_score": payload.min_relevance_score,
+            "enable_contacts_search": payload.enable_contacts_search,
+            "contacts_query_limit": payload.contacts_query_limit,
             "expand_short_queries": payload.expand_short_queries,
             "short_query_limit": payload.short_query_limit,
+            "expand_recommendations": payload.expand_recommendations,
+            "recommendation_channels": payload.recommendation_channels,
+            "expand_channel_messages": payload.expand_channel_messages,
+            "message_channels": payload.message_channels,
+            "message_limit": payload.message_limit,
+            "scan_joined_groups": payload.scan_joined_groups,
+            "joined_group_limit": payload.joined_group_limit,
+            "enrich_tme": payload.enrich_tme,
+            "tme_limit": payload.tme_limit,
+            "expand_scope_preset": payload.expand_scope_preset,
+            "expand_channel_posts": payload.expand_channel_posts or payload.expand_scope_preset,
+            "channel_posts_query_limit": payload.channel_posts_query_limit,
+            "allow_paid_channel_posts": payload.allow_paid_channel_posts,
+            "channel_posts_max_stars": payload.channel_posts_max_stars,
+            "expand_external_web": payload.expand_external_web or payload.expand_scope_preset,
+            "external_web_query_limit": payload.external_web_query_limit,
+            "external_web_candidate_limit": payload.external_web_candidate_limit,
+            "allow_paid_external_search": payload.allow_paid_external_search,
+            "expand_common_chats": payload.expand_common_chats or payload.expand_scope_preset,
+            "common_chat_user_limit": payload.common_chat_user_limit,
+            "rpc_budget": payload.rpc_budget,
+            "verify_activity": payload.verify_activity,
+            "activity_check_limit": payload.activity_check_limit,
+            "ai_expand": payload.ai_expand,
+            "ai_review": payload.ai_review,
             "candidate_links": payload.candidate_links,
         },
         priority=65,
+        usable_only=False,
     )
+
+
+async def _ensure_task_visible(session: AsyncSession, user: User, task_id: uuid.UUID) -> None:
+    ids = await visible_account_ids(session, user)
+    if ids is None:
+        return
+    task = await session.get(Task, task_id)
+    if task is not None and task.account_id not in set(ids):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="该任务不属于分配给你的账号")
 
 
 @router.get(
@@ -217,6 +254,7 @@ async def list_precise_matches(
     session: AsyncSession = Depends(get_session),
     user: User = Depends(get_current_user),
 ) -> List[GroupSearchMatchOut]:
+    await _ensure_task_visible(session, user, task_id)
     conditions = [GroupSearchMatch.task_id == task_id]
     if status_filter:
         conditions.append(GroupSearchMatch.status == status_filter)
@@ -230,6 +268,159 @@ async def list_precise_matches(
 
 
 @router.get(
+    "/search/batches/{batch_id}",
+    response_model=PreciseBatchOut,
+    summary="精准检索批次汇总（跨账号去重 + 任务进度 + AI 提示）",
+)
+async def get_precise_batch(
+    batch_id: uuid.UUID,
+    status_filter: Optional[str] = Query(default=None, alias="status", description="accepted/needs_review/rejected"),
+    limit: int = Query(default=300, ge=1, le=1000),
+    session: AsyncSession = Depends(get_session),
+    user: User = Depends(get_current_user),
+) -> PreciseBatchOut:
+    ids = await visible_account_ids(session, user)
+    task_conds = [
+        Task.type == TaskType.search_groups,
+        Task.payload["batch_id"].astext == str(batch_id),
+    ]
+    if ids is not None:
+        if not ids:
+            return PreciseBatchOut(batch_id=batch_id)
+        task_conds.append(Task.account_id.in_(ids))
+    tasks = list(await session.scalars(select(Task).where(*task_conds)))
+    if not tasks:
+        return PreciseBatchOut(batch_id=batch_id)
+
+    active = sum(1 for t in tasks if t.status in (TaskStatus.pending, TaskStatus.running))
+    completed = sum(1 for t in tasks if t.status == TaskStatus.completed)
+    failed = sum(1 for t in tasks if t.status in (TaskStatus.failed, TaskStatus.cancelled))
+
+    ai_notes: list[str] = []
+    seen_notes: set[str] = set()
+    source_stats: dict[str, int] = {}
+    raw_pending: list[dict[str, Any]] = []
+    for t in tasks:
+        res = t.result if isinstance(t.result, dict) else {}
+        for note in res.get("ai_notes") or []:
+            text = str(note or "").strip()
+            if text and text not in seen_notes:
+                seen_notes.add(text)
+                ai_notes.append(text)
+        for key, val in (res.get("source_stats") or {}).items():
+            if isinstance(val, (int, float)):
+                source_stats[str(key)] = source_stats.get(str(key), 0) + int(val)
+        for item in res.get("pending_candidates") or []:
+            if isinstance(item, dict):
+                raw_pending.append(item)
+
+    task_ids = [t.id for t in tasks]
+    match_conds = [GroupSearchMatch.task_id.in_(task_ids)]
+    if status_filter:
+        match_conds.append(GroupSearchMatch.status == status_filter)
+    rows = list(
+        await session.scalars(
+            select(GroupSearchMatch)
+            .where(*match_conds)
+            .order_by(
+                GroupSearchMatch.relevance_score.desc(),
+                GroupSearchMatch.member_count.desc().nullslast(),
+                GroupSearchMatch.id,
+            )
+            .limit(max(limit * 3, 500))
+        )
+    )
+    by_chat: dict[int, GroupSearchMatchOut] = {}
+    verified_usernames: set[str] = set()
+    for row in rows:
+        out = GroupSearchMatchOut.model_validate(row)
+        if out.username:
+            verified_usernames.add(out.username.strip().lstrip("@").casefold())
+        existing = by_chat.get(out.tg_chat_id)
+        if existing is None:
+            by_chat[out.tg_chat_id] = out
+        else:
+            existing.discovery_sources = normalize_source_list(
+                [*existing.discovery_sources, *out.discovery_sources]
+            )
+            if existing.discovery_sources:
+                existing.source = existing.discovery_sources[0]
+            existing.matched_keywords = list(
+                dict.fromkeys([*existing.matched_keywords, *out.matched_keywords])
+            )
+            for src, cnt in out.source_counts.items():
+                norm_src = normalize_search_source(src)
+                existing.source_counts[norm_src] = existing.source_counts.get(norm_src, 0) + int(cnt or 0)
+            seen_ev = {
+                (ev.get("source"), ev.get("query"), ev.get("link"))
+                for ev in existing.evidence
+                if isinstance(ev, dict)
+            }
+            for ev in out.evidence:
+                ev_key = (ev.get("source"), ev.get("query"), ev.get("link"))
+                if ev_key not in seen_ev and len(existing.evidence) < 20:
+                    seen_ev.add(ev_key)
+                    existing.evidence.append(ev)
+
+            merged_joined = bool((existing.raw or {}).get("joined") or (out.raw or {}).get("joined"))
+            new_trust, new_tier, trust_reasons = compute_source_trust(
+                existing.discovery_sources,
+                source_counts=existing.source_counts,
+                joined=merged_joined,
+            )
+            old_trust = int(existing.breakdown.get("trust") or existing.trust_bonus or 0)
+            if new_trust != old_trust:
+                delta = new_trust - old_trust
+                existing.breakdown = {**existing.breakdown, "trust": new_trust} if new_trust else {
+                    k: v for k, v in existing.breakdown.items() if k != "trust"
+                }
+                existing.relevance_score = max(0, min(100, existing.relevance_score + delta))
+                existing.trust_bonus = new_trust
+            for r in trust_reasons:
+                if r not in existing.reasons:
+                    existing.reasons.append(r)
+            if new_tier == "tg_verified" or out.verification_tier == "tg_verified":
+                existing.verification_tier = "tg_verified"
+    deduped = sorted(
+        by_chat.values(),
+        key=lambda item: (item.relevance_score, item.member_count or 0),
+        reverse=True,
+    )[:limit]
+
+    unverified_candidates: list[dict[str, Any]] = []
+    seen_pending: set[tuple[str, str]] = set()
+    for item in raw_pending:
+        kind = str(item.get("kind") or "username")
+        value = str(item.get("value") or "").strip().casefold()
+        if not value:
+            continue
+        if kind == "username" and value in verified_usernames:
+            continue
+        pk = (kind, value)
+        if pk in seen_pending:
+            continue
+        seen_pending.add(pk)
+        unverified_candidates.append(item)
+        if len(unverified_candidates) >= 200:
+            break
+
+    source_stats["verified_total"] = len(deduped)
+    source_stats["unverified_pending"] = len(unverified_candidates)
+
+    return PreciseBatchOut(
+        batch_id=batch_id,
+        total_tasks=len(tasks),
+        active_tasks=active,
+        completed_tasks=completed,
+        failed_tasks=failed,
+        matches=deduped,
+        unverified_candidates=unverified_candidates,
+        source_stats=source_stats,
+        ai_notes=ai_notes,
+    )
+
+
+@router.get(
     "/search/tasks/{task_id}/keywords",
     response_model=List[GroupSearchKeywordOut],
     summary="精准检索实际跑过的查询",
@@ -240,6 +431,7 @@ async def list_precise_keywords(
     session: AsyncSession = Depends(get_session),
     user: User = Depends(get_current_user),
 ) -> List[GroupSearchKeywordOut]:
+    await _ensure_task_visible(session, user, task_id)
     rows = await session.scalars(
         select(GroupSearchKeyword)
         .where(GroupSearchKeyword.task_id == task_id)
@@ -247,7 +439,6 @@ async def list_precise_keywords(
         .limit(limit)
     )
     return [GroupSearchKeywordOut.model_validate(row) for row in rows]
-
 
 @router.get("/discovery/queries", response_model=List[DiscoveryQueryStatOut], summary="查询绩效（哪些词真的找得到群）")
 async def list_discovery_queries(
@@ -781,6 +972,10 @@ async def list_profiles(
     account_id: Optional[uuid.UUID] = Query(default=None),
     min_members: Optional[int] = Query(default=None, ge=0),
     public_only: bool = Query(default=False, description="只看有公开用户名的群"),
+    speakable: bool = Query(
+        default=False,
+        description="只看能发言的讨论组/聊天室：排除频道、受限群与已禁言的群",
+    ),
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=200),
     sort: Optional[str] = Query(default=None),
@@ -808,6 +1003,14 @@ async def list_profiles(
         conditions.append(GroupProfile.member_count >= min_members)
     if public_only:
         conditions.append(GroupProfile.username.is_not(None))
+    if speakable:
+        # 频道只能看不能说；is_restricted 是账号级受限；send_permission=restricted 是群内禁言。
+        # send_permission 为空表示还没走过精准检索的权限校验，按「可能可发言」保留。
+        conditions.append(GroupProfile.kind.in_(("group", "megagroup", "chat")))
+        conditions.append(GroupProfile.is_restricted.is_(False))
+        conditions.append(
+            or_(GroupProfile.send_permission.is_(None), GroupProfile.send_permission != "restricted")
+        )
 
     total = await session.scalar(select(func.count()).select_from(GroupProfile).where(*conditions))
     order_by = build_order_by(

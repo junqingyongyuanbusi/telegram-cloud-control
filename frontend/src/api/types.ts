@@ -777,6 +777,7 @@ export interface BulkResultOut {
   /** true 表示命中上限被截断，页面要提示用户缩小范围 */
   truncated: boolean;
   message: string;
+  batch_id?: UUID | null;
   task_ids: UUID[];
   items: BulkItemResult[];
 }
@@ -1298,11 +1299,58 @@ export interface GroupSearchMatchOut {
   breakdown: Record<string, number>;
   matched_keywords: string[];
   discovery_sources: string[];
+  source_counts?: Record<string, number>;
+  evidence?: Array<Record<string, unknown>>;
+  verification_tier?: string;
+  trust_bonus?: number;
   language?: string | null;
   country?: string | null;
   topic?: string | null;
   status: 'accepted' | 'needs_review' | 'rejected';
   reasons: string[];
+  raw?: Record<string, unknown>;
+  created_at?: ISODateTime | null;
+}
+
+export interface UnverifiedCandidateOut {
+  url: string;
+  kind: string;
+  value: string;
+  source: string;
+  adapter?: string;
+  query?: string;
+  status_label?: string;
+  reason?: string;
+}
+
+export interface PreciseBatchOut {
+  batch_id: UUID;
+  total_tasks: number;
+  active_tasks: number;
+  completed_tasks: number;
+  failed_tasks: number;
+  matches: GroupSearchMatchOut[];
+  unverified_candidates?: UnverifiedCandidateOut[];
+  source_stats?: Record<string, number>;
+  ai_notes: string[];
+}
+
+export interface DiscoveryLeadOut {
+  id: UUID;
+  account_id?: UUID | null;
+  invite_hash: string;
+  invite_link: string;
+  tg_chat_id?: number | null;
+  title: string;
+  about: string;
+  member_count?: number | null;
+  kind: string;
+  source: string;
+  query: string;
+  seed_chat_id?: number | null;
+  depth: number;
+  confidence: number;
+  status: string;
   created_at?: ISODateTime | null;
 }
 

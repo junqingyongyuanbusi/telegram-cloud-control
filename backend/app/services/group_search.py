@@ -13,6 +13,13 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Iterable, Sequence
 
+from app.services.group_precision import (
+    INTENT_TERMS,
+    _REGION_STOP_TERMS,
+    canonical_topics,
+    normalize_text,
+)
+
 # 地区词表：只放完整地名，不放 MY/SG 这种过短、容易误伤的代码。
 # languages 是该地区值得尝试的群组后缀语言。
 REGION_PROFILES: dict[str, dict[str, tuple[str, ...]]] = {
@@ -38,7 +45,7 @@ REGION_PROFILES: dict[str, dict[str, tuple[str, ...]]] = {
     },
     "ID": {
         "names": ("indonesia",),
-        "cities": ("jakarta", "surabaya", "bandung"),
+        "cities": ("jakarta", "surabaya", "bandung", "medan", "bali"),
         "languages": ("id", "en"),
     },
     "TH": {
@@ -47,6 +54,81 @@ REGION_PROFILES: dict[str, dict[str, tuple[str, ...]]] = {
         "cities": ("bangkok", "chiang mai", "phuket", "กรุงเทพ", "เชียงใหม่", "ภูเก็ต"),
         "languages": ("th", "en"),
     },
+    "VN": {
+        "names": ("vietnam", "việt nam"),
+        "cities": ("hanoi", "ho chi minh", "saigon", "da nang"),
+        "languages": ("vi", "en"),
+    },
+    "PH": {
+        "names": ("philippines", "filipino"),
+        "cities": ("manila", "cebu", "davao", "makati"),
+        "languages": ("en",),
+    },
+    "TW": {
+        "names": ("taiwan", "台灣", "台湾"),
+        "cities": ("taipei", "kaohsiung", "taichung"),
+        "languages": ("zh", "en"),
+    },
+    "HK": {
+        "names": ("hong kong", "香港"),
+        "cities": ("hong kong",),
+        "languages": ("zh", "en"),
+    },
+    "JP": {
+        "names": ("japan", "日本"),
+        "cities": ("tokyo", "osaka", "yokohama"),
+        "languages": ("ja", "en"),
+    },
+    "KR": {
+        "names": ("korea", "한국", "韩国"),
+        "cities": ("seoul", "busan"),
+        "languages": ("ko", "en"),
+    },
+    "IN": {
+        "names": ("india",),
+        "cities": ("mumbai", "delhi", "bangalore", "hyderabad"),
+        "languages": ("en",),
+    },
+    "AE": {
+        "names": ("dubai", "uae"),
+        "cities": ("dubai", "abu dhabi"),
+        "languages": ("en", "ar"),
+    },
+    "AU": {
+        "names": ("australia",),
+        "cities": ("sydney", "melbourne", "brisbane"),
+        "languages": ("en",),
+    },
+    "US": {
+        "names": ("usa", "united states", "america"),
+        "cities": ("new york", "los angeles", "chicago", "miami"),
+        "languages": ("en",),
+    },
+    "GB": {
+        "names": ("uk", "united kingdom", "london"),
+        "cities": ("london", "manchester", "birmingham"),
+        "languages": ("en",),
+    },
+    "DE": {
+        "names": ("germany", "deutschland"),
+        "cities": ("berlin", "frankfurt", "munich"),
+        "languages": ("de", "en"),
+    },
+    "FR": {
+        "names": ("france",),
+        "cities": ("paris", "lyon"),
+        "languages": ("fr", "en"),
+    },
+    "BR": {
+        "names": ("brazil", "brasil"),
+        "cities": ("sao paulo", "rio"),
+        "languages": ("pt", "en"),
+    },
+    "RU": {
+        "names": ("russia", "россия"),
+        "cities": ("moscow", "москва"),
+        "languages": ("ru", "en"),
+    },
 }
 
 # 主题别名只用于「主题词 + 地区」的扩展，不会替代原始关键词。
@@ -54,12 +136,12 @@ REGION_PROFILES: dict[str, dict[str, tuple[str, ...]]] = {
 TOPIC_ALIASES: dict[str, tuple[str, ...]] = {
     "forex": ("fx",),
     "trading": ("trade",),
-    "gold": ("emas",),
-    "stock": ("saham",),
-    "stocks": ("saham",),
-    "crypto": ("bitcoin",),
+    "gold": ("emas", "xauusd"),
+    "stock": ("saham", "bursa"),
+    "stocks": ("saham", "bursa"),
+    "crypto": ("bitcoin", "web3"),
     "property": ("hartanah",),
-    "jobs": ("kerja kosong",),
+    "jobs": ("kerja kosong", "loker"),
 }
 
 # 马来语本地词组：比「topic + malaysia」更像真实群名，命中率更高。
@@ -70,9 +152,19 @@ LOCAL_TOPIC_PHRASES: dict[str, tuple[str, ...]] = {
     "gold": ("pelaburan emas", "trading emas"),
     "stock": ("saham malaysia", "modal saham"),
     "stocks": ("saham malaysia", "modal saham"),
+    "crypto": ("kumpulan crypto", "pelaburan crypto"),
 }
 
-# 中文词组：马来西亚华人群常用中文命名，直接用中文主题词往往比英文更有效。
+# 印尼本地词组：用于 ID 区域扩展。
+ID_LOCAL_PHRASES: dict[str, tuple[str, ...]] = {
+    "forex": ("komunitas forex", "grup forex", "belajar forex"),
+    "trading": ("komunitas trading", "grup trader"),
+    "gold": ("trading emas", "investasi emas"),
+    "stock": ("komunitas saham", "grup saham"),
+    "crypto": ("komunitas crypto", "grup kripto"),
+}
+
+# 中文词组：马来西亚/新加坡/港澳台华人群常用中文命名，直接用中文主题词往往比英文更有效。
 TOPIC_NAMES_ZH: dict[str, str] = {
     "forex": "外汇",
     "trading": "交易",
@@ -99,6 +191,17 @@ REGION_NAMES_ZH: dict[str, str] = {
     "SG": "新加坡",
     "ID": "印度尼西亚",
     "TH": "泰国",
+    "VN": "越南",
+    "PH": "菲律宾",
+    "TW": "台湾",
+    "HK": "香港",
+    "JP": "日本",
+    "KR": "韩国",
+    "IN": "印度",
+    "AE": "迪拜",
+    "AU": "澳洲",
+    "US": "美国",
+    "GB": "英国",
 }
 
 DEFAULT_LANGUAGES: tuple[str, ...] = ("en",)
@@ -191,17 +294,58 @@ SHORT_QUERIES: dict[str, tuple[str, ...]] = {
 SHORT_QUERY_TEMPLATE = "short_core"
 
 
+def _build_custom_short_queries(
+    keywords: Sequence[str], region_codes: set[str]
+) -> list[str]:
+    """当用户关键词不在内置金融词典里时，基于用户自身词生成短核心查询，避免跑偏到 forex/gold。"""
+
+    region_stop = _REGION_STOP_TERMS | {code.casefold() for code in region_codes} | {
+        name.casefold()
+        for code in region_codes
+        for name in (
+            *(REGION_PROFILES.get(code, {}).get("names", ())),
+            *(REGION_PROFILES.get(code, {}).get("cities", ())),
+            REGION_NAMES_ZH.get(code, ""),
+        )
+        if name
+    }
+    stop = region_stop | set(INTENT_TERMS) | {"channel", "telegram", "tg", "交流群"}
+
+    candidates: list[str] = []
+    for raw_kw in keywords:
+        tokens = [
+            part
+            for part in normalize_text(raw_kw).split()
+            if part.casefold() not in stop
+        ]
+        core = " ".join(tokens).strip() or normalize_text(raw_kw)
+        if core.casefold() != normalize_text(raw_kw).casefold():
+            candidates.append(core)
+        for code in sorted(region_codes):
+            profile = REGION_PROFILES.get(code)
+            if profile and profile.get("names"):
+                candidates.append(f"{core} {profile['names'][0]}")
+            zh_region = REGION_NAMES_ZH.get(code)
+            if zh_region and zh_region not in core:
+                candidates.append(f"{zh_region} {core}")
+        candidates.extend([f"{core} group", f"{core} chat", f"{core} 群"])
+        if "TH" in region_codes:
+            candidates.append(f"กลุ่ม {core}")
+    return candidates
+
+
 def build_short_queries(
     keywords: Iterable[str],
     *,
     regions: Sequence[str] = (),
     limit: int = 60,
+    strict_topic: bool = False,
 ) -> list[SearchQuery]:
     """生成短核心词查询，按地区追加本地词；去重并避开用户已输入的关键词。
 
-    与 `expand_queries` 分开，原因是短词是「兜底召回」：即使用户只给了一个很长的
-    组合词，也要保证基础主题词被搜到。返回的 `keyword` 优先匹配用户关键词，
-    便于后续按关键词统计产出。
+    - `strict_topic=False`（默认）：兼容传统兜底行为；
+    - `strict_topic=True`：严格按用户关键词所属主题过滤 `SHORT_QUERIES`，避免搜 crypto/开卡 时
+      误发 forex/gold 词条。
     """
 
     cleaned: list[str] = []
@@ -226,11 +370,22 @@ def build_short_queries(
     for code in ("TH", "MY", "SG", "ID"):
         if code in region_codes:
             region_terms.extend(SHORT_QUERIES[code])
-    # 目标地区优先，但保留全球基础词；默认上限 60 足以覆盖 TH 全量 37 条 + global 13 条。
     if region_terms:
         ordered = [*region_terms, *SHORT_QUERIES["global"]]
     else:
         ordered = list(SHORT_QUERIES["global"])
+
+    if strict_topic and cleaned:
+        user_topics = set(canonical_topics(cleaned))
+        if user_topics:
+            filtered = [
+                q
+                for q in ordered
+                if set(canonical_topics([q])) & user_topics
+            ]
+            ordered = [*filtered, *_build_custom_short_queries(cleaned, region_codes)]
+        else:
+            ordered = _build_custom_short_queries(cleaned, region_codes)
 
     result: list[SearchQuery] = []
     seen_queries: set[str] = set()
@@ -250,7 +405,7 @@ def build_short_queries(
                 keyword=keyword,
                 template=SHORT_QUERY_TEMPLATE,
                 region=next((code for code in region_codes if code in ("TH", "MY", "SG", "ID")), None),
-                lang="th" if any("฀" <= char <= "๿" for char in text) else None,
+                lang="th" if any("\u0e00" <= char <= "\u0e7f" for char in text) else None,
             )
         )
     return result
@@ -312,14 +467,14 @@ def expand_queries(
     languages: Sequence[str] = (),
     max_queries: int = 120,
     exclude: Sequence[str] = (),
+    extra_queries: Sequence[str] = (),
 ) -> list[SearchQuery]:
     """把关键词展开成去重后的查询列表，原始关键词永远在最前面。
 
-    - `regions` 为空：只返回原始关键词，行为与旧版一致；
+    - `regions` 为空：只返回原始关键词（以及 `extra_queries`），行为与旧版一致；
     - `languages` 为空：使用地区预设语言；
-    - `exclude`：绩效表里连续 0 产出、已自动停用的非基础查询；基础词仍保留，
-      避免用户明确输入的关键词被系统静默丢掉；
-    - 各关键词按候选顺序轮转取词，词多时不会让前几个词吃满全部预算。
+    - `exclude`：绩效表里连续 0 产出、已自动停用的非基础查询；基础词仍保留；
+    - `extra_queries`：可选 AI 扩词等补充查询，放在基础词之后、扩展矩阵之前或协同进入预算。
     """
 
     cleaned_keywords: list[str] = []
@@ -367,6 +522,9 @@ def expand_queries(
     for keyword in cleaned_keywords:
         add(keyword, keyword=keyword, template="base")
 
+    for extra in extra_queries:
+        add(extra, keyword=cleaned_keywords[0], template="ai_expand")
+
     region_profiles = _normalized_regions(regions)
     if not region_profiles or len(queries) >= limit:
         return queries
@@ -391,11 +549,15 @@ def expand_queries(
 
     for keyword in cleaned_keywords:
         lowered = keyword.casefold()
+        canonical_list = canonical_topics([keyword])
+        canonical = canonical_list[0] if canonical_list else ""
+        topic_key = lowered if lowered in TOPIC_NAMES_ZH else canonical
+
         for code, profile in region_profiles:
             langs = language_override or {item.casefold() for item in profile["languages"]}
             region_name_zh = REGION_NAMES_ZH.get(code)
-            topic_zh = TOPIC_NAMES_ZH.get(lowered)
-            topic_th = TOPIC_NAMES_TH.get(lowered)
+            topic_zh = TOPIC_NAMES_ZH.get(topic_key)
+            topic_th = TOPIC_NAMES_TH.get(topic_key)
 
             # 2. 主题词 + 地区名（每个关键词都先拿到，再进入城市）。
             for variant in variants[keyword]:
@@ -410,16 +572,28 @@ def expand_queries(
 
             # 4. 马来语本地词组 + 本地词组 + 城市。
             if code == "MY" and "ms" in langs:
-                for phrase in LOCAL_TOPIC_PHRASES.get(lowered, ())[:2]:
+                for phrase in LOCAL_TOPIC_PHRASES.get(topic_key, ())[:2]:
                     push(keyword, phrase, "local_phrase", code, "ms")
                     for city in profile["cities"][:2]:
                         push(keyword, f"{phrase} {city}", "local_phrase_city", code, "ms")
 
-            # 5. 中文地区词组：马来西亚 外汇 / 股票 群。
-            if "zh" in langs and topic_zh and region_name_zh:
-                push(keyword, f"{region_name_zh} {topic_zh}", "zh_region", code, "zh")
-                push(keyword, f"{region_name_zh} {topic_zh} 群", "zh_group", code, "zh")
-                push(keyword, f"{topic_zh} 群", "zh_topic_group", code, "zh")
+            # 4.5 印尼本地词组。
+            if code == "ID" and "id" in langs:
+                for phrase in ID_LOCAL_PHRASES.get(topic_key, ())[:3]:
+                    push(keyword, phrase, "local_phrase", code, "id")
+                    for city in profile["cities"][:2]:
+                        push(keyword, f"{phrase} {city}", "local_phrase_city", code, "id")
+
+            # 5. 中文地区词组：马来西亚 外汇 / 股票 群（非内置主题也生成地区+原词组合，避免重复地名）。
+            if "zh" in langs and region_name_zh:
+                zh_core = topic_zh or keyword
+                if region_name_zh not in zh_core:
+                    push(keyword, f"{region_name_zh} {zh_core}", "zh_region", code, "zh")
+                    push(keyword, f"{region_name_zh} {zh_core} 群", "zh_group", code, "zh")
+                else:
+                    push(keyword, f"{zh_core} 群", "zh_group", code, "zh")
+                if topic_zh:
+                    push(keyword, f"{topic_zh} 群", "zh_topic_group", code, "zh")
 
             # 5.5 泰语词组：กลุ่มเทรด Forex / พูดคุย Forex / Forex ไทย。
             if code == "TH" and "th" in langs:
@@ -431,13 +605,18 @@ def expand_queries(
                     push(keyword, f"กลุ่ม {variant}", "th_group", code, "th")
                     push(keyword, f"พูดคุย {variant}", "th_chat", code, "th")
 
-            # 6. 群组后缀：英文 group、马来语 kumpulan、中文 群、泰语 กลุ่ม。
+            # 6. 群组后缀：英文 group、马来语 kumpulan、印尼语 grup/komunitas、越南语 nhóm、中文 群。
             for variant in variants[keyword]:
                 for name in profile["names"][:1]:
                     if "en" in langs:
                         push(keyword, f"{variant} {name} group", "suffix_en", code, "en")
                     if "ms" in langs:
                         push(keyword, f"kumpulan {variant} {name}", "suffix_ms", code, "ms")
+                    if "id" in langs:
+                        push(keyword, f"grup {variant} {name}", "suffix_id", code, "id")
+                        push(keyword, f"komunitas {variant} {name}", "suffix_id", code, "id")
+                    if "vi" in langs:
+                        push(keyword, f"nhóm {variant} {name}", "suffix_vi", code, "vi")
                     if "zh" in langs:
                         push(keyword, f"{variant} {name} 群", "suffix_zh", code, "zh")
 

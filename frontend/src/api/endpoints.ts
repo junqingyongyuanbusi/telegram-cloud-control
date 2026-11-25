@@ -28,6 +28,8 @@ import type {
   GroupProfileListResponse,
   GroupProfileOut,
   GroupSearchMatchOut,
+  PreciseBatchOut,
+  DiscoveryLeadOut,
   BulkPmRequest,
   BulkProbeRequest,
   BulkWarmupRequest,
@@ -387,6 +389,7 @@ export const groupIntelApi = {
   preciseSearch: (payload: {
     scope?: string;
     account_ids?: string[];
+    dispatch?: 'round_robin' | 'each';
     keywords: string[];
     country?: string | null;
     languages?: string[];
@@ -400,18 +403,50 @@ export const groupIntelApi = {
     exclude_readonly?: boolean;
     search_messages?: boolean;
     message_search_queries?: number;
+    message_search_pages?: number;
     full_check_limit?: number;
     min_relevance_score?: number;
+    enable_contacts_search?: boolean;
+    contacts_query_limit?: number;
     expand_short_queries?: boolean;
     short_query_limit?: number;
+    expand_recommendations?: boolean;
+    recommendation_channels?: number;
+    expand_channel_messages?: boolean;
+    message_channels?: number;
+    message_limit?: number;
+    scan_joined_groups?: boolean;
+    joined_group_limit?: number;
+    enrich_tme?: boolean;
+    tme_limit?: number;
+    expand_scope_preset?: boolean;
+    expand_channel_posts?: boolean;
+    channel_posts_query_limit?: number;
+    allow_paid_channel_posts?: boolean;
+    channel_posts_max_stars?: number;
+    expand_external_web?: boolean;
+    external_web_query_limit?: number;
+    external_web_candidate_limit?: number;
+    allow_paid_external_search?: boolean;
+    expand_common_chats?: boolean;
+    common_chat_user_limit?: number;
+    rpc_budget?: number;
+    verify_activity?: boolean;
+    activity_check_limit?: number;
+    ai_expand?: boolean;
+    ai_review?: boolean;
     candidate_links?: string[];
   }) => api.post<BulkResultOut>('/api/group-intel/search/precise', payload),
   preciseMatches: (taskId: string, status?: string) =>
     api.get<GroupSearchMatchOut[]>(`/api/group-intel/search/tasks/${taskId}/matches`, status ? { status } : undefined),
+  preciseBatch: (batchId: string, status?: string) =>
+    api.get<PreciseBatchOut>(`/api/group-intel/search/batches/${batchId}`, status ? { status } : undefined),
   preciseKeywords: (taskId: string) =>
     api.get<{ query: string; source: string; raw_count: number; found_count: number; status: string }[]>(
       `/api/group-intel/search/tasks/${taskId}/keywords`,
     ),
+  discoveryLeads: (query?: { limit?: number; status?: string }) =>
+    api.get<DiscoveryLeadOut[]>('/api/group-intel/discovery/leads', query),
   // 关键词监听：规则 CRUD + 命中流水
   keywordWatches: () => api.get<{ items: KeywordWatchOut[]; total: number }>('/api/group-intel/keyword-watches'),
   createKeywordWatch: (payload: {
@@ -465,7 +500,15 @@ export const groupIntelApi = {
   exportZip: (query?: { profile_ids?: string; batch_id?: string; account_id?: UUID; include_events?: boolean }) =>
     api.download('/api/group-intel/export.zip', { ...query }),
   /** 群档案列表 */
-  profiles: (query: { q?: string; account_id?: UUID | null; min_members?: number; page?: number; page_size?: number }) =>
+  profiles: (query: {
+    q?: string;
+    account_id?: UUID | null;
+    min_members?: number;
+    /** 只看能发言的讨论组/聊天室（排除频道、受限群、已禁言） */
+    speakable?: boolean;
+    page?: number;
+    page_size?: number;
+  }) =>
     api.get<GroupProfileListResponse>('/api/group-intel/profiles', { ...query }),
   profile: (id: UUID) => api.get<{ profile: GroupProfileOut; members: Record<string, unknown>; events: Record<string, number> }>(`/api/group-intel/profiles/${id}`),
   members: (id: UUID, query: { q?: string; only_bots?: boolean; exclude_bots?: boolean; status?: string; page?: number; page_size?: number }) =>

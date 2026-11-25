@@ -5,8 +5,7 @@
 
 from __future__ import annotations
 
-from app.services.group_discovery import extract_links, parse_tme_page
-
+from app.services.group_discovery import extract_links, parse_tme_channel_posts, parse_tme_page
 
 def main() -> None:
     text = """
@@ -43,6 +42,18 @@ def main() -> None:
     subscribers = '<div class="tgme_page_extra">1.2K subscribers</div>'
     assert parse_tme_page(subscribers)["member_count"] == 1200
     assert parse_tme_page(subscribers)["kind"] == "channel"
+
+    channel_html = """
+    <div class="tgme_widget_message_text">
+      欢迎讨论组 <a href="https://t.me/thai_forex_discussion">@thai_forex_discussion</a>
+      和自身频道 @signal_seed，私密群 https://t.me/+InviteCode987654
+    </div>
+    """
+    post_links = parse_tme_channel_posts(channel_html, channel_username="signal_seed", limit=10)
+    post_values = {(item.kind, item.value) for item in post_links}
+    assert ("username", "thai_forex_discussion") in post_values, post_values
+    assert ("invite", "InviteCode987654") in post_values, post_values
+    assert ("username", "signal_seed") not in post_values, post_values
 
     print("group_discovery_check: ok")
 

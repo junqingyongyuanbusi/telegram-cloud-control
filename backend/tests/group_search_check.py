@@ -82,6 +82,27 @@ def main() -> None:
     # 上限生效。
     assert len(build_short_queries(["forex"], regions=["TH"], limit=5)) == 5
 
+    # 非金融自定义话题 + strict_topic=True：不能混入 forex/gold，也不能无条件加泰语/重复地名。
+    crypto_short = [
+        item.query
+        for item in build_short_queries(["Crypto Thailand", "USDT"], regions=["TH"], limit=20, strict_topic=True)
+    ]
+    assert "forex" not in crypto_short and "ทองคำ" not in crypto_short, crypto_short
+    assert "Crypto" in crypto_short and "กลุ่ม Crypto" in crypto_short, crypto_short
+    assert "Crypto Thailand thailand" not in [q.casefold() for q in crypto_short], crypto_short
+
+    my_short = [
+        item.query
+        for item in build_short_queries(["马来西亚 开卡"], regions=["MY"], limit=20, strict_topic=True)
+    ]
+    assert not any(q.startswith("กลุ่ม ") for q in my_short), my_short
+
+    # 越南 / 日本等扩展地区与自定义中文扩展，避免重复地名拼接。
+    my_custom_zh = [item.query for item in expand_queries(["马来西亚 开卡"], regions=["MY"], max_queries=20)]
+    assert "马来西亚 马来西亚 开卡" not in my_custom_zh, my_custom_zh
+    vn_expanded = [item.query for item in expand_queries(["crypto"], regions=["VN"], max_queries=30)]
+    assert any("hanoi" in q.casefold() or "vietnam" in q.casefold() for q in vn_expanded), vn_expanded
+
     print("group_search_check: ok")
 
 

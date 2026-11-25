@@ -7,10 +7,9 @@ from datetime import datetime
 from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel, Field, model_validator
-
 from app.schemas.bulk import BulkScopeRequest
 from app.schemas.common import ORMModel
-
+from app.services.group_sources import normalize_search_source, normalize_source_list
 
 class GroupCollectRequest(BulkScopeRequest):
     """批量采集请求：对选中的号，采它们已加入的群。"""
@@ -280,6 +279,10 @@ class SearchGroupsRequest(BulkScopeRequest):
 class PreciseSearchRequest(BulkScopeRequest):
     """多语言关键词精准检索讨论组（多源召回 + 严格校验 + 评分）。"""
 
+    dispatch: str = Field(
+        default="round_robin",
+        description="多号分配策略：round_robin=查询/候选按号分片并行不重复（默认）；each=每个号跑全量",
+    )
     keywords: List[str] = Field(default_factory=list, min_length=1, max_length=20, description="关键词，最多 20 个")
     country: Optional[str] = Field(default=None, max_length=8, description="目标地区代码，如 TH / MY / SG / ID")
     languages: List[str] = Field(default_factory=list, max_length=6, description="目标语言，如 th/en/zh/ms")
@@ -292,18 +295,79 @@ class PreciseSearchRequest(BulkScopeRequest):
     max_linked_chats: int = Field(default=50, ge=0, le=200, description="最多检查多少个频道的 linked_chat")
     exclude_readonly: bool = Field(default=True, description="排除默认权限为只读的群")
     search_messages: bool = Field(default=True, description="是否用 messages.searchGlobal 补充召回")
-    message_search_queries: int = Field(default=3, ge=0, le=20, description="用前几条查询做消息搜索")
-    full_check_limit: int = Field(default=40, ge=0, le=100, description="最多对多少个讨论组拉 GetFullChannel")
+    message_search_queries: int = Field(default=5, ge=0, le=20, description="用前几条查询做消息搜索")
+    message_search_pages: int = Field(default=2, ge=1, le=5, description="每条消息搜索查询最多翻页数")
+    full_check_limit: int = Field(default=60, ge=0, le=200, description="最多对多少个讨论组拉 GetFullChannel")
     min_relevance_score: int = Field(default=60, ge=0, le=100, description="保留门槛；低于它但 ≥40 的进待确认")
+    enable_contacts_search: bool = Field(default=True, description="是否执行 contacts.search 原生搜索")
+    contacts_query_limit: int = Field(default=120, ge=0, le=300, description="原生搜索最多执行多少条查询")
     expand_short_queries: bool = Field(
         default=True,
-        description="是否追加短核心词（forex/เทรด/ทองคำ 等）做兜底召回；长尾词全不命中时特别有用",
+        description="是否追加短核心词兜底召回（仅按用户关键词所属主题扩展）",
     )
     short_query_limit: int = Field(default=60, ge=0, le=80, description="最多追加多少条短核心词")
+    expand_recommendations: bool = Field(
+        default=True,
+        description="是否从高相关频道拉相似频道推荐并继续展开 linked_chat 讨论组",
+    )
+    recommendation_channels: int = Field(default=8, ge=0, le=30, description="最多取多少个频道的相似推荐")
+    expand_channel_messages: bool = Field(
+        default=True,
+        description="是否从命中频道近期消息提取 t.me 链接做图扩散（候选仍须通过讨论组与相关性过滤）",
+    )
+    message_channels: int = Field(default=8, ge=0, le=30, description="最多读多少个种子频道的近期消息")
+    message_limit: int = Field(default=100, ge=20, le=300, description="每个种子频道最多读多少条消息")
+    scan_joined_groups: bool = Field(
+        default=True,
+        description="是否从执行号已加入的同主题群内扫链接与关联群作为补充候选",
+    )
+    joined_group_limit: int = Field(default=15, ge=0, le=100, description="已加入群图谱最多扫描多少个匹配群")
+    enrich_tme: bool = Field(
+        default=True,
+        description="是否对未分配到 GetFullChannel 配额或缺少简介的公开群补抓 t.me 公开页（零账号配额消耗）",
+    )
+    tme_limit: int = Field(default=30, ge=0, le=100, description="最多补抓多少个 t.me 公开页")
+    expand_scope_preset: bool = Field(
+        default=False,
+        description="一键扩大搜索范围（开启公开频道帖子搜索、外部网页检索与共同群扩展）",
+    )
+    expand_channel_posts: bool = Field(
+        default=False,
+        description="是否通过 channels.searchPosts 搜索公开频道帖子作种子（可能受 Premium/Stars 限制，默认关闭）",
+    )
+    channel_posts_query_limit: int = Field(default=5, ge=0, le=20, description="频道帖子搜索最多查询条数")
+    allow_paid_channel_posts: bool = Field(default=False, description="是否允许 channels.searchPosts 消耗付费 Stars 配额")
+    channel_posts_max_stars: int = Field(default=0, ge=0, le=500, description="单次帖子搜索允许消耗的 Stars 上限")
+    expand_external_web: bool = Field(
+        default=False,
+        description="是否启用外部网页/公开目录适配器召回 t.me 候选后再经 Telegram 核验（默认关闭）",
+    )
+    external_web_query_limit: int = Field(default=3, ge=1, le=10, description="外部网页检索最多查询几个关键词")
+    external_web_candidate_limit: int = Field(default=30, ge=0, le=200, description="外部网页最多提取多少个待核验链接")
+    allow_paid_external_search: bool = Field(default=False, description="外部搜索是否允许调用配置了付费 API Key 的引擎/目录")
+    expand_common_chats: bool = Field(
+        default=False,
+        description="是否启用「已知用户 → 共同群」图扩散 common_chat_graph（默认关闭）",
+    )
+    common_chat_user_limit: int = Field(default=8, ge=0, le=25, description="共同群扩展最多查询多少个已知用户")
+    rpc_budget: int = Field(default=180, ge=20, le=500, description="单账号单次精准检索的 Telegram RPC 总预算上限")
+    verify_activity: bool = Field(
+        default=True,
+        description="是否抽样最近 20 条公开消息核验近期真人活跃度（只读）",
+    )
+    activity_check_limit: int = Field(default=25, ge=0, le=60, description="最多对多少个高潜力群抽样近期消息活跃度")
+    ai_expand: bool = Field(
+        default=False,
+        description="可选：用已配置的 AI 模型生成多语言扩展查询词（未配置时自动降级为规则扩展）",
+    )
+    ai_review: bool = Field(
+        default=False,
+        description="可选：用已配置的 AI 模型对候选群做语义复核与反垃圾降噪（未配置时自动降级为规则打分）",
+    )
     candidate_links: List[str] = Field(
         default_factory=list,
         max_length=200,
-        description="可选：外部找到的 t.me 用户名/邀请链接，逐条只读核验后并入结果",
+        description="可选：外部找到的 t.me 用户名/邀请链接（支持粘贴整段文本自动提取），逐条只读核验后并入结果",
     )
 
 
@@ -327,18 +391,56 @@ class GroupSearchMatchOut(ORMModel):
     title: str = ""
     username: Optional[str] = None
     member_count: Optional[int] = None
-    source: str = "contacts"
+    source: str = "contacts_search"
     query: str = ""
     relevance_score: int = 0
     breakdown: Dict[str, int] = Field(default_factory=dict)
     matched_keywords: List[str] = Field(default_factory=list)
     discovery_sources: List[str] = Field(default_factory=list)
+    source_counts: Dict[str, int] = Field(default_factory=dict)
+    evidence: List[Dict[str, Any]] = Field(default_factory=list)
+    verification_tier: str = "tg_verified"
+    trust_bonus: int = 0
     language: Optional[str] = None
     country: Optional[str] = None
     topic: Optional[str] = None
     status: str = "needs_review"
     reasons: List[str] = Field(default_factory=list)
+    raw: Dict[str, Any] = Field(default_factory=dict)
     created_at: Optional[datetime] = None
+
+    @model_validator(mode="after")
+    def _hydrate_source_metadata(self) -> "GroupSearchMatchOut":
+        raw = self.raw if isinstance(self.raw, dict) else {}
+        self.source = normalize_search_source(self.source)
+        base_sources = self.discovery_sources or ([self.source] if self.source else [])
+        self.discovery_sources = normalize_source_list(base_sources)
+
+        merged_counts: dict[str, int] = {}
+        raw_counts = self.source_counts or (raw.get("source_counts") if isinstance(raw.get("source_counts"), dict) else {})
+        if isinstance(raw_counts, dict):
+            for k, v in raw_counts.items():
+                norm_k = normalize_search_source(str(k))
+                merged_counts[norm_k] = merged_counts.get(norm_k, 0) + int(v or 0)
+        self.source_counts = merged_counts
+
+        if not self.evidence and isinstance(raw.get("evidence"), list):
+            normalized_ev: list[dict[str, Any]] = []
+            for item in raw["evidence"][:20]:
+                if isinstance(item, dict):
+                    copied = dict(item)
+                    if copied.get("source"):
+                        copied["source"] = normalize_search_source(str(copied["source"]))
+                    normalized_ev.append(copied)
+            self.evidence = normalized_ev
+        if raw.get("verification_tier"):
+            self.verification_tier = str(raw["verification_tier"])
+        if not self.trust_bonus:
+            if raw.get("trust_bonus") is not None:
+                self.trust_bonus = int(raw.get("trust_bonus") or 0)
+            elif "trust" in self.breakdown:
+                self.trust_bonus = int(self.breakdown.get("trust") or 0)
+        return self
 
 
 class DiscoveryQueryStatOut(ORMModel):
@@ -371,10 +473,24 @@ class DiscoveryLeadOut(ORMModel):
     about: str = ""
     member_count: Optional[int] = None
     kind: str = "group"
-    source: str = "message_link"
+    source: str = "channel_message_link"
     query: str = ""
     seed_chat_id: Optional[int] = None
     depth: int = 1
     confidence: float = 0.5
     status: str = "new"
     created_at: Optional[datetime] = None
+
+
+class PreciseBatchOut(BaseModel):
+    """一批精准找群任务（多号并行去重汇总 + 进度 + 来源统计 + 分层候选）。"""
+
+    batch_id: uuid.UUID
+    total_tasks: int = 0
+    active_tasks: int = 0
+    completed_tasks: int = 0
+    failed_tasks: int = 0
+    matches: List[GroupSearchMatchOut] = Field(default_factory=list)
+    unverified_candidates: List[Dict[str, Any]] = Field(default_factory=list)
+    source_stats: Dict[str, int] = Field(default_factory=dict)
+    ai_notes: List[str] = Field(default_factory=list)
