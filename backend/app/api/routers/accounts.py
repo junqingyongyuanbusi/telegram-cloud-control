@@ -47,8 +47,10 @@ from app.core.audit import ACTION_LABELS, write_audit
 from app.core.tasks import enqueue_task
 from app.models import (
     ACCOUNT_STATUS_LABELS,
+    AccountAssignment,
     AccountGroup,
     AccountStatus,
+    UserRole,
     AuditLog,
     CurrentTask,
     Dialog,
@@ -210,6 +212,17 @@ async def _validate_refs(
         exists = await session.scalar(select(Proxy.id).where(Proxy.id == proxy_id))
         if exists is None:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="代理不存在")
+
+
+async def _assign_to_creator(session: AsyncSession, user: User, account: TgAccount) -> None:
+    """自建号归创建者：否则 operator 登录时自动建的号对自己不可见，随后的轮询全 403。
+
+    admin 的可见范围是不限（None），不用写分配记录。
+    """
+    if user.role == UserRole.admin:
+        return
+    session.add(AccountAssignment(user_id=user.id, account_id=account.id))
+    await session.flush()
 
 
 async def _summary(session: AsyncSession, ids: Optional[List[uuid.UUID]]) -> AccountSummary:
@@ -422,6 +435,7 @@ async def create_account(
     )
     session.add(account)
     await session.flush()
+    await _assign_to_creator(session, user, account)
     await write_audit(
         session,
         action="account.create",
@@ -959,6 +973,7 @@ async def login_start(
             )
             session.add(account)
             await session.flush()
+            await _assign_to_creator(session, user, account)
             logger.info("登录时自动建档 account_id=%s phone=%s", account.id, account.phone_masked)
         else:
             # 复用已有号：只补分组 / 代理，不动状态
@@ -1145,6 +1160,7 @@ async def login_qr_start(
         )
         session.add(account)
         await session.flush()
+        await _assign_to_creator(session, user, account)
 
     login_id = uuid.uuid4()
     task = await enqueue_task(
