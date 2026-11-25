@@ -29,12 +29,14 @@ import type { ColumnsType } from 'antd/es/table';
 import {
   AimOutlined,
   CloudDownloadOutlined,
+  CloudUploadOutlined,
   CommentOutlined,
   FileZipOutlined,
   LinkOutlined,
   ReloadOutlined,
   SearchOutlined,
 } from '@ant-design/icons';
+import { useNavigate } from 'react-router-dom';
 import { Progress } from 'antd';
 import { PageContainer, StatCard, StatGrid, RelativeTime, SoftTag, CopyableText } from '../components';
 import { notifyError, toast } from '../utils/feedback';
@@ -118,6 +120,7 @@ function extractCandidateLinks(raw: string): string[] {
 }
 
 export default function GroupIntel() {
+  const navigate = useNavigate();
   const [keyword, setKeyword] = useState('');
   const [speakableOnly, setSpeakableOnly] = useState(false);
   const [page, setPage] = useState(1);
@@ -261,6 +264,7 @@ export default function GroupIntel() {
   // 采集进度：进行中时每 5 秒刷新一次，避免黑盒等待
   const jobs = useAsyncData(() => groupIntelApi.jobs({ limit: 30 }), []);
   const [exporting, setExporting] = useState(false);
+  const [syncingJoin, setSyncingJoin] = useState(false);
   useInterval(() => {
     if ((jobs.data?.summary.active ?? 0) > 0) void jobs.reload();
   }, 5000);
@@ -322,6 +326,37 @@ export default function GroupIntel() {
       /* client 已统一提示 */
     } finally {
       setCollectBusy(false);
+    }
+  };
+
+  // 把当前关键词下的可发言群链接带到「加群」页：邀请链接优先，公开群退化为 @username
+  const syncSpeakableToJoin = async () => {
+    setSyncingJoin(true);
+    try {
+      // 同一个群会被多个号各采一行，按 tg_chat_id 去重
+      const targets = new Map<number, string>();
+      for (let pageNo = 1; ; pageNo += 1) {
+        const res = await groupIntelApi.profiles({
+          q: keyword || undefined,
+          speakable: true,
+          page: pageNo,
+          page_size: 200,
+        });
+        for (const item of res.items) {
+          const link = item.invite_link || (item.username ? `@${item.username}` : '');
+          if (link && !targets.has(item.tg_chat_id)) targets.set(item.tg_chat_id, link);
+        }
+        if (pageNo * 200 >= res.total) break;
+      }
+      if (!targets.size) {
+        toast.warning('没有可同步的群：这些群既没采到邀请链接，也没有公开用户名');
+        return;
+      }
+      navigate('/campaigns/join', { state: { joinTargets: [...targets.values()] } });
+    } catch {
+      /* client 已统一提示 */
+    } finally {
+      setSyncingJoin(false);
     }
   };
 
@@ -677,6 +712,16 @@ export default function GroupIntel() {
         title="群档案"
         extra={
           <Space>
+            <Tooltip title="按当前关键词筛出可发言群，把邀请链接 / @用户名 带到「加群」页">
+              <Button
+                size="small"
+                icon={<CloudUploadOutlined />}
+                loading={syncingJoin}
+                onClick={() => void syncSpeakableToJoin()}
+              >
+                同步到加群
+              </Button>
+            </Tooltip>
             <Segmented
               size="small"
               value={memberScope}

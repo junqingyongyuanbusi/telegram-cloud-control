@@ -5,7 +5,7 @@
  * 结果弹窗复用 BulkResultModal；执行进度看「批次进度」或任务中心。
  */
 import { useEffect, useState } from 'react';
-import { Navigate, useNavigate, useParams } from 'react-router-dom';
+import { Navigate, useLocation, useNavigate, useParams } from 'react-router-dom';
 import {
   Button,
   Card,
@@ -480,6 +480,8 @@ interface ActionFormProps {
   children: React.ReactNode;
   /** 给了就显示「定时队列」区块 + 下方「正在定时」列表（值 = 计划动作名） */
   scheduleAction?: string;
+  /** 表单初值（如从群情报页同步过来的加群链接） */
+  initialValues?: Record<string, unknown>;
 }
 
 /** 资料模板：把「名字池 / 简介池 / 用户名规则 / 头像」整套存起来，下次一键套用。
@@ -611,6 +613,7 @@ function ActionTab({
   buildPayload,
   children,
   scheduleAction,
+  initialValues,
 }: ActionFormProps) {
   const [scope, setScope] = useState<ScopeState>({ scope: 'all', limit: 200 });
   const [form] = Form.useForm();
@@ -661,7 +664,7 @@ function ActionTab({
         </div>
       </header>
 
-      <Form form={form} layout="vertical" className="tg-action-form" onFinish={(values) => void onFinish(values)}>
+      <Form form={form} layout="vertical" className="tg-action-form" initialValues={initialValues} onFinish={(values) => void onFinish(values)}>
         <div className="tg-form-body">{children}</div>
 
         {scheduleAction ? (
@@ -959,6 +962,16 @@ const RHYTHM_PRESETS = [
 ];
 
 export default function Campaigns() {
+  const navigate = useNavigate();
+  const location = useLocation();
+  // 群情报页「同步到加群」把链接放在路由 state 里：进入页面时读一次，随后清掉 state，下次进来不残留
+  const [syncedJoinTargets] = useState<string[]>(
+    () => (location.state as { joinTargets?: string[] } | null)?.joinTargets ?? [],
+  );
+  useEffect(() => {
+    if (syncedJoinTargets.length) navigate(location.pathname, { replace: true, state: null });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   // Bot 列表：私信 / 群发的「用 Bot 发送」通道要用
   const bots = useAsyncData(() => botApi.list(), []);
   const { section } = useParams<{ section: string }>();
@@ -1314,6 +1327,7 @@ export default function Campaigns() {
             ignore_active_hours: Boolean(values.ignore_active_hours),
           })}
           submit={(payload) => campaignApi.joinGroup(payload as unknown as JoinGroupRequest)}
+          initialValues={syncedJoinTargets.length ? { targets: syncedJoinTargets.join('\n') } : undefined}
         >
           <Form.Item
             label="补齐覆盖（让所有号都进这些群）"
@@ -1677,7 +1691,6 @@ export default function Campaigns() {
     { key: 'batches', label: '批次进度', children: <BatchesTab /> },
   ];
 
-  const navigate = useNavigate();
   const current = sections.find((item) => item.key === section);
   if (section && !current) return <Navigate to="/campaigns/materials" replace />;
   const active = current ?? sections[0];
