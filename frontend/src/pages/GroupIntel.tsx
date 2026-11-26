@@ -53,6 +53,29 @@ const SEND_LABEL: Record<string, { text: string; color?: string }> = {
   unknown: { text: '未校验' },
 };
 
+/** 结果表只列讨论组：频道/讨论区在搜索阶段已排除。 */
+const isDiscussionRow = (row: GroupSearchMatchOut) => {
+  const reason = String(row.raw?.type_reason ?? '');
+  return reason ? reason === 'ok' : row.status !== 'rejected';
+};
+
+/** 近 3 个月活跃度与发言权限都来自候选核验结果（matches.raw）。 */
+const activityLabel = (row: GroupSearchMatchOut) => {
+  const act = row.raw?.activity as { recent_90d?: number } | undefined;
+  if (!act) return { text: '未确认', color: undefined };
+  const recent = Number(act.recent_90d ?? 0);
+  return recent > 0
+    ? { text: `有 ${recent} 条`, color: 'green' }
+    : { text: '无消息', color: 'red' };
+};
+
+const speakLabel = (row: GroupSearchMatchOut) => {
+  const perm = String(row.raw?.send_permission ?? 'unknown');
+  if (perm === 'restricted' || row.raw?.readonly === true) return { text: '禁言', color: 'red' };
+  if (perm === 'open') return { text: '可发言', color: 'green' };
+  return { text: '未校验', color: undefined };
+};
+
 const SOURCE_LABEL: Record<string, string> = {
   contacts_search: '原生搜索',
   global_message_search: '消息反查',
@@ -121,14 +144,14 @@ export default function GroupIntel() {
           const batch = await groupIntelApi.preciseBatch(preciseBatchId);
           if (!stopped) {
             setPreciseBatch(batch);
-            setPreciseRows(batch.matches.filter((row) => row.status !== 'rejected'));
+            setPreciseRows(batch.matches.filter(isDiscussionRow));
           }
           if (batch.total_tasks > 0 && batch.active_tasks === 0) {
             window.clearInterval(timer);
           }
         } else if (preciseTaskId) {
           const rows = await groupIntelApi.preciseMatches(preciseTaskId);
-          if (!stopped) setPreciseRows(rows.filter((row) => row.status !== 'rejected'));
+          if (!stopped) setPreciseRows(rows.filter(isDiscussionRow));
         }
       } catch {
         /* 任务还没产出时保持旧表 */
@@ -521,7 +544,7 @@ export default function GroupIntel() {
               full_check_limit: 60,
               simple_screen: true,
               expand_short_queries: true,
-              short_query_limit: 60,
+              short_query_limit: 20,
               expand_recommendations: true,
               recommendation_channels: 8,
               expand_channel_messages: true,
@@ -579,16 +602,16 @@ export default function GroupIntel() {
               message={
                 preciseBatch
                   ? preciseRows.length
-                    ? `已验证精准群 ${preciseRows.length} 个（已完成 ${preciseBatch.completed_tasks}/${preciseBatch.total_tasks} 个账号任务）`
+                    ? `检索到 ${preciseRows.length} 个讨论组（已完成 ${preciseBatch.completed_tasks}/${preciseBatch.total_tasks} 个账号任务）`
                     : `多号检索进行中（已完成 ${preciseBatch.completed_tasks}/${preciseBatch.total_tasks}，运行中 ${preciseBatch.active_tasks}）；每 3 秒自动刷新`
                   : preciseRows.length
-                    ? `已产出 ${preciseRows.length} 条匹配（按分数排序）`
+                    ? `已产出 ${preciseRows.length} 条匹配`
                     : '检索任务已排队，正在搜索/校验；结果每 3 秒刷新。'
               }
               description={
                 preciseBatch
-                  ? `批次 ${preciseBatch.batch_id}${preciseBatch.failed_tasks ? `（${preciseBatch.failed_tasks} 个子任务失败）` : ''}；已验证公开群写入群档案，未核验公开链接见下方「待核验候选」，私群邀请请查右上角「私群线索」。`
-                  : `任务 ${preciseTaskId}；保留与待确认的群已写入群档案。`
+                  ? `批次 ${preciseBatch.batch_id}${preciseBatch.failed_tasks ? `（${preciseBatch.failed_tasks} 个子任务失败）` : ''}；近 3 个月有消息且可发言的群写入群档案，其余只在这里显示；未核验公开链接见下方「待核验候选」。`
+                  : `任务 ${preciseTaskId}；近 3 个月有消息且可发言的群写入群档案。`
               }
             />
             {preciseBatch && preciseBatch.ai_notes.length > 0 ? (
@@ -641,7 +664,7 @@ export default function GroupIntel() {
               items={[
                 {
                   key: 'verified',
-                  label: `已验证精准群 (${preciseRows.length})`,
+                  label: `检索结果 (${preciseRows.length})`,
                   children: (
                     <Table<GroupSearchMatchOut>
                       size="small"
@@ -651,27 +674,6 @@ export default function GroupIntel() {
                       pagination={false}
                       scroll={{ y: 360 }}
                       columns={[
-                        {
-                          title: '结论/验证',
-                          dataIndex: 'status',
-                          width: 120,
-                          render: (value: string, row) => (
-                            <Space direction="vertical" size={2}>
-                              {value === 'accepted' ? (
-                                <Tag color="green">保留</Tag>
-                              ) : value === 'needs_review' ? (
-                                <Tag color="gold">待确认</Tag>
-                              ) : (
-                                <Tag>排除</Tag>
-                              )}
-                              {row.verification_tier === 'external_verified' ? (
-                                <Tag color="cyan" style={{ fontSize: 11 }}>
-                                  外部发现·TG已验证
-                                </Tag>
-                              ) : null}
-                            </Space>
-                          ),
-                        },
                         {
                           title: '群组',
                           dataIndex: 'title',
@@ -687,40 +689,33 @@ export default function GroupIntel() {
                         },
                         { title: '成员', dataIndex: 'member_count', width: 76 },
                         {
-                          title: '来源与证据',
-                          dataIndex: 'discovery_sources',
-                          width: 210,
-                          render: (sources: string[] | undefined, row) => {
-                            const items = (sources && sources.length ? sources : [row.source]).slice(0, 4);
-                            const counts = row.source_counts || {};
-                            const evLines = (row.evidence || []).slice(0, 5).map((ev) => {
-                              const s = String(ev.source || '');
-                              const q = ev.query ? `词:${String(ev.query)}` : '';
-                              const l = ev.link ? `链:${String(ev.link)}` : '';
-                              return `${SOURCE_LABEL[s] ?? s} ${q} ${l}`.trim();
-                            });
-                            return (
-                              <Tooltip title={evLines.length ? evLines.join(' | ') : '无额外证据'}>
-                                <Space size={2} wrap>
-                                  {items.map((src) => {
-                                    const cnt = counts[src] || 0;
-                                    return (
-                                      <Tag key={src} style={{ marginInlineEnd: 0 }}>
-                                        {SOURCE_LABEL[src] ?? src}
-                                        {cnt > 1 ? ` ×${cnt}` : ''}
-                                      </Tag>
-                                    );
-                                  })}
-                                </Space>
-                              </Tooltip>
-                            );
+                          title: '近3个月会话',
+                          width: 120,
+                          render: (_: unknown, row) => {
+                            const label = activityLabel(row);
+                            return <Tag color={label.color}>{label.text}</Tag>;
                           },
                         },
                         {
-                          title: '判定原因',
-                          dataIndex: 'reasons',
-                          ellipsis: true,
-                          render: (value: string[]) => value.join('；'),
+                          title: '能否发言',
+                          width: 100,
+                          render: (_: unknown, row) => {
+                            const label = speakLabel(row);
+                            return <Tag color={label.color}>{label.text}</Tag>;
+                          },
+                        },
+                        {
+                          title: '入库',
+                          dataIndex: 'status',
+                          width: 90,
+                          render: (value: string) =>
+                            value === 'accepted' ? (
+                              <Tag color="green">已入库</Tag>
+                            ) : value === 'needs_review' ? (
+                              <Tag color="gold">未确认</Tag>
+                            ) : (
+                              <Tag>未达标</Tag>
+                            ),
                         },
                       ]}
                     />
