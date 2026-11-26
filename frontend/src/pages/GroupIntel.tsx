@@ -95,30 +95,6 @@ const SOURCE_LABEL: Record<string, string> = {
   web_candidate: '外部候选',
 };
 
-function extractCandidateLinks(raw: string): string[] {
-  const seen = new Set<string>();
-  const out: string[] = [];
-  const push = (val: string) => {
-    const key = val.toLowerCase();
-    if (!seen.has(key) && out.length < 200) {
-      seen.add(key);
-      out.push(val);
-    }
-  };
-  const inviteRe = /(?:https?:\/\/)?(?:www\.)?t\.me\/(?:\+|joinchat\/)([A-Za-z0-9_-]{8,})/gi;
-  const userRe = /(?:https?:\/\/)?(?:www\.)?t\.me\/(?:s\/)?([A-Za-z][A-Za-z0-9_]{3,31})/gi;
-  const mentionRe = /(?:^|[\s,，;；(（])@([A-Za-z][A-Za-z0-9_]{3,31})/g;
-  for (const m of raw.matchAll(inviteRe)) push(`https://t.me/+${m[1]}`);
-  for (const m of raw.matchAll(userRe)) {
-    const u = m[1].toLowerCase();
-    if (u !== 'joinchat' && u !== 'addstickers' && u !== 'share' && u !== 'proxy') {
-      push(`https://t.me/${m[1]}`);
-    }
-  }
-  for (const m of raw.matchAll(mentionRe)) push(`@${m[1]}`);
-  return out;
-}
-
 export default function GroupIntel() {
   const navigate = useNavigate();
   const [keyword, setKeyword] = useState('');
@@ -154,39 +130,6 @@ export default function GroupIntel() {
   const [preciseKeywords, setPreciseKeywords] = useState('');
   const [preciseCountry, setPreciseCountry] = useState<string | undefined>('TH');
   const [preciseLanguages, setPreciseLanguages] = useState<string[]>(['th', 'en']);
-  const [preciseFullLimit, setPreciseFullLimit] = useState(60);
-  const [preciseContactsSearch, setPreciseContactsSearch] = useState(true);
-  const [preciseContactsLimit, setPreciseContactsLimit] = useState(120);
-  const [preciseGlobalMessages, setPreciseGlobalMessages] = useState(true);
-  const [preciseMessageQueries, setPreciseMessageQueries] = useState(5);
-  const [preciseMessagePages, setPreciseMessagePages] = useState(2);
-  const [preciseShortQueries, setPreciseShortQueries] = useState(true);
-  const [preciseShortLimit, setPreciseShortLimit] = useState(60);
-  const [preciseLinkedGroups, setPreciseLinkedGroups] = useState(true);
-  const [preciseLinkedLimit, setPreciseLinkedLimit] = useState(50);
-  const [preciseRecommendations, setPreciseRecommendations] = useState(true);
-  const [preciseRecommendationLimit, setPreciseRecommendationLimit] = useState(8);
-  const [preciseChannelMessages, setPreciseChannelMessages] = useState(true);
-  const [preciseChannelLimit, setPreciseChannelLimit] = useState(8);
-  const [preciseMessageLimit, setPreciseMessageLimit] = useState(100);
-  const [preciseJoinedGraph, setPreciseJoinedGraph] = useState(true);
-  const [preciseJoinedLimit, setPreciseJoinedLimit] = useState(15);
-  const [preciseEnrichTme, setPreciseEnrichTme] = useState(true);
-  const [preciseTmeLimit, setPreciseTmeLimit] = useState(30);
-  const [preciseExpandScope, setPreciseExpandScope] = useState(false);
-  const [preciseChannelPosts, setPreciseChannelPosts] = useState(false);
-  const [precisePostsLimit, setPrecisePostsLimit] = useState(5);
-  const [preciseAllowPaidPosts, setPreciseAllowPaidPosts] = useState(false);
-  const [precisePostStars, setPrecisePostStars] = useState(20);
-  const [preciseExternalWeb, setPreciseExternalWeb] = useState(false);
-  const [preciseWebCandidateLimit, setPreciseWebCandidateLimit] = useState(30);
-  const [preciseAllowPaidWeb, setPreciseAllowPaidWeb] = useState(false);
-  const [preciseCommonChats, setPreciseCommonChats] = useState(false);
-  const [preciseCommonUserLimit, setPreciseCommonUserLimit] = useState(8);
-  const [preciseRpcBudget, setPreciseRpcBudget] = useState(180);
-  const [preciseAllowDuplicateAccounts, setPreciseAllowDuplicateAccounts] = useState(false);
-  const [preciseAiExpand, setPreciseAiExpand] = useState(false);
-  const [preciseCandidateLinks, setPreciseCandidateLinks] = useState('');
   const [preciseResultTab, setPreciseResultTab] = useState<'verified' | 'pending'>('verified');
   const [preciseTaskId, setPreciseTaskId] = useState<string | null>(null);
   const [preciseBatchId, setPreciseBatchId] = useState<string | null>(null);
@@ -1158,8 +1101,8 @@ export default function GroupIntel() {
 
       <Modal
         open={preciseOpen}
-        width={1040}
-        title="精准找群：多源召回 · 统一核验"
+        width={preciseBatchId || preciseTaskId ? 1040 : 640}
+        title="精准找群"
         okText={preciseBatchId || preciseTaskId ? '重新检索' : '开始检索'}
         cancelText="关闭"
         confirmLoading={preciseBusy}
@@ -1181,12 +1124,11 @@ export default function GroupIntel() {
             toast.warning('至少填一个关键词');
             return;
           }
-          const candidateLinks = extractCandidateLinks(preciseCandidateLinks);
           setPreciseBusy(true);
           try {
             const res = await groupIntelApi.preciseSearch({
               scope: 'all',
-              dispatch: preciseAllowDuplicateAccounts ? 'each' : 'round_robin',
+              dispatch: 'round_robin',
               keywords,
               country: preciseCountry || null,
               languages: preciseLanguages,
@@ -1194,43 +1136,41 @@ export default function GroupIntel() {
               max_queries: 120,
               group_only: true,
               public_only: true,
-              enable_contacts_search: preciseContactsSearch,
-              contacts_query_limit: preciseContactsLimit,
-              include_linked_groups: preciseLinkedGroups,
-              max_linked_chats: preciseLinkedLimit,
+              enable_contacts_search: true,
+              contacts_query_limit: 120,
+              include_linked_groups: true,
+              max_linked_chats: 50,
               exclude_readonly: true,
-              search_messages: preciseGlobalMessages,
-              message_search_queries: preciseMessageQueries,
-              message_search_pages: preciseMessagePages,
-              full_check_limit: preciseFullLimit,
+              search_messages: true,
+              message_search_queries: 5,
+              message_search_pages: 2,
+              full_check_limit: 60,
               simple_screen: true,
-              expand_short_queries: preciseShortQueries,
-              short_query_limit: preciseShortLimit,
-              expand_recommendations: preciseRecommendations,
-              recommendation_channels: preciseRecommendationLimit,
-              expand_channel_messages: preciseChannelMessages,
-              message_channels: preciseChannelLimit,
-              message_limit: preciseMessageLimit,
-              scan_joined_groups: preciseJoinedGraph,
-              joined_group_limit: preciseJoinedLimit,
-              enrich_tme: preciseEnrichTme,
-              tme_limit: preciseTmeLimit,
-              expand_scope_preset: preciseExpandScope,
-              expand_channel_posts: preciseChannelPosts,
-              channel_posts_query_limit: precisePostsLimit,
-              allow_paid_channel_posts: preciseAllowPaidPosts,
-              channel_posts_max_stars: preciseAllowPaidPosts ? precisePostStars : 0,
-              expand_external_web: preciseExternalWeb,
+              expand_short_queries: true,
+              short_query_limit: 60,
+              expand_recommendations: true,
+              recommendation_channels: 8,
+              expand_channel_messages: true,
+              message_channels: 8,
+              message_limit: 100,
+              scan_joined_groups: true,
+              joined_group_limit: 15,
+              enrich_tme: true,
+              tme_limit: 30,
+              expand_channel_posts: true,
+              channel_posts_query_limit: 5,
+              allow_paid_channel_posts: false,
+              channel_posts_max_stars: 0,
+              expand_external_web: true,
               external_web_query_limit: 3,
-              external_web_candidate_limit: preciseWebCandidateLimit,
-              allow_paid_external_search: preciseAllowPaidWeb,
-              expand_common_chats: preciseCommonChats,
-              common_chat_user_limit: preciseCommonUserLimit,
-              rpc_budget: preciseRpcBudget,
+              external_web_candidate_limit: 30,
+              allow_paid_external_search: false,
+              expand_common_chats: true,
+              common_chat_user_limit: 8,
+              rpc_budget: 180,
               verify_activity: true,
               activity_check_limit: 60,
-              ai_expand: preciseAiExpand,
-              candidate_links: candidateLinks,
+              ai_expand: false,
             });
             setPreciseRows([]);
             setPreciseBatch(null);
@@ -1248,17 +1188,10 @@ export default function GroupIntel() {
       >
         {!(preciseBatchId || preciseTaskId) ? (
           <div className="tg-stack" style={{ gap: 'var(--tg-space-md)' }}>
-            <Alert
-              type="info"
-              showIcon
-              message="多源召回 → 统一候选池 → 统一 Telegram 核验"
-              description="当前只保留「近 3 个月有消息 + 可发言」的讨论组；评分门槛、成员数、AI 复核等其他规则暂不参与判定。私群邀请单独进「私群线索」。"
-            />
             <div className="tg-stack" style={{ gap: 2 }}>
               <span>关键词（逗号或换行分隔，最多 20 个）</span>
               <Input.TextArea
-                rows={2}
-                style={{ maxWidth: 620 }}
+                rows={3}
                 placeholder={'Forex Thailand\nกลุ่มเทรด Forex\nCrypto MY'}
                 value={preciseKeywords}
                 onChange={(e) => setPreciseKeywords(e.target.value)}
@@ -1316,317 +1249,7 @@ export default function GroupIntel() {
                   ]}
                 />
               </span>
-              <Tag color="green">筛选规则：近 3 个月有消息 + 可发言（其他规则已隐藏）</Tag>
-              <span>
-                全检上限
-                <InputNumber
-                  min={10}
-                  max={200}
-                  step={10}
-                  value={preciseFullLimit}
-                  onChange={(v) => setPreciseFullLimit(Number(v) || 60)}
-                  style={{ width: 74, marginLeft: 6 }}
-                />
-              </span>
             </Space>
-
-            <Card
-              size="small"
-              title="高级搜索来源与预算控制"
-              extra={
-                <Checkbox
-                  checked={preciseExpandScope}
-                  onChange={(e) => {
-                    const next = e.target.checked;
-                    setPreciseExpandScope(next);
-                    setPreciseChannelPosts(next);
-                    setPreciseExternalWeb(next);
-                    setPreciseCommonChats(next);
-                  }}
-                >
-                  <strong>扩大搜索范围</strong>（开启帖子搜索 + 外部网页 + 共同群）
-                </Checkbox>
-              }
-            >
-              <div className="tg-stack" style={{ gap: 10 }}>
-                <div>
-                  <div className="tg-muted" style={{ marginBottom: 4 }}>
-                    默认 Telegram 原生与图谱来源：
-                  </div>
-                  <Space size={[12, 6]} wrap>
-                    <Checkbox checked={preciseContactsSearch} onChange={(e) => setPreciseContactsSearch(e.target.checked)}>
-                      原生搜索 (contacts_search)
-                    </Checkbox>
-                    <Checkbox checked={preciseGlobalMessages} onChange={(e) => setPreciseGlobalMessages(e.target.checked)}>
-                      全局消息反查 (global_message_search)
-                    </Checkbox>
-                    <Checkbox checked={preciseShortQueries} onChange={(e) => setPreciseShortQueries(e.target.checked)}>
-                      短词召回 (short_query)
-                    </Checkbox>
-                    <Checkbox checked={preciseLinkedGroups} onChange={(e) => setPreciseLinkedGroups(e.target.checked)}>
-                      频道讨论群 (linked_chat)
-                    </Checkbox>
-                    <Checkbox checked={preciseRecommendations} onChange={(e) => setPreciseRecommendations(e.target.checked)}>
-                      相似推荐 (channel_recommendation)
-                    </Checkbox>
-                    <Checkbox checked={preciseChannelMessages} onChange={(e) => setPreciseChannelMessages(e.target.checked)}>
-                      频道外链 (channel_message_link)
-                    </Checkbox>
-                    <Checkbox checked={preciseJoinedGraph} onChange={(e) => setPreciseJoinedGraph(e.target.checked)}>
-                      已入群图谱 (joined_group_graph)
-                    </Checkbox>
-                    <Checkbox checked={preciseEnrichTme} onChange={(e) => setPreciseEnrichTme(e.target.checked)}>
-                      t.me 页面补充 (tme_preview)
-                    </Checkbox>
-                  </Space>
-                </div>
-
-                <div>
-                  <div className="tg-muted" style={{ marginBottom: 4 }}>
-                    扩展补充来源与 AI 增强（按需开启，未配置或受限时自动降级）：
-                  </div>
-                  <Space size={[12, 6]} wrap>
-                    <Checkbox checked={preciseChannelPosts} onChange={(e) => setPreciseChannelPosts(e.target.checked)}>
-                      公开频道帖子搜索 (channel_posts)
-                    </Checkbox>
-                    <Checkbox
-                      checked={preciseAllowPaidPosts}
-                      disabled={!preciseChannelPosts}
-                      onChange={(e) => setPreciseAllowPaidPosts(e.target.checked)}
-                    >
-                      允许帖子搜索用 Stars
-                    </Checkbox>
-                    <Checkbox checked={preciseExternalWeb} onChange={(e) => setPreciseExternalWeb(e.target.checked)}>
-                      外部网页/目录候选 (external_web)
-                    </Checkbox>
-                    <Checkbox
-                      checked={preciseAllowPaidWeb}
-                      disabled={!preciseExternalWeb}
-                      onChange={(e) => setPreciseAllowPaidWeb(e.target.checked)}
-                    >
-                      允许外部付费 API 查询
-                    </Checkbox>
-                    <Checkbox checked={preciseCommonChats} onChange={(e) => setPreciseCommonChats(e.target.checked)}>
-                      已知用户共同群扩展 (common_chat_graph)
-                    </Checkbox>
-                    <Checkbox checked={preciseAiExpand} onChange={(e) => setPreciseAiExpand(e.target.checked)}>
-                      AI 同义扩词
-                    </Checkbox>
-                  </Space>
-                </div>
-
-                <Space size="middle" wrap>
-                  <span>
-                    消息查询词
-                    <InputNumber
-                      min={0}
-                      max={20}
-                      value={preciseMessageQueries}
-                      disabled={!preciseGlobalMessages}
-                      onChange={(v) => setPreciseMessageQueries(v == null ? 5 : Number(v))}
-                      style={{ width: 68, marginLeft: 6 }}
-                    />
-                  </span>
-                  <span>
-                    消息翻页
-                    <InputNumber
-                      min={1}
-                      max={5}
-                      value={preciseMessagePages}
-                      disabled={!preciseGlobalMessages}
-                      onChange={(v) => setPreciseMessagePages(Number(v) || 2)}
-                      style={{ width: 58, marginLeft: 6 }}
-                    />
-                  </span>
-                  <span>
-                    短词上限
-                    <InputNumber
-                      min={0}
-                      max={80}
-                      value={preciseShortLimit}
-                      disabled={!preciseShortQueries}
-                      onChange={(v) => setPreciseShortLimit(v == null ? 60 : Number(v))}
-                      style={{ width: 68, marginLeft: 6 }}
-                    />
-                  </span>
-                  <span>
-                    讨论群上限
-                    <InputNumber
-                      min={0}
-                      max={200}
-                      value={preciseLinkedLimit}
-                      disabled={!preciseLinkedGroups}
-                      onChange={(v) => setPreciseLinkedLimit(v == null ? 50 : Number(v))}
-                      style={{ width: 68, marginLeft: 6 }}
-                    />
-                  </span>
-                  <span>
-                    推荐频道
-                    <InputNumber
-                      min={0}
-                      max={30}
-                      value={preciseRecommendationLimit}
-                      disabled={!preciseRecommendations}
-                      onChange={(v) => setPreciseRecommendationLimit(v == null ? 8 : Number(v))}
-                      style={{ width: 60, marginLeft: 6 }}
-                    />
-                  </span>
-                  <span>
-                    频道源
-                    <InputNumber
-                      min={0}
-                      max={30}
-                      value={preciseChannelLimit}
-                      disabled={!preciseChannelMessages}
-                      onChange={(v) => setPreciseChannelLimit(v == null ? 8 : Number(v))}
-                      style={{ width: 60, marginLeft: 6 }}
-                    />
-                  </span>
-                  <span>
-                    每源消息
-                    <InputNumber
-                      min={20}
-                      max={300}
-                      value={preciseMessageLimit}
-                      disabled={!preciseChannelMessages}
-                      onChange={(v) => setPreciseMessageLimit(v == null ? 100 : Number(v))}
-                      style={{ width: 68, marginLeft: 6 }}
-                    />
-                  </span>
-                  <span>
-                    已入群群数
-                    <InputNumber
-                      min={0}
-                      max={100}
-                      value={preciseJoinedLimit}
-                      disabled={!preciseJoinedGraph}
-                      onChange={(v) => setPreciseJoinedLimit(v == null ? 15 : Number(v))}
-                      style={{ width: 68, marginLeft: 6 }}
-                    />
-                  </span>
-                  <span>
-                    t.me补充
-                    <InputNumber
-                      min={0}
-                      max={100}
-                      value={preciseTmeLimit}
-                      disabled={!preciseEnrichTme}
-                      onChange={(v) => setPreciseTmeLimit(v == null ? 30 : Number(v))}
-                      style={{ width: 68, marginLeft: 6 }}
-                    />
-                  </span>
-                  <span>
-                    单号总 RPC 上限
-                    <InputNumber
-                      min={20}
-                      max={500}
-                      step={20}
-                      value={preciseRpcBudget}
-                      onChange={(v) => setPreciseRpcBudget(Number(v) || 180)}
-                      style={{ width: 76, marginLeft: 6 }}
-                    />
-                  </span>
-                  <span>
-                    原生查询上限
-                    <InputNumber
-                      min={0}
-                      max={300}
-                      step={10}
-                      value={preciseContactsLimit}
-                      onChange={(v) => setPreciseContactsLimit(v == null ? 120 : Number(v))}
-                      style={{ width: 74, marginLeft: 6 }}
-                    />
-                  </span>
-                  <span>
-                    帖子搜索词上限
-                    <InputNumber
-                      min={0}
-                      max={20}
-                      value={precisePostsLimit}
-                      disabled={!preciseChannelPosts}
-                      onChange={(v) => setPrecisePostsLimit(v == null ? 5 : Number(v))}
-                      style={{ width: 68, marginLeft: 6 }}
-                    />
-                  </span>
-                  <span>
-                    帖子 Stars 上限
-                    <InputNumber
-                      min={0}
-                      max={500}
-                      value={precisePostStars}
-                      disabled={!preciseChannelPosts || !preciseAllowPaidPosts}
-                      onChange={(v) => setPrecisePostStars(v == null ? 20 : Number(v))}
-                      style={{ width: 68, marginLeft: 6 }}
-                    />
-                  </span>
-                  <span>
-                    外部候选上限
-                    <InputNumber
-                      min={0}
-                      max={200}
-                      step={10}
-                      value={preciseWebCandidateLimit}
-                      disabled={!preciseExternalWeb}
-                      onChange={(v) => setPreciseWebCandidateLimit(v == null ? 30 : Number(v))}
-                      style={{ width: 74, marginLeft: 6 }}
-                    />
-                  </span>
-                  <span>
-                    共同群用户上限
-                    <InputNumber
-                      min={0}
-                      max={25}
-                      value={preciseCommonUserLimit}
-                      disabled={!preciseCommonChats}
-                      onChange={(v) => setPreciseCommonUserLimit(v == null ? 8 : Number(v))}
-                      style={{ width: 68, marginLeft: 6 }}
-                    />
-                  </span>
-                  <Checkbox
-                    checked={preciseAllowDuplicateAccounts}
-                    onChange={(e) => setPreciseAllowDuplicateAccounts(e.target.checked)}
-                  >
-                    允许多个账号重复全量执行（不分片）
-                  </Checkbox>
-                </Space>
-              </div>
-            </Card>
-
-            <div className="tg-stack" style={{ gap: 4 }}>
-              <Space align="center" style={{ justifyContent: 'space-between', maxWidth: 620 }}>
-                <span>人工候选链接或网页文本（自动抽取 t.me/+邀请码、t.me/xxx 与 @username）</span>
-                <label style={{ cursor: 'pointer', color: 'var(--tg-color-primary, #1677ff)', fontSize: 12 }}>
-                  导入 .txt/.csv 链接文本
-                  <input
-                    type="file"
-                    accept=".txt,.csv,.md"
-                    style={{ display: 'none' }}
-                    onChange={async (e) => {
-                      const file = e.target.files?.[0];
-                      e.target.value = '';
-                      if (!file) return;
-                      const text = await file.text();
-                      const extracted = extractCandidateLinks(text);
-                      if (!extracted.length) {
-                        toast.warning('文件中未识别到 t.me 或 @username 链接');
-                        return;
-                      }
-                      setPreciseCandidateLinks((prev) =>
-                        [prev.trim(), ...extracted].filter(Boolean).join('\n'),
-                      );
-                      toast.success(`已从文件提取 ${extracted.length} 条链接`);
-                    }}
-                  />
-                </label>
-              </Space>
-              <Input.TextArea
-                rows={2}
-                style={{ maxWidth: 620 }}
-                placeholder={'可直接粘贴整段网页或群目录文本，如：\nhttps://t.me/CitytraderEa  https://t.me/+HASH  @ExampleGroup'}
-                value={preciseCandidateLinks}
-                onChange={(e) => setPreciseCandidateLinks(e.target.value)}
-              />
-            </div>
           </div>
         ) : (
           <div className="tg-stack" style={{ gap: 'var(--tg-space-md)' }}>
