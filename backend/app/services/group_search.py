@@ -10,6 +10,7 @@
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from typing import Iterable, Sequence
 
@@ -422,8 +423,24 @@ class SearchQuery:
     lang: str | None = None
 
 
+# 手写清单的序号/项目符号："1. xxx" / "1、xxx" / "- xxx" / "• xxx"。
+# 「1.5」「24/7」这类正文数字不能误伤，所以分隔符后面紧跟数字时不剥。
+_LIST_MARKER = re.compile(r"^\s*(?:\d{1,3}\s*[.)、．:：](?=\s|$|[^\d])\s*|[-*•·]\s+)")
+
+
+def clean_keyword(text: str) -> str:
+    """折叠空白并去掉列表序号。Telegram 搜索按字面匹配，带序号会把结果打成 0。"""
+    value = " ".join(str(text or "").split())
+    for _ in range(3):
+        stripped = _LIST_MARKER.sub("", value, count=1)
+        if stripped == value:
+            break
+        value = stripped
+    return value
+
+
 def _clean(text: str) -> str:
-    return " ".join(str(text or "").split())
+    return clean_keyword(text)
 
 
 def _dedupe_key(text: str) -> str:

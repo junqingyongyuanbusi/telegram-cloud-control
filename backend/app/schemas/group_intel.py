@@ -311,7 +311,7 @@ class PreciseSearchRequest(BulkScopeRequest):
         default=True,
         description="是否追加短核心词兜底召回（仅按用户关键词所属主题扩展）",
     )
-    short_query_limit: int = Field(default=60, ge=0, le=80, description="最多追加多少条短核心词")
+    short_query_limit: int = Field(default=20, ge=0, le=80, description="最多追加多少条短核心词")
     expand_recommendations: bool = Field(
         default=True,
         description="是否从高相关频道拉相似频道推荐并继续展开 linked_chat 讨论组",

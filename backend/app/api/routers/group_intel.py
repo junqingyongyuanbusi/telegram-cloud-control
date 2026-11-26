@@ -1013,7 +1013,9 @@ async def list_profiles(
             or_(GroupProfile.send_permission.is_(None), GroupProfile.send_permission != "restricted")
         )
 
-    total = await session.scalar(select(func.count()).select_from(GroupProfile).where(*conditions))
+    total = await session.scalar(
+        select(func.count(func.distinct(GroupProfile.tg_chat_id))).where(*conditions)
+    )
     order_by = build_order_by(
         sort=sort,
         order=order,
@@ -1023,11 +1025,25 @@ async def list_profiles(
         nulls_last=True,
         tiebreaker=GroupProfile.id,
     )
+    # 唯一键是 (account_id, tg_chat_id)：同一个群被两个号各采一次就有两行。
+    # 列表按群去重，每群挑一行展示（优先带邀请链接、最近采集的），否则同一群会成对出现。
+    per_chat = (
+        select(GroupProfile.id)
+        .where(*conditions)
+        .distinct(GroupProfile.tg_chat_id)
+        .order_by(
+            GroupProfile.tg_chat_id,
+            GroupProfile.invite_link.is_(None),
+            GroupProfile.collected_at.desc().nullslast(),
+            GroupProfile.id,
+        )
+        .subquery()
+    )
     rows = list(
         (
             await session.scalars(
                 select(GroupProfile)
-                .where(*conditions)
+                .where(GroupProfile.id.in_(select(per_chat.c.id)))
                 .order_by(*order_by)
                 .offset((page - 1) * page_size)
                 .limit(page_size)

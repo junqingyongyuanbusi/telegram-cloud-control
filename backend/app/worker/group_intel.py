@@ -68,7 +68,7 @@ from app.services.group_intel import (
     upsert_member,
     upsert_profile,
 )
-from app.services.group_search import SearchQuery, build_short_queries, expand_queries
+from app.services.group_search import SearchQuery, build_short_queries, clean_keyword, expand_queries
 from app.services.local_group_search import search_local_profiles
 from app.worker.entities import resolve_chat_entity, resolve_entity
 from app.worker.campaign_tasks import _invite_hash_of, _username_from_target
@@ -898,7 +898,7 @@ class GroupIntelMixin:
         payload = dict(task.payload or {})
         if str(payload.get("mode") or "") == "precise":
             return await self._search_groups_precise(session, task, account, payload)
-        keywords = [str(item).strip() for item in (payload.get("keywords") or []) if str(item).strip()][:20]
+        keywords = [k for k in (clean_keyword(item) for item in (payload.get("keywords") or [])) if k][:20]
         if not keywords:
             raise TaskFailure("找群任务缺少关键词", retryable=False)
         per_keyword = max(1, min(int(payload.get("limit") or 50), 100))
@@ -1409,7 +1409,7 @@ class GroupIntelMixin:
     ) -> dict:
         """多语言精准检索：AI/规则扩词 → 多源召回（含分片与图扩散） → 优先全检/验活 → 评分与 AI 复核。"""
 
-        keywords = [str(item).strip() for item in (payload.get("keywords") or []) if str(item).strip()][:20]
+        keywords = [k for k in (clean_keyword(item) for item in (payload.get("keywords") or [])) if k][:20]
         if not keywords:
             raise TaskFailure("精准检索缺少关键词", retryable=False)
 
@@ -1442,7 +1442,7 @@ class GroupIntelMixin:
         min_score = payload_int("min_relevance_score", 60, 0, 100)
         expand_short = bool(payload.get("expand_short_queries", True))
         raw_short_limit = payload.get("short_query_limit")
-        short_limit = 0 if raw_short_limit == 0 else payload_int("short_query_limit", 60, 0, 80)
+        short_limit = 0 if raw_short_limit == 0 else payload_int("short_query_limit", 20, 0, 80)
         expand_recommendations = bool(payload.get("expand_recommendations", True))
         recommendation_channels = payload_int("recommendation_channels", 8, 0, 30)
         expand_channel_messages = bool(payload.get("expand_channel_messages", True))
@@ -2701,56 +2701,9 @@ class GroupIntelMixin:
                         candidates[cid]["cached"] = row
                         metrics["full_cached"] += 1
 
-            uncached_ids = [cid for cid in eligible_ids if candidates[cid]["cached"] is None]
-            uncached_ids.sort(
-                key=lambda cid: (
-                    score_group(
-                        title=str(getattr(candidates[cid]["chat"], "title", "") or ""),
-                        username=getattr(candidates[cid]["chat"], "username", None),
-                        keywords=scoring_keywords,
-                        country=country,
-                        languages=languages,
-                        member_count=self._chat_members_of(candidates[cid]["chat"]),
-                        message_hits=candidates[cid]["message_hits"],
-                    ).score,
-                    self._chat_members_of(candidates[cid]["chat"]) or 0,
-                ),
-                reverse=True,
-            )
-            full_targets = uncached_ids[:full_check_limit]
-            if full_targets and not flood_hit and not budget_hit:
-                for index, chat_id in enumerate(full_targets):
-                    if flood_hit or not take_rpc():
-                        break
-                    entry = candidates[chat_id]
-                    try:
-                        entry["full"] = await client(functions.channels.GetFullChannelRequest(channel=entry["chat"]))
-                        metrics["full_checked"] += 1
-                    except BaseException as exc:  # noqa: BLE001
-                        metrics["full_errors"] += 1
-                        if await handle_rpc_exc(exc):
-                            break
-                    if index < len(full_targets) - 1:
-                        await sleep_human(1.0, 2.5, rng)
-
-            if enrich_tme:
-                need_tme = [
-                    cid
-                    for cid in eligible_ids
-                    if candidates[cid]["full"] is None and candidates[cid]["cached"] is None
-                ][:tme_limit]
-                if need_tme:
-                    await self._enrich_candidates_from_tme(candidates, need_tme, metrics=metrics)
-                    for cid in need_tme:
-                        if candidates[cid].get("tme"):
-                            record_source_meta(
-                                candidates[cid],
-                                source=SearchSource.TME_PREVIEW.value,
-                                query="",
-                                keyword=keywords[0],
-                            )
-
-            # 4b) 对高潜力讨论组抽样近期 20 条公开消息，核验真人群活跃度。
+            # 4a) 先验活：是否「近 3 个月有消息」是 simple_screen 的唯一判定依据，
+            # 必须抢在批量 GetFullChannel 之前做——GetFullChannel 最容易吃 FloodWait，
+            # 一旦限流就会把后面的验活整段跳过，结果全部停在「待确认」。
             if verify_activity and activity_check_limit > 0 and eligible_ids and not flood_hit and not budget_hit:
                 pre_ranked: list[tuple[int, int]] = []
                 for cid in eligible_ids:
@@ -2806,6 +2759,55 @@ class GroupIntelMixin:
                         break
                     if idx < min(len(pre_ranked), activity_check_limit) - 1:
                         await sleep_human(0.8, 1.8, rng)
+
+            uncached_ids = [cid for cid in eligible_ids if candidates[cid]["cached"] is None]
+            uncached_ids.sort(
+                key=lambda cid: (
+                    score_group(
+                        title=str(getattr(candidates[cid]["chat"], "title", "") or ""),
+                        username=getattr(candidates[cid]["chat"], "username", None),
+                        keywords=scoring_keywords,
+                        country=country,
+                        languages=languages,
+                        member_count=self._chat_members_of(candidates[cid]["chat"]),
+                        message_hits=candidates[cid]["message_hits"],
+                    ).score,
+                    self._chat_members_of(candidates[cid]["chat"]) or 0,
+                ),
+                reverse=True,
+            )
+            full_targets = uncached_ids[:full_check_limit]
+            if full_targets and not flood_hit and not budget_hit:
+                for index, chat_id in enumerate(full_targets):
+                    if flood_hit or not take_rpc():
+                        break
+                    entry = candidates[chat_id]
+                    try:
+                        entry["full"] = await client(functions.channels.GetFullChannelRequest(channel=entry["chat"]))
+                        metrics["full_checked"] += 1
+                    except BaseException as exc:  # noqa: BLE001
+                        metrics["full_errors"] += 1
+                        if await handle_rpc_exc(exc):
+                            break
+                    if index < len(full_targets) - 1:
+                        await sleep_human(1.0, 2.5, rng)
+
+            if enrich_tme:
+                need_tme = [
+                    cid
+                    for cid in eligible_ids
+                    if candidates[cid]["full"] is None and candidates[cid]["cached"] is None
+                ][:tme_limit]
+                if need_tme:
+                    await self._enrich_candidates_from_tme(candidates, need_tme, metrics=metrics)
+                    for cid in need_tme:
+                        if candidates[cid].get("tme"):
+                            record_source_meta(
+                                candidates[cid],
+                                source=SearchSource.TME_PREVIEW.value,
+                                query="",
+                                keyword=keywords[0],
+                            )
 
             if flood_hit and not candidates and not pending_candidates:
                 raise TaskFailure(
@@ -2990,44 +2992,48 @@ class GroupIntelMixin:
                     match_raw["tme_preview"] = tme_info
 
                 primary_source = str(entry["sources"][0] if entry["sources"] else SearchSource.CONTACTS_SEARCH.value)[:24]
+                # 只有达标的（讨论组 + 近3个月有消息 + 能发言）才进群档案；
+                # 频道、只读、活跃度没验上的只留在检索结果里，否则档案会被整片频道淹没。
+                profile: Optional[GroupProfile] = None
                 try:
                     async with session.begin_nested():
-                        profile = await upsert_profile(
-                            session,
-                            account_id=account.id,
-                            tg_chat_id=chat_id,
-                            source="precise_search",
-                            touch_collected_at=False,
-                            raw={
-                                "precise": True,
-                                "type_reason": type_reason,
-                                "sources": entry["sources"],
-                                "source_counts": dict(entry["source_counts"]),
-                                "verification_tier": verification_tier,
-                                "query": entry["query"],
-                                "keyword": entry["keyword"],
-                                **({"activity": entry["activity"]} if entry.get("activity") else {}),
-                            },
-                            **fields,
-                            language=score.language,
-                            country=score.country,
-                            topic=score.topic,
-                            relevance_score=final_score,
-                            send_permission=flags["send_permission"],
-                            join_request=flags["join_request"],
-                            linked_channel_id=flags["linked_channel_id"],
-                            verification_status=flags["verification_status"],
-                            last_verified_at=_now(),
-                            discovery_sources=entry["sources"],
-                            matched_keywords=score.matched_keywords,
-                        )
+                        if status == "accepted":
+                            profile = await upsert_profile(
+                                session,
+                                account_id=account.id,
+                                tg_chat_id=chat_id,
+                                source="precise_search",
+                                touch_collected_at=False,
+                                raw={
+                                    "precise": True,
+                                    "type_reason": type_reason,
+                                    "sources": entry["sources"],
+                                    "source_counts": dict(entry["source_counts"]),
+                                    "verification_tier": verification_tier,
+                                    "query": entry["query"],
+                                    "keyword": entry["keyword"],
+                                    **({"activity": entry["activity"]} if entry.get("activity") else {}),
+                                },
+                                **fields,
+                                language=score.language,
+                                country=score.country,
+                                topic=score.topic,
+                                relevance_score=final_score,
+                                send_permission=flags["send_permission"],
+                                join_request=flags["join_request"],
+                                linked_channel_id=flags["linked_channel_id"],
+                                verification_status=flags["verification_status"],
+                                last_verified_at=_now(),
+                                discovery_sources=entry["sources"],
+                                matched_keywords=score.matched_keywords,
+                            )
                         await session.execute(
                             pg_insert(GroupSearchMatch)
                             .values(
                                 id=uuid.uuid4(),
                                 task_id=task.id,
                                 account_id=account.id,
-                                profile_id=profile.id,
+                                profile_id=profile.id if profile is not None else None,
                                 tg_chat_id=chat_id,
                                 title=title[:255],
                                 username=username,
@@ -3049,7 +3055,7 @@ class GroupIntelMixin:
                             .on_conflict_do_update(
                                 index_elements=["task_id", "tg_chat_id"],
                                 set_={
-                                    "profile_id": profile.id,
+                                    "profile_id": profile.id if profile is not None else None,
                                     "title": title[:255],
                                     "username": username,
                                     "member_count": int(members) if members is not None else None,
