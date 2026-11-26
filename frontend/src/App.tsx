@@ -32,8 +32,6 @@ const Inbox = lazy(() => import('./pages/Inbox'));
 const Tasks = lazy(() => import('./pages/Tasks'));
 const Campaigns = lazy(() => import('./pages/Campaigns'));
 const GroupIntel = lazy(() => import('./pages/GroupIntel'));
-const Relay = lazy(() => import('./pages/Relay'));
-const Bots = lazy(() => import('./pages/Bots'));
 const Assignments = lazy(() => import('./pages/Assignments'));
 const Audit = lazy(() => import('./pages/Audit'));
 /**
@@ -61,7 +59,7 @@ function FeedbackBridge() {
 /**
  * 路由表（侧栏显示名 → 路径）：
  * 工作台 /、任务中心 /tasks、账号管理 /accounts、账号分组 /groups、账号检测 /detection、
- * 网络 /network、会话 /dialogs、Bot 转发 /relay、Bot 管理 /bots、员工分配 /assignments、
+ * 网络 /network、会话 /dialogs、员工分配 /assignments、
  * 操作记录 /audit；登录 /login。
  */
 function ThemedApp() {
@@ -102,8 +100,6 @@ function ThemedApp() {
                   <Route path="/network" element={<Network />} />
                   <Route path="/dialogs" element={<Dialogs />} />
                   <Route path="/inbox" element={<Inbox />} />
-                  <Route path="/relay" element={<Relay />} />
-                  <Route path="/bots" element={<Bots />} />
                   <Route path="/assignments" element={<Assignments />} />
                   <Route path="/audit" element={<Audit />} />
                   {/* 开发环境专属：共享组件库预览（生产构建不注册） */}

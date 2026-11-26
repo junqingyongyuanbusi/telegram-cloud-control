@@ -46,8 +46,6 @@ const PAGES = [
   { key: 'detection', path: '/detection', file: 'uicore-detection-results-{theme}-1440.png', label: '账号检测' },
   { key: 'groups', path: '/groups', file: 'uicore-groups-{theme}-1440.png', label: '分组管理' },
   { key: 'network', path: '/network', file: 'uicore-network-{theme}-1440.png', label: '网络代理' },
-  { key: 'bots', path: '/bots', file: 'uiops-bots-{theme}.png', label: 'Bot 管理' },
-  { key: 'relay', path: '/relay', file: 'uiops-relay-{theme}.png', label: 'Bot 转发' },
   { key: 'assignments', path: '/assignments', file: 'uiops-assignments-{theme}.png', label: '成员分配' },
   { key: 'audit', path: '/audit', file: 'uiinbox-audit-{theme}.png', label: '操作记录' },
 ];

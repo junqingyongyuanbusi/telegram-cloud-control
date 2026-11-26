@@ -1156,7 +1156,7 @@ export default function Campaigns() {
                         value: item.id,
                         label: `@${item.bot_username || item.name}`,
                       }))}
-                      notFoundContent="还没有配 Bot：先去「Bot 管理」添加 Token"
+                      notFoundContent="还没有配置 Bot"
                     />
                   </Form.Item>
                 ) : null
