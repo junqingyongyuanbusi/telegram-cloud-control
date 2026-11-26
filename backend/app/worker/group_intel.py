@@ -1289,6 +1289,89 @@ class GroupIntelMixin:
             return None
         return count
 
+    async def _verify_activity_batch(
+        self,
+        client: Any,
+        candidates: dict[int, dict[str, Any]],
+        ids: list[int],
+        *,
+        limit: int,
+        keywords: list[str],
+        country: Optional[str],
+        languages: list[str],
+        simple_screen: bool,
+        metrics: dict,
+        handle_rpc_exc: Callable[[BaseException], Awaitable[Any]],
+        take_rpc: Callable[[], bool],
+        flood_hit: Optional[int],
+        budget_hit: bool,
+        rng: Any,
+    ) -> Optional[int]:
+        """对 ids 里还没验过的群抽样近期消息，返回最新的 flood_hit。
+
+        「近 3 个月有没有消息」是简单模式的唯一判定依据，必须优先于任何 GetFullChannel
+        批量（后者最容易吃 FloodWait）。已经验过的群跳过，便于在图扩散前后各调一次。
+        """
+
+        if not ids or limit <= 0 or flood_hit or budget_hit:
+            return flood_hit
+        pre_ranked: list[tuple[int, int]] = []
+        for cid in ids:
+            entry = candidates.get(cid)
+            if entry is None or entry.get("activity") is not None:
+                continue
+            chat = entry["chat"]
+            full = entry.get("full")
+            full_chat = getattr(full, "full_chat", None) if full is not None else None
+            cached = entry.get("cached")
+            tme_info = entry.get("tme") or {}
+            about_pre = (
+                (getattr(full_chat, "about", "") if full_chat is not None else "")
+                or (cached.about if cached is not None else "")
+                or str(tme_info.get("about") or "")
+            )
+            s_pre = score_group(
+                title=str(getattr(chat, "title", "") or ""),
+                about=about_pre,
+                username=getattr(chat, "username", None),
+                keywords=keywords,
+                country=country,
+                languages=languages,
+                member_count=self._chat_members_of(chat, full_chat, tme_info),
+                message_hits=entry["message_hits"],
+                sources=entry["sources"],
+                source_counts=entry["source_counts"],
+                joined=entry["joined"],
+            ).score
+            if simple_screen or s_pre >= 35 or entry["message_hits"] > 0:
+                pre_ranked.append((cid, s_pre))
+        pre_ranked.sort(
+            key=lambda pair: (pair[1], self._chat_members_of(candidates[pair[0]]["chat"]) or 0),
+            reverse=True,
+        )
+        now_utc = _now()
+        for idx, (cid, _) in enumerate(pre_ranked[:limit]):
+            if flood_hit or budget_hit:
+                break
+            entry = candidates[cid]
+            act, samples = await self._sample_group_activity(
+                client,
+                entry["chat"],
+                keywords=keywords,
+                now=now_utc,
+                on_rpc_error=handle_rpc_exc,
+                on_rpc=take_rpc,
+            )
+            if act is not None:
+                entry["activity"] = act
+                entry["samples"] = samples
+                metrics["activity_checked"] += 1
+            if flood_hit:
+                break
+            if idx < min(len(pre_ranked), limit) - 1:
+                await sleep_human(0.8, 1.8, rng)
+        return flood_hit
+
     async def _sample_group_activity(
         self,
         client: Any,
@@ -2475,6 +2558,44 @@ class GroupIntelMixin:
                 reverse=True,
             )
 
+            def _eligible_ids() -> list[int]:
+                """能进入验活/全检的候选：先砍掉硬淘汰项（类型、公开、只读、成员数）。"""
+                ids: list[int] = []
+                for cid, entry in candidates.items():
+                    chat = entry["chat"]
+                    if group_only and not discussion_verdict(chat)[0]:
+                        continue
+                    flags_pre = verification_flags(chat, None)
+                    if public_only and not flags_pre["is_public"]:
+                        continue
+                    if exclude_readonly and flags_pre["readonly"]:
+                        continue
+                    pre_members = self._chat_members_of(chat)
+                    if not simple_screen and min_members and pre_members is not None and pre_members < min_members:
+                        continue
+                    ids.append(cid)
+                return ids
+
+            # 3a) 图扩散之前先验活：这一步之后全是 GetFullChannel 批量，最容易吃 FloodWait，
+            # 一旦限流会把验活整段跳过，所有讨论组只能停在「待确认」。
+            if verify_activity:
+                flood_hit = await self._verify_activity_batch(
+                    client,
+                    candidates,
+                    _eligible_ids(),
+                    limit=activity_check_limit,
+                    keywords=scoring_keywords,
+                    country=country,
+                    languages=languages,
+                    simple_screen=simple_screen,
+                    metrics=metrics,
+                    handle_rpc_exc=handle_rpc_exc,
+                    take_rpc=take_rpc,
+                    flood_hit=flood_hit,
+                    budget_hit=budget_hit,
+                    rng=rng,
+                )
+
             def _on_channel_graph_chat(chat: Any, source_tag: str, seed_id: Optional[int]) -> None:
                 extra = {"seed_chat_id": seed_id} if seed_id else None
                 add_candidate(chat, source=source_tag, query="", keyword=keywords[0], evidence_extra=extra)
@@ -2667,20 +2788,7 @@ class GroupIntelMixin:
                         await sleep_human(1.2, 2.5, rng)
 
             # 4) 优先排序后再调 GetFullChannel（先过滤硬淘汰项、复用 24h 内已完整校验的本地档案）。
-            eligible_ids: list[int] = []
-            for cid, entry in candidates.items():
-                chat = entry["chat"]
-                if group_only and not discussion_verdict(chat)[0]:
-                    continue
-                flags_pre = verification_flags(chat, None)
-                if public_only and not flags_pre["is_public"]:
-                    continue
-                if exclude_readonly and flags_pre["readonly"]:
-                    continue
-                pre_members = self._chat_members_of(chat)
-                if not simple_screen and min_members and pre_members is not None and pre_members < min_members:
-                    continue
-                eligible_ids.append(cid)
+            eligible_ids = _eligible_ids()
 
             if eligible_ids:
                 fresh_cutoff = _now() - timedelta(hours=24)
@@ -2701,64 +2809,24 @@ class GroupIntelMixin:
                         candidates[cid]["cached"] = row
                         metrics["full_cached"] += 1
 
-            # 4a) 先验活：是否「近 3 个月有消息」是 simple_screen 的唯一判定依据，
-            # 必须抢在批量 GetFullChannel 之前做——GetFullChannel 最容易吃 FloodWait，
-            # 一旦限流就会把后面的验活整段跳过，结果全部停在「待确认」。
-            if verify_activity and activity_check_limit > 0 and eligible_ids and not flood_hit and not budget_hit:
-                pre_ranked: list[tuple[int, int]] = []
-                for cid in eligible_ids:
-                    entry = candidates[cid]
-                    chat = entry["chat"]
-                    full = entry.get("full")
-                    full_chat = getattr(full, "full_chat", None) if full is not None else None
-                    cached = entry.get("cached")
-                    tme_info = entry.get("tme") or {}
-                    about_pre = (
-                        (getattr(full_chat, "about", "") if full_chat is not None else "")
-                        or (cached.about if cached is not None else "")
-                        or str(tme_info.get("about") or "")
-                    )
-                    members_pre = self._chat_members_of(chat, full_chat, tme_info)
-                    s_pre = score_group(
-                        title=str(getattr(chat, "title", "") or ""),
-                        about=about_pre,
-                        username=getattr(chat, "username", None),
-                        keywords=scoring_keywords,
-                        country=country,
-                        languages=languages,
-                        member_count=members_pre,
-                        message_hits=entry["message_hits"],
-                        sources=entry["sources"],
-                        source_counts=entry["source_counts"],
-                        joined=entry["joined"],
-                    ).score
-                    if simple_screen or s_pre >= 35 or entry["message_hits"] > 0:
-                        pre_ranked.append((cid, s_pre))
-                pre_ranked.sort(
-                    key=lambda pair: (pair[1], self._chat_members_of(candidates[pair[0]]["chat"]) or 0),
-                    reverse=True,
+            # 4a) 验活：图扩散新增的候选也一起验（已验过的跳过），总次数仍受 activity_check_limit 约束。
+            if verify_activity and metrics["activity_checked"] < activity_check_limit:
+                flood_hit = await self._verify_activity_batch(
+                    client,
+                    candidates,
+                    eligible_ids,
+                    limit=activity_check_limit - metrics["activity_checked"],
+                    keywords=scoring_keywords,
+                    country=country,
+                    languages=languages,
+                    simple_screen=simple_screen,
+                    metrics=metrics,
+                    handle_rpc_exc=handle_rpc_exc,
+                    take_rpc=take_rpc,
+                    flood_hit=flood_hit,
+                    budget_hit=budget_hit,
+                    rng=rng,
                 )
-                now_utc = _now()
-                for idx, (cid, _) in enumerate(pre_ranked[:activity_check_limit]):
-                    if flood_hit or budget_hit:
-                        break
-                    entry = candidates[cid]
-                    act, samples = await self._sample_group_activity(
-                        client,
-                        entry["chat"],
-                        keywords=scoring_keywords,
-                        now=now_utc,
-                        on_rpc_error=handle_rpc_exc,
-                        on_rpc=take_rpc,
-                    )
-                    if act is not None:
-                        entry["activity"] = act
-                        entry["samples"] = samples
-                        metrics["activity_checked"] += 1
-                    if flood_hit:
-                        break
-                    if idx < min(len(pre_ranked), activity_check_limit) - 1:
-                        await sleep_human(0.8, 1.8, rng)
 
             uncached_ids = [cid for cid in eligible_ids if candidates[cid]["cached"] is None]
             uncached_ids.sort(
