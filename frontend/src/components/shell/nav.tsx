@@ -4,7 +4,7 @@
  * 结构约定：
  * - `NavGroup` 是一级分组（总览 / 账号 / 消息 / 运营），分组标题可折叠；
  * - `NavItem` 可以是叶子（有 path，点击跳转），也可以带 `children`（点击只展开子菜单）；
- * - 触达中心是唯一的三级菜单：分组「运营」→ 触达中心 → 素材库 / 批量私信 / … / 批次进度，
+ * - 触达中心是唯一的三级菜单：分组「运营」→ 触达中心 → 素材库 / 群发 / 素材群发 / 加群 / 批次进度，
  *   每个子项是独立路由 `/campaigns/<section>`，页面内不再堆 Tab。
  *
  * 兼容导出：`NAV_ITEMS` 是全部叶子（全局搜索、全局搜索的结果列表用它）。
@@ -13,25 +13,17 @@ import type { ReactNode } from 'react';
 import {
   ApiOutlined,
   AppstoreOutlined,
-  CommentOutlined,
   DashboardOutlined,
-  DeploymentUnitOutlined,
   FileSearchOutlined,
   FolderOutlined,
-  IdcardOutlined,
   RadarChartOutlined,
-  InboxOutlined,
   MailOutlined,
   MergeCellsOutlined,
   MessageOutlined,
-  NotificationOutlined,
   ProfileOutlined,
   RocketOutlined,
-  SafetyCertificateOutlined,
   ScheduleOutlined,
-  SendOutlined,
   TeamOutlined,
-  ThunderboltOutlined,
   UserOutlined,
 } from '@ant-design/icons';
 import type { Tone } from '../../constants';
@@ -56,18 +48,18 @@ export interface NavGroup {
   items: NavItem[];
 }
 
-/** 触达中心的 11 个子页面（三级菜单，独立路由） */
+/** 触达中心当前开放的 3 个子页面（三级菜单，独立路由）
+ *  「加群群发」合并了原来的 群发 / 素材群发 / 加群：一个号一条任务，逐群加群并当场发内容。
+ *  批量私信 / 退群 / 强拉进群 / 批量改资料 / 吵群 / 拟人发言 与旧的三个入口已下线：
+ *  这里不列、Campaigns 页的 sections 也不渲染，旧地址会重定向到素材库。 */
 export const CAMPAIGN_CHILDREN: NavItem[] = [
   { path: '/campaigns/materials', label: '素材库', icon: <FolderOutlined />, description: '文字与媒体素材，批量动作共用' },
-  { path: '/campaigns/bulk-pm', label: '批量私信', icon: <SendOutlined />, description: '一批号各向目标逐个发消息' },
-  { path: '/campaigns/broadcast', label: '群发', icon: <NotificationOutlined />, description: '一批号各向指定群发一条' },
-  { path: '/campaigns/material-send', label: '素材群发', icon: <InboxOutlined />, description: '按素材库内容发给群或私信目标' },
-  { path: '/campaigns/join', label: '加群', icon: <MergeCellsOutlined />, description: '邀请链接或公开群，一批号一起进' },
-  { path: '/campaigns/leave', label: '退群', icon: <DeploymentUnitOutlined />, description: '一批号退出同一个群' },
-  { path: '/campaigns/force-add', label: '强拉进群', icon: <TeamOutlined />, description: '管理员把成员拉进群' },
-  { path: '/campaigns/profile', label: '批量改资料', icon: <IdcardOutlined />, description: '统一改名 / 简介 / 用户名 / 头像' },
-  { path: '/campaigns/storm', label: '吵群', icon: <ThunderboltOutlined />, description: '文本池 + 随机间隔连续发言' },
-  { path: '/campaigns/persona', label: '拟人发言', icon: <CommentOutlined />, description: 'AI 按人设生成话术连续发言' },
+  {
+    path: '/campaigns/join-send',
+    label: '加群群发',
+    icon: <MergeCellsOutlined />,
+    description: '逐群「加群 → 过验证 → 发内容」，一个号一条任务',
+  },
   { path: '/campaigns/batches', label: '批次进度', icon: <ProfileOutlined />, description: '按批次查进度、取消未完成任务' },
 ];
 
@@ -97,12 +89,6 @@ export const NAV_GROUPS: NavGroup[] = [
         badgeTone: 'danger',
       },
       { path: '/groups', label: '账号分组', icon: <AppstoreOutlined />, description: '自定义标签，用来把号分给同事' },
-      {
-        path: '/detection',
-        label: '账号检测',
-        icon: <SafetyCertificateOutlined />,
-        description: '连得上、要验证码、会话失效',
-      },
       { path: '/network', label: '网络', icon: <ApiOutlined />, description: '账号出站地址（代理）' },
     ],
   },

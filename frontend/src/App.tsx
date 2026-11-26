@@ -25,7 +25,6 @@ const Login = lazy(() => import('./pages/Login'));
 const Dashboard = lazy(() => import('./pages/Dashboard'));
 const Accounts = lazy(() => import('./pages/Accounts'));
 const Groups = lazy(() => import('./pages/Groups'));
-const Detection = lazy(() => import('./pages/Detection'));
 const Network = lazy(() => import('./pages/Network'));
 const Dialogs = lazy(() => import('./pages/Dialogs'));
 const Inbox = lazy(() => import('./pages/Inbox'));
@@ -58,7 +57,7 @@ function FeedbackBridge() {
 
 /**
  * 路由表（侧栏显示名 → 路径）：
- * 工作台 /、任务中心 /tasks、账号管理 /accounts、账号分组 /groups、账号检测 /detection、
+ * 工作台 /、任务中心 /tasks、账号管理 /accounts、账号分组 /groups、
  * 网络 /network、会话 /dialogs、员工分配 /assignments、
  * 操作记录 /audit；登录 /login。
  */
@@ -96,7 +95,6 @@ function ThemedApp() {
                   <Route path="/group-intel" element={<GroupIntel />} />
                   <Route path="/accounts" element={<Accounts />} />
                   <Route path="/groups" element={<Groups />} />
-                  <Route path="/detection" element={<Detection />} />
                   <Route path="/network" element={<Network />} />
                   <Route path="/dialogs" element={<Dialogs />} />
                   <Route path="/inbox" element={<Inbox />} />

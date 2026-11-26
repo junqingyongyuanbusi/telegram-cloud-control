@@ -13,7 +13,6 @@ import {
   ReloadOutlined,
   LoginOutlined,
   RiseOutlined,
-  SafetyCertificateOutlined,
   ScheduleOutlined,
   SendOutlined,
   ThunderboltOutlined,
@@ -52,10 +51,9 @@ function deltaOf(points: { v: number }[]): number | null {
 
 const QUICK_LINKS: { path: string; label: string; desc: string; icon: ReactNode; tone: Tone }[] = [
   { path: '/accounts', label: '账号管理', desc: '状态、分组、心跳', icon: <UserOutlined />, tone: 'primary' },
-  { path: '/detection', label: '账号检测', desc: '连得上 / 要验证码 / 失效', icon: <SafetyCertificateOutlined />, tone: 'success' },
   { path: '/network', label: '网络', desc: '代理与出站地址', icon: <GlobalOutlined />, tone: 'info' },
   { path: '/tasks', label: '任务中心', desc: '队列进度与失败重试', icon: <ScheduleOutlined />, tone: 'warning' },
-  { path: '/campaigns', label: '触达中心', desc: '批量私信 / 群发 / 加退群', icon: <SendOutlined />, tone: 'danger' },
+  { path: '/campaigns', label: '触达中心', desc: '素材 / 加群群发', icon: <SendOutlined />, tone: 'danger' },
   { path: '/dialogs', label: '会话', desc: '私信与群聊', icon: <MessageOutlined />, tone: 'primary' },
 ];
 
@@ -266,7 +264,7 @@ export default function Dashboard() {
           showIcon
           icon={<LoginOutlined />}
           message="还没有接入任何 Telegram 账号"
-          description="账号是整套系统的起点：先用一个自己的号通过验证码登录，系统才能同步会话、接收消息并按你的指令发送。登录后建议顺手做一次「账号检测」确认号在线。"
+          description="账号是整套系统的起点：先用一个自己的号通过验证码登录，系统才能同步会话、接收消息并按你的指令发送。登录后建议顺手在账号管理页做一次「检测」确认号在线。"
           action={
             <Space direction={isCompact ? 'vertical' : 'horizontal'}>
               <Button type="primary" onClick={() => navigate('/accounts')}>
