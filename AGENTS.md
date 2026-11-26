@@ -2,34 +2,12 @@
 
 > 文档索引：[docs/README.md](docs/README.md) · 相邻：贡献指南 [docs/CONTRIBUTING.md](docs/CONTRIBUTING.md) · 快速开始 [docs/GETTING_STARTED.md](docs/GETTING_STARTED.md)
 
-## Git：本项目只对接 cafinxnull 这一个仓库
+## Git：本项目只对接 junqingyongyuanbusi 这一个仓库
 
-- `origin` → `https://github.com/cafinxnull/telegram-cloud-control`（private，`main`）
-- 这是**本项目专属**远程。不要为它新增、切换或迁移任何其他 remote。
-- 凭据按仓库隔离：本仓库局部配置 `credential.https://github.com.username=cafinxnull`，
-  macOS keychain 中 `acct=cafinxnull` 条目只服务本项目，push 无需再认证。
-  该条目与 `acct=DuanNaiSheQu` 并存，互不覆盖。
-
-## 硬约束：不得影响其他项目
-
-**其他项目继续保存在 `DuanNaiSheQu`（以及 Gitee）名下，这是预期状态，不得改动。**
-只有本项目走 `cafinxnull`。本机各仓库归属：
-
-| 目录 | 远程归属 |
-| --- | --- |
-| `~/telegram云控`（本项目） | `cafinxnull` → `telegram-cloud-control` |
-| `~/cafinxesim` | `DuanNaiSheQu` → `cafinxesim` |
-| `~/DeepSeek-CTFCode` | `China-MY` → `DeepSeek-CTFCode` |
-| `~/soua` | Gitee `HBAI-Ltd` → `Toonflow-app` |
-
-1. 不改 `gh` 的全局登录状态（active 账号保持 `DuanNaiSheQu`），不执行
-   `gh auth login / logout / switch` 这类会波及全局的操作。
-2. 不触碰 `DuanNaiSheQu` 名下的任何仓库（`cafinxesim`、`claude-*`、`Telegram-bot` 等）：
-   不改名、不转移、不删除、不推送。
-3. 凭据相关配置只允许写 `--local`（仅本仓库生效），**绝不**写 `--global`；
-   不得覆盖或删除 keychain 里 `acct=DuanNaiSheQu` 的条目。
-4. 提交只包含明确要提交的文件；工作区与暂存区里他人的改动保持原样，不代为 commit。
-   提交时用 `git commit -- <路径>` 限定范围，避免把别人 staged 的文件卷进来。
+- `origin` → `https://github.com/junqingyongyuanbusi/telegram-cloud-control`（private，`main`）
+- 本项目的提交和推送只允许使用这个远程，不新增或切换其他 remote。
+- 凭据配置只写本仓库的 `--local` 配置，不修改全局 GitHub 登录状态或其他项目。
+- 提交只包含明确指定的文件，工作区中的其他改动保持原样。
 
 ## 本地运行（不用 Docker）
 
@@ -40,11 +18,11 @@
 - API：<http://127.0.0.1:8000>；健康检查是 `/health` 与 `/ready`，**没有** `/api` 前缀
 - 进程 pid 写在 `run/{api,worker,web}.pid`，日志在 `run/*.log`
 - `backend/.env` 中 `TELEGRAM_API_ID=0`、`TELEGRAM_API_HASH` 为空时，worker 只认领租约
-  与发心跳、不建立 Telegram 连接，属预期行为（账号不会显示在线）
+与发心跳、不建立 Telegram 连接，属预期行为（账号不会显示在线）
 
 ## 本地栈排障要点
 
 - `run/*.pid` 可能因进程被外部重启而失效，`make stack-down` 前先 `make stack-status`
-  核对真实 pid；进程真实归属以 `lsof -nP -iTCP:<port> -sTCP:LISTEN` 为准。
+核对真实 pid；进程真实归属以 `lsof -nP -iTCP:<port> -sTCP:LISTEN` 为准。
 - 同时跑多个 worker 副本会互抢账号租约，日志刷 `已放开该号 / 租约已不属于本进程`；
-  本地只应保留一个 api + 一个 worker。
+本地只应保留一个 api + 一个 worker。

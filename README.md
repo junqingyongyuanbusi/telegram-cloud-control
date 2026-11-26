@@ -1,121 +1,24 @@
-<div align="center">
 
-<img src="docs/assets/logo.png" width="132" alt="TGcloud">
 
-<h1>wikifxtg云控</h1>
+# wikifxtg云控
 
-<p><b>面向自有账号与官方 Bot 的 Telegram 运维控制台</b><br>
-在线状态 · 会话收件箱 · 任务队列 · Bot 转发 · 全链路审计</p>
+**面向自有账号与官方 Bot 的 Telegram 运维控制台**  
+在线状态 · 会话收件箱 · 任务队列 · Bot 转发 · 全链路审计
 
-<!-- 徽章说明：仓库为 private 时 shields.io 的 github/* 徽章会显示 not found，
-     改成 public 后自动恢复；其余静态徽章不受影响。 -->
-<p>
-  <a href="#许可证"><img src="https://img.shields.io/badge/license-MIT-green.svg" alt="License"></a>
-  <a href="https://github.com/DuanNaiSheQu/telegram-cloud-control/releases"><img src="https://img.shields.io/badge/version-0.5.4-2AABEE.svg" alt="Version"></a>
-  <a href="https://github.com/DuanNaiSheQu/telegram-cloud-control/releases"><img src="https://img.shields.io/badge/changelog-%E6%9B%B4%E6%96%B0%E8%AE%B0%E5%BD%95-blue.svg" alt="Changelog"></a>
-  <a href="https://t.me/TGCloudcontrol"><img src="https://img.shields.io/badge/Telegram-%E4%BA%A4%E6%B5%81%E7%BE%A4-2AABEE?logo=telegram&logoColor=white" alt="Telegram 交流群"></a>
-  <a href="https://github.com/sponsors/DuanNaiSheQu"><img src="https://img.shields.io/badge/Sponsor-%E8%B5%9E%E5%8A%A9-EA4AAA?logo=githubsponsors&logoColor=white" alt="赞助"></a>
 
-</p>
 
-<p>
-  <img src="https://img.shields.io/badge/python-3.12-3776AB?logo=python&logoColor=white" alt="Python">
-  <img src="https://img.shields.io/badge/node-%E2%89%A520-339933?logo=nodedotjs&logoColor=white" alt="Node">
-  <img src="https://img.shields.io/badge/postgresql-16-4169E1?logo=postgresql&logoColor=white" alt="PostgreSQL">
-  <img src="https://img.shields.io/badge/redis-7-DC382D?logo=redis&logoColor=white" alt="Redis">
-  <img src="https://img.shields.io/badge/docker%20compose-v2-2496ED?logo=docker&logoColor=white" alt="Docker Compose">
-  <img src="https://img.shields.io/badge/telegram-MTProto%20%2B%20Bot%20API-26A5E4?logo=telegram&logoColor=white" alt="Telegram">
-  <img src="https://img.shields.io/badge/status-可用-3FB950" alt="Status">
-</p>
-
-<p>
-</p>
-
-<p>
-  <a href="#功能特性">功能</a> ·
-  <a href="#界面预览">截图</a> ·
-  <a href="#快速开始">快速开始</a> ·
-  <a href="#部署与运维">部署</a> ·
-  <a href="#开发与测试">开发</a> ·
-  <a href="#支持这个项目">赞助</a> · <a href="https://t.me/TGCloudcontrol">交流群</a>
-</p>
+![Python](https://img.shields.io/badge/python-3.12-3776AB?logo=python&logoColor=white)![Node](https://img.shields.io/badge/node-%E2%89%A520-339933?logo=nodedotjs&logoColor=white)![PostgreSQL](https://img.shields.io/badge/postgresql-16-4169E1?logo=postgresql&logoColor=white)![Redis](https://img.shields.io/badge/redis-7-DC382D?logo=redis&logoColor=white)![Docker Compose](https://img.shields.io/badge/docker%20compose-v2-2496ED?logo=docker&logoColor=white)![Telegram](https://img.shields.io/badge/telegram-MTProto%20%2B%20Bot%20API-26A5E4?logo=telegram&logoColor=white)![Status](https://img.shields.io/badge/status-可用-3FB950)
 
 ---
 
-<div align="center">
-
-### 赞助商
-
-<table>
-  <tr>
-    <td align="center" width="50%">
-      <a href="https://cafinx.com"><img src="docs/assets/sponsor/cafinx.png" width="178" alt="CAFINX 虚拟卡"></a><br>
-      <b><a href="https://cafinx.com">CAFINX 虚拟卡</a></b><br>
-      <sub>跨境收付虚拟卡 · cafinx.com</sub>
-    </td>
-    <td align="center" width="50%">
-      <a href="https://cafinxsim.com"><img src="docs/assets/sponsor/cafinxsim.png" width="200" alt="CAFINXSIM"></a><br>
-      <b><a href="https://cafinxsim.com">CAFINXSIM</a></b><br>
-      <sub>全球 eSIM 流量卡 · cafinxsim.com</sub>
-    </td>
-  </tr>
-</table>
-
-</div>
-
----
-
-<div align="center">
-
-### 支持这个项目
-
-<a href="https://github.com/sponsors/DuanNaiSheQu"><img src="https://img.shields.io/badge/Sponsor-%E8%B5%9E%E5%8A%A9-EA4AAA?logo=githubsponsors&logoColor=white" alt="Sponsor"></a>
-<a href="https://t.me/TGCloudcontrol"><img src="https://img.shields.io/badge/Telegram-%E4%BA%A4%E6%B5%81%E7%BE%A4-2AABEE?logo=telegram&logoColor=white" alt="Telegram 交流群"></a>
-
-**USDT（TRC20）**：`TYozr2b8tV4fikCuQYYvaHRCW555555555`　⚠️ 必须走 TRC20 网络
-
-如果这套系统帮你省下了时间，欢迎赞助支持持续维护 —— **赞助者的需求优先处理**。
-
-</div>
-
----
 ### 核心能力
 
-<table>
-  <tr>
-    <td width="33%" valign="top">
-      <h4>账号矩阵</h4>
-      <sub>四种格式批量导入（手机号 / Session 串 / .session / tdata）、深度验活与健康分、<br>
-      每号独立设备指纹、节流防封与养号阶梯</sub><br>
-    </td>
-    <td width="33%" valign="top">
-      <h4>群情报采集</h4>
-      <sub>入群即采、不发言不回应；粘贴群链接自动采群员，<br>
-      进度逐条可见，采完一键打包（群总表 + 成员 + 事件）</sub><br>
-    </td>
-    <td width="33%" valign="top">
-      <h4>批量运营</h4>
-      <sub>私信 / 群发 / 素材群发 / 加群 / 退群 / 强拉 / 改资料 / 吵群 / 拟人发言，<br>
-      按批次跟踪进度、可取消、可打包导出</sub><br>
-    </td>
-  </tr>
-  <tr>
-    <td valign="top">
-      <h4>会话收件箱</h4>
-      <sub>群聊、私信、Bot 私信统一入口，WebSocket 实时推送，AI 草稿人工确认后发送</sub><br>
-    </td>
-    <td valign="top">
-      <h4>任务队列与租约</h4>
-      <sub>一个号同时只被一个 Worker 使用；被节流拦下的任务顺延而不是硬发</sub><br>
-    </td>
-    <td valign="top">
-      <h4>审计与权限</h4>
-      <sub>谁在什么时间对哪个号做了什么全部留痕；操作员只能看到分配给自己的账号</sub><br>
-    </td>
-  </tr>
-</table>
+|                                                                                |                                                            |                                                                         |
+| ------------------------------------------------------------------------------ | ---------------------------------------------------------- | ----------------------------------------------------------------------- |
+| 账号矩阵四种格式批量导入（手机号 / Session 串 / .session / tdata）、深度验活与健康分、 每号独立设备指纹、节流防封与养号阶梯 | 群情报采集入群即采、不发言不回应；粘贴群链接自动采群员， 进度逐条可见，采完一键打包（群总表 + 成员 + 事件） | 批量运营私信 / 群发 / 素材群发 / 加群 / 退群 / 强拉 / 改资料 / 吵群 / 拟人发言， 按批次跟踪进度、可取消、可打包导出 |
+| 会话收件箱群聊、私信、Bot 私信统一入口，WebSocket 实时推送，AI 草稿人工确认后发送                             | 任务队列与租约一个号同时只被一个 Worker 使用；被节流拦下的任务顺延而不是硬发                | 审计与权限谁在什么时间对哪个号做了什么全部留痕；操作员只能看到分配给自己的账号                                |
 
-</div>
+
 
 ---
 
@@ -175,7 +78,7 @@
 
 - 队列就是 `tasks` 表：`FOR UPDATE SKIP LOCKED` 领取，失败按指数退避重试，超过上限记 `failed`，页面可手工重试或取消。
 - **批量重试有类型白名单**：同步会话、拉历史、账号检测、改自己资料、转发到员工群可以批量重试；
-  单条发送、登录类、Bot 自动回复、回复送回**不允许批量重试**（等于批量发出/批量登录），只能在详情里单条重试。
+单条发送、登录类、Bot 自动回复、回复送回**不允许批量重试**（等于批量发出/批量登录），只能在详情里单条重试。
 - 状态汇总含 `overdue`（到期未执行）与 `stuck`（执行中卡住），失败原因完整展示，详情抽屉带时间线与 payload/result。
 
 ### Bot 与转发
@@ -218,14 +121,14 @@
 ### v0.3.0 — 账号矩阵成熟化（2026-09-29）
 
 - **多格式账号导入**：手机号清单 / StringSession 串 / `.session` 文件 / tdata 目录 zip，
-  先预览再落库，去重按确定性哈希（修掉了「重复号码识别不出来」的老问题），每号独立设备指纹。
+先预览再落库，去重按确定性哈希（修掉了「重复号码识别不出来」的老问题），每号独立设备指纹。
 - **深度验活**：读权限 + 授权会话数 + 可选写探测，复算 0-100 健康分；批量节流旋钮（额度 / 间隔 / 解熔断）。
 - **防封四道闸门**：FloodWait 熔断、活跃时段、动作最小间隔、每日配额；养号阶梯 20 → 200 条/天随号龄放量。
 - **群情报（入群即采）**：入群/退群事件静默入库，群档案与成员名单按需只读采集；
-  支持**粘贴群链接自动采群员**（`t.me/+hash`、`@username` 都行，可选自动加入、采完退出），
-  进度逐条可见（解析 → 加入 → 采集中 N/M → 完成），采完可**一键打包**（zip：群总表 + 每群成员 + 事件 + 清单）。
+支持**粘贴群链接自动采群员**（`t.me/+hash`、`@username` 都行，可选自动加入、采完退出），
+进度逐条可见（解析 → 加入 → 采集中 N/M → 完成），采完可**一键打包**（zip：群总表 + 每群成员 + 事件 + 清单）。
 - **官方机制养号**：身份取自官方真实发布版本表；读服务端下发的 `help.GetAppConfig` 限制参数驱动节流
-  （只收紧不放松）；`warmup_activity` 按官方客户端节奏上线/翻会话/下线，不发消息、不加群。
+（只收紧不放松）；`warmup_activity` 按官方客户端节奏上线/翻会话/下线，不发消息、不加群。
 - **修复**：`localStorage` 残缺结构导致的整页白屏；失败原因红字撑破列宽遮挡其它列。
 
 ## 界面预览
@@ -233,50 +136,15 @@
 > 深色 / 浅色双主题；下图均为 1440×900 真实截图（2x 缩放），完整截图在 [`frontend/screenshots/`](frontend/screenshots/)。
 > 截图可随时重生成：`cd frontend && npm run screenshots`（深色）或 `npm run screenshots -- --theme light`（浅色）。
 
-<table>
-  <tr>
-    <td width="50%"><b>工作台</b>：在线/异常/失败任务、在线趋势、Worker 心跳、队列积压、通知流<br>
-      <img src="frontend/screenshots/uicore-dashboard-dark-1440.png?v=2" alt="工作台"></td>
-    <td width="50%"><b>会话收件箱</b>：会话列表 + 消息流 + AI 草稿 + 实时推送<br>
-      <img src="frontend/screenshots/uiinbox-dialogs-chat-dark.png?v=2" alt="会话收件箱"></td>
-  </tr>
-  <tr>
-    <td><b>账号管理</b>：全列 + 全量筛选 + 批量操作 + 详情抽屉<br>
-      <img src="frontend/screenshots/uicore-accounts-dark-1440.png?v=2" alt="账号管理"></td>
-    <td><b>任务中心</b>：状态汇总、失败原因、批量重试、详情时间线<br>
-      <img src="frontend/screenshots/uiinbox-tasks-dark.png?v=2" alt="任务中心"></td>
-  </tr>
-  <tr>
-    <td><b>Bot 转发</b>：规则 + 已转发记录 + 测试消息<br>
-      <img src="frontend/screenshots/uiops-relay-dark.png?v=2" alt="Bot 转发"></td>
-    <td><b>Bot 管理</b>：Token 掩码、Webhook 状态、自动回复资料<br>
-      <img src="frontend/screenshots/uiops-bots-dark.png?v=2" alt="Bot 管理"></td>
-  </tr>
-  <tr>
-    <td><b>账号检测</b>：勾选/全部/按分组检测，结果写回<br>
-      <img src="frontend/screenshots/uicore-detection-results-dark-1440.png?v=2" alt="账号检测"></td>
-    <td><b>成员分配</b>：成员、角色、账号选择器与归属反查<br>
-      <img src="frontend/screenshots/uiops-assignments-dark.png?v=2" alt="成员分配"></td>
-  </tr>
-  <tr>
-    <td><b>触达中心</b>：批量私信 / 群发 / 素材群发 / 加群退群 / 强拉 / 改资料 / 吵群 / 拟人<br>
-      <img src="frontend/screenshots/uicore-campaigns-dark-1440.png?v=2" alt="触达中心"></td>
-    <td><b>群情报</b>：入群即采、按链接采集群员、逐条进度与一键打包<br>
-      <img src="frontend/screenshots/uicore-group-intel-dark-1440.png?v=2" alt="群情报"></td>
-  </tr>
-  <tr>
-    <td><b>操作记录</b>：谁在什么时间对哪个号做了什么<br>
-      <img src="frontend/screenshots/uiinbox-audit-dark.png?v=2" alt="操作记录"></td>
-    <td><b>浅色主题</b>：同一套 token 换皮<br>
-      <img src="frontend/screenshots/02-shell-light-1440.png?v=2" alt="浅色主题"></td>
-  </tr>
-  <tr>
-    <td><b>登录页</b>：品牌叙事 + 环境标识 + 记住用户名<br>
-      <img src="frontend/screenshots/uiops-login-dark.png?v=2" alt="登录页"></td>
-    <td><b>账号管理（浅色）</b>：深浅双主题同一套组件<br>
-      <img src="frontend/screenshots/uicore-accounts-light-1440.png?v=2" alt="账号管理浅色"></td>
-  </tr>
-</table>
+|                                                                                                                        |                                                                                                      |
+| ---------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------- |
+| **工作台**：在线/异常/失败任务、在线趋势、Worker 心跳、队列积压、通知流 ![工作台](frontend/screenshots/uicore-dashboard-dark-1440.png?v=2)             | **会话收件箱**：会话列表 + 消息流 + AI 草稿 + 实时推送 ![会话收件箱](frontend/screenshots/uiinbox-dialogs-chat-dark.png?v=2) |
+| **账号管理**：全列 + 全量筛选 + 批量操作 + 详情抽屉 ![账号管理](frontend/screenshots/uicore-accounts-dark-1440.png?v=2)                       | **任务中心**：状态汇总、失败原因、批量重试、详情时间线 ![任务中心](frontend/screenshots/uiinbox-tasks-dark.png?v=2)               |
+| **Bot 转发**：规则 + 已转发记录 + 测试消息 ![Bot 转发](frontend/screenshots/uiops-relay-dark.png?v=2)                                  | **Bot 管理**：Token 掩码、Webhook 状态、自动回复资料 ![Bot 管理](frontend/screenshots/uiops-bots-dark.png?v=2)        |
+| **账号检测**：勾选/全部/按分组检测，结果写回 ![账号检测](frontend/screenshots/uicore-detection-results-dark-1440.png?v=2)                     | **成员分配**：成员、角色、账号选择器与归属反查 ![成员分配](frontend/screenshots/uiops-assignments-dark.png?v=2)               |
+| **触达中心**：批量私信 / 群发 / 素材群发 / 加群退群 / 强拉 / 改资料 / 吵群 / 拟人 ![触达中心](frontend/screenshots/uicore-campaigns-dark-1440.png?v=2) | **群情报**：入群即采、按链接采集群员、逐条进度与一键打包 ![群情报](frontend/screenshots/uicore-group-intel-dark-1440.png?v=2)     |
+| **操作记录**：谁在什么时间对哪个号做了什么 ![操作记录](frontend/screenshots/uiinbox-audit-dark.png?v=2)                                       | **浅色主题**：同一套 token 换皮 ![浅色主题](frontend/screenshots/02-shell-light-1440.png?v=2)                      |
+| **登录页**：品牌叙事 + 环境标识 + 记住用户名 ![登录页](frontend/screenshots/uiops-login-dark.png?v=2)                                      | **账号管理（浅色）**：深浅双主题同一套组件 ![账号管理浅色](frontend/screenshots/uicore-accounts-light-1440.png?v=2)           |
 
 ## 技术栈
 
@@ -422,12 +290,15 @@ API 直连端口：<http://localhost:8000>。
 2. **账号分组**（可选）：先建一个分组，方便把号分给同事。
 3. **网络**（可选）：这个号固定的出站代理先建好（用户名/密码加密保存，页面只显示有没有）。
 4. **账号管理 → 登录**：填手机号（可带分组和代理）→ 发验证码；输入收到的验证码；
+
    如果这个号开了两步验证，再输一次密码。全部通过后会话串加密写入 `tg_accounts.session_enc`，状态变 `正常`。
 5. **账号检测**：点「检测」立刻续一次租约并读一次状态，结果写回该行（连得上 / 要验证码 / 会话失效）。
 6. **同步会话**：在账号管理里点「同步会话」→ 写一条任务 → 持有该号租约的 Worker 拉出已加入的群聊和私信。
 7. **会话页**：选一个会话就能看到历史消息；发送时用户号方向走「等待确认发送」——
+
    写一条 `pending` 的消息和任务，Worker 发出后回填 Telegram 消息 ID、状态变 `已发送`。
 8. **Bot 转发**：BotFather 拿 Token → 「Bot 管理」页新增（会调 `getMe` 校验并注册 Webhook）→
+
    「Bot 转发」页配好「用哪个 Bot、转发到哪个员工群」→ 之后新消息会自动转发，员工在群里回复那条转发即送回原会话。
 
 常见卡点：Webhook 注册失败基本都是 `PUBLIC_BASE_URL` 不是公网可达地址；验证码登录失败先看 Worker 日志里
@@ -523,9 +394,9 @@ cd frontend && npm ci && npm run dev
 ### 备份与恢复
 
 - 每天 03:10 `pg_dump -Fc` 逻辑备份（保留 7 份）；每周日 03:40 `pg_basebackup` 基础备份（保留 4 份）；
-  Postgres 全程 `archive_mode=on`，WAL 归档在 `pg_wal_archive` 卷。
+Postgres 全程 `archive_mode=on`，WAL 归档在 `pg_wal_archive` 卷。
 - **按时间点恢复（PITR）= 基础备份 + WAL 归档**，两者缺一不可，都要一起离线保存。
-  完整步骤（含临时实例验证、权限与坑）见备份文档，摘要：
+完整步骤（含临时实例验证、权限与坑）见备份文档，摘要：
 
 ```bash
 # 日常误删：逻辑恢复（最快，先停写入）
@@ -554,25 +425,27 @@ docker run --rm --name tgcc-restore -e PGDATA=/var/lib/postgresql/data/pgdata \
 ```
 
 - 恢复后只要 `.env` 里的 `SESSION_ENCRYPTION_KEY` 没变，库里加密的会话与 Bot Token 仍可解密，号不用重登；
-  **换过密钥就必须重新登录所有号**。
+**换过密钥就必须重新登录所有号**。
 - 建议每季度按备份文档第 6 节演练一次。
 
 ### 发布顺序
 
 1. 需要改表就先跑迁移：`make migrate`（向后兼容的迁移才允许先上线）。
 2. **先滚 Worker**：`docker compose up -d --no-deps --build worker`；
+
    多副本想少掉线就先 `--scale worker=N+1` 让新副本认领一部分号，稳定后再缩回 `N`。
-   Worker 收到 SIGTERM 会先释放租约再退出（`stop_grace_period: 60s`）。
+    Worker 收到 SIGTERM 会先释放租约再退出（`stop_grace_period: 60s`）。
 3. **最后重启 API**：`docker compose up -d --no-deps api`。API 无状态，页面 WebSocket 会重连，号不受影响。
 4. 前端：`docker compose up -d --no-deps --build frontend`。
 5. **单个号异常**（会话失效、要验证码、发不出去）：只清这个号的租约 ——
+
    控制台账号管理页点「释放租约」，或 `DELETE FROM leases WHERE account_id='...';`，**不要重启全部连接**。
 
 ### 扩容与日志
 
 - 扩容：`docker compose up -d --scale worker=3`（一副本约 100 个在线号，`ACCOUNTS_PER_REPLICA`）。
-  注意 `WORKER_METRICS_PORT_RANGE` 要覆盖副本数（默认 `9101-9110` 支持 10 个副本），
-  数据库连接数按 `(DB_POOL_SIZE + DB_MAX_OVERFLOW) × 进程数 < POSTGRES_MAX_CONNECTIONS` 估。
+注意 `WORKER_METRICS_PORT_RANGE` 要覆盖副本数（默认 `9101-9110` 支持 10 个副本），
+数据库连接数按 `(DB_POOL_SIZE + DB_MAX_OVERFLOW) × 进程数 < POSTGRES_MAX_CONNECTIONS` 估。
 - 日志是 JSON 一行一条，带 `component`，业务日志带 `account_id` / `worker_id` / `task_id`：
 
 ```bash
@@ -649,16 +522,13 @@ docker compose logs --no-log-prefix api | jq -c 'select(.level!="INFO")'
 > **部署与使用提醒**：本项目仅用于管理**你自己拥有或有权操作**的账号与 Bot。
 > 请遵守 Telegram 服务条款与所在地区法律，**使用风险由部署者自行承担**。
 
-
 ## 鸣谢
 
 - [Telethon](https://github.com/LonamiWebs/Telethon)、[aiogram](https://github.com/aiogram/aiogram)、[FastAPI](https://github.com/fastapi/fastapi)、[SQLAlchemy](https://github.com/sqlalchemy/sqlalchemy)、[Alembic](https://github.com/sqlalchemy/alembic)、[antd](https://github.com/ant-design/ant-design)、[Vite](https://github.com/vitejs/vite)、[Prometheus](https://github.com/prometheus/prometheus)
 - 界面设计与工程实现由本仓库的 Agent Teams 分工完成：设计底座、后端接口、三组页面分队、独立验收
 - 以及所有赞助者
 
-<div align="center">
-  <br>
-  <b>如果这套东西帮你省下了值班时间，给个 ⭐ 支持一下</b>
-  <br><br>
-  <sub>本项目只用于管理你自己拥有或有权操作的账号与 Bot；请遵守 Telegram 服务条款与当地法律。</sub>
-</div>
+  
+**如果这套东西帮你省下了值班时间，给个 ⭐ 支持一下**  
+  
+本项目只用于管理你自己拥有或有权操作的账号与 Bot；请遵守 Telegram 服务条款与当地法律。

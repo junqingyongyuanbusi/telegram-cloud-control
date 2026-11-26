@@ -783,6 +783,13 @@ function GroupPicker({
 }) {
   const options = useAsyncData(() => campaignApi.groupOptions(), []);
   const rows = options.data ?? [];
+  const selected = value ?? [];
+  const allValues = rows.map((row) => row.value);
+  const allSelected = allValues.length > 0 && allValues.every((item) => selected.includes(item));
+
+  const selectAll = () => onChange?.(allValues);
+  const clearAll = () => onChange?.([]);
+
   return (
     <Select
       mode="multiple"
@@ -794,8 +801,34 @@ function GroupPicker({
       maxTagCount="responsive"
       // 宽度交给容器（原先写死 minWidth: 460，在窄卡片里会撑破边框）
       style={{ width: '100%' }}
-      value={value ?? []}
+      value={selected}
       onChange={(next: string[]) => onChange?.(next)}
+      dropdownRender={(menu) => (
+        <>
+          <Space style={{ padding: '8px 12px' }}>
+            <Button
+              type="link"
+              size="small"
+              disabled={!allValues.length || allSelected}
+              onMouseDown={(event) => event.preventDefault()}
+              onClick={selectAll}
+            >
+              全选（{allValues.length}）
+            </Button>
+            <Button
+              type="link"
+              size="small"
+              disabled={!selected.length}
+              onMouseDown={(event) => event.preventDefault()}
+              onClick={clearAll}
+            >
+              清空
+            </Button>
+            <Typography.Text type="secondary">已选 {selected.length} 个</Typography.Text>
+          </Space>
+          {menu}
+        </>
+      )}
       options={rows.map((row) => ({
         value: row.value,
         // 频道只有管理员能发言：标出来，不然选完只会收到 ChatAdminRequiredError
