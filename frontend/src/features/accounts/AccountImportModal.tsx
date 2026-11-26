@@ -274,7 +274,7 @@ export default function AccountImportModal({ open, onClose, onImported }: Props)
             <Form.Item label="养号起点" style={{ marginBottom: 0 }}>
               <Switch checked={startWarmup} onChange={setStartWarmup} />
               <Typography.Text type="secondary" style={{ marginLeft: 8, fontSize: 'var(--tg-font-size-xs)' }}>
-                从今天起按最严额度限速
+                从今天起按最严间隔限速（每日额度已不限）
               </Typography.Text>
             </Form.Item>
           </Space>

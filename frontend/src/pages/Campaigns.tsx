@@ -1,17 +1,20 @@
 /**
- * 触达中心：素材库 + 批量私信 / 群发 / 素材群发 / 加群 / 退群 / 强拉 / 批量改资料 / 吵群 / 拟人发言 + 批次进度。
+ * 触达中心：素材库 / 加群群发 / 批次进度。
  *
- * 每个动作都是「账号范围 + 动作参数」表单，提交后后端按「一 号一任务」入队，
- * 结果弹窗复用 BulkResultModal；执行进度看「批次进度」或任务中心。
+ * 「加群群发」= 一号一条任务、号内逐群「加群 → 过验证 → 发内容」，合并了旧的 群发 / 素材群发 / 加群；
+ * 其余动作（批量私信 / 退群 / 强拉 / 批量改资料 / 吵群 / 拟人发言）保留代码但不在 UI 露出。
+ * 提交后后端按「一号一任务」入队，结果弹窗复用 BulkResultModal；执行进度看「批次进度」。
  */
 import { useEffect, useState } from 'react';
 import { Navigate, useLocation, useNavigate, useParams } from 'react-router-dom';
 import {
   Button,
   Card,
+  Collapse,
   Form,
   Input,
   InputNumber,
+  Modal,
   Segmented,
   Select,
   Space,
@@ -38,11 +41,20 @@ import AccountPickerModal from '../components/AccountPickerModal';
 import MaterialThumb from '../features/materials/MaterialThumb';
 import MaterialPicker from '../features/materials/MaterialSelect';
 import { PageContainer, StatusBadge } from '../components';
-import { botApi, campaignApi, campaignScheduleApi, groupApi, materialApi } from '../api/endpoints';
+import {
+  accountApi,
+  botApi,
+  campaignApi,
+  campaignScheduleApi,
+  groupApi,
+  groupIntelApi,
+  materialApi,
+} from '../api/endpoints';
 import { useAsyncData } from '../hooks/useAsyncData';
 import { notifySuccess, toast } from '../utils/feedback';
 import { formatNumber, formatTime } from '../utils/format';
 import type {
+  AccountOut,
   AccountStatus,
   BulkPmRequest,
   BulkResultOut,
@@ -51,6 +63,8 @@ import type {
   CampaignScheduleOut,
   ForceAddRequest,
   GroupBroadcastRequest,
+  GroupProfileOut,
+  JoinAndSendRequest,
   JoinGroupRequest,
   LeaveGroupRequest,
   MaterialKind,
@@ -385,6 +399,22 @@ function BatchesTab() {
     },
     { title: '尝试', dataIndex: 'attempts', width: 60 },
     {
+      title: '进度',
+      dataIndex: 'stage',
+      width: 230,
+      render: (value: string, record) => {
+        if (!record.total) return <span className="tg-muted">—</span>;
+        return (
+          <Tooltip title={record.detail || value || ''}>
+            <span className="tg-mono">
+              {record.wave_total ? `第 ${(record.wave_index ?? 0) + 1}/${record.wave_total} 轮 · ` : ''}
+              已加 {record.joined ?? 0}/{record.total} · 已发 {record.sent ?? 0}
+            </span>
+          </Tooltip>
+        );
+      },
+    },
+    {
       title: '失败原因',
       dataIndex: 'error',
       ellipsis: true,
@@ -466,6 +496,586 @@ function BatchesTab() {
           />
         </Card>
       ) : null}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------- 加群群发（一号一条流水线）
+
+const TASK_STATUS_COLOR: Record<string, string> = {
+  pending: 'default',
+  pending_confirmation: 'gold',
+  running: 'blue',
+  completed: 'green',
+  failed: 'red',
+  cancelled: 'default',
+};
+
+/** 加群群发：一个号一条任务，号内逐群「加群 → 过验证 → 发内容」。
+ *
+ * 页面只留三样东西：顶部写内容 + 挑群，中间一张账号表（提交后同一张表直接显示每号执行状态），
+ * 底部提交。节奏参数大多数人不改，收进折叠面板，默认值按保守值预设。 */
+function JoinAndSendTab({ initialTargets = [] }: { initialTargets?: string[] }) {
+  const navigate = useNavigate();
+  const accounts = useAsyncData(() => accountApi.list({ page: 1, page_size: 200 }), []);
+  // null = 还没初始化（首次加载后默认全选）；[] = 用户主动清空
+  const [selected, setSelected] = useState<string[] | null>(null);
+  // 默认自动挑号：按健康分优先从可用号里选，不用手动勾
+  const [autoAccounts, setAutoAccounts] = useState(true);
+  const [mode, setMode] = useState<'text' | 'material'>('text');
+  const [form] = Form.useForm();
+  const [submitting, setSubmitting] = useState(false);
+  const [result, setResult] = useState<BulkResultOut | null>(null);
+  // 提交后的批次进度：同一张账号表直接显示，每 4 秒刷新一次
+  const [batchId, setBatchId] = useState<string | null>(null);
+  const [batch, setBatch] = useState<CampaignBatchOut | null>(null);
+  // 群情报选群弹窗
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const [groupKeyword, setGroupKeyword] = useState('');
+  const [groupPage, setGroupPage] = useState(1);
+  // 跨分页保留选择：tg_chat_id → 可直接使用的链接（邀请链接优先，公开群用 @用户名）
+  const [pickedGroups, setPickedGroups] = useState<Record<string, string>>({});
+
+  const groups = useAsyncData(
+    () =>
+      pickerOpen
+        ? groupIntelApi.profiles({
+            q: groupKeyword || undefined,
+            speakable: true,
+            page: groupPage,
+            page_size: 20,
+          })
+        : Promise.resolve(null),
+    [pickerOpen, groupKeyword, groupPage],
+  );
+
+  useEffect(() => {
+    if (selected === null && accounts.data) {
+      // 默认只选可发送的号（健康 / 限流中）；冻结、失效的号仍显示，但需要手动勾选
+      setSelected(
+        accounts.data.items
+          .filter((item) => item.status === 'healthy' || item.status === 'limited')
+          .map((item) => item.id),
+      );
+    }
+  }, [accounts.data, selected]);
+
+  // 群情报页「同步到加群」带过来的链接：预填目标群
+  useEffect(() => {
+    if (initialTargets.length) form.setFieldValue('targets', initialTargets.join('\n'));
+  }, [initialTargets, form]);
+
+  // 提交后轮询批次详情，把每号进度合并回账号表；全部进入终态就停
+  useEffect(() => {
+    if (!batchId) return;
+    let stopped = false;
+    let timer = 0;
+    const tick = async () => {
+      try {
+        const data = await campaignApi.batch(batchId);
+        if (stopped) return;
+        setBatch(data);
+        if (data.items.every((item) => ['completed', 'failed', 'cancelled'].includes(item.status))) {
+          window.clearInterval(timer);
+        }
+      } catch {
+        /* 轮询失败不打断页面，下一轮继续 */
+      }
+    };
+    void tick();
+    timer = window.setInterval(() => void tick(), 4000);
+    return () => {
+      stopped = true;
+      window.clearInterval(timer);
+    };
+  }, [batchId]);
+
+  const rows = accounts.data?.items ?? [];
+  const picked = selected ?? [];
+  const progressByAccount = new Map<string, CampaignBatchItem>();
+  batch?.items.forEach((item) => {
+    if (item.account_id) progressByAccount.set(item.account_id, item);
+  });
+
+  const accountColumns: ColumnsType<AccountOut> = [
+    {
+      title: '账号',
+      dataIndex: 'display_label',
+      render: (value: string, record) => value || record.phone_masked,
+    },
+    {
+      title: '状态',
+      dataIndex: 'status',
+      width: 96,
+      render: (value: AccountStatus, record) => (
+        <StatusBadge status={value} label={record.status_label} size="sm" />
+      ),
+    },
+    { title: '健康分', dataIndex: 'health_score', width: 76 },
+    {
+      title: '分组',
+      dataIndex: 'group_name',
+      width: 110,
+      render: (value: string) => value || <span className="tg-muted">—</span>,
+    },
+    { title: '群数', dataIndex: 'group_count', width: 64 },
+    {
+      title: '执行状态',
+      width: 300,
+      render: (_, record) => {
+        const item = progressByAccount.get(record.id);
+        if (!item) {
+          return <span className="tg-muted">{record.current_task_label || '待提交'}</span>;
+        }
+        const progress = item.total ? `已加 ${item.joined ?? 0}/${item.total} · 已发 ${item.sent ?? 0}` : '';
+        return (
+          <span className="tg-stack" style={{ gap: 2 }}>
+            <Space size={6} wrap>
+              <Tag color={TASK_STATUS_COLOR[item.status] ?? 'default'}>{item.status_label}</Tag>
+              {progress ? <span className="tg-mono tg-muted">{progress}</span> : null}
+            </Space>
+            {item.error ? (
+              <Tooltip title={item.error}>
+                <span
+                  className="tg-muted"
+                  style={{
+                    fontSize: 'var(--tg-font-size-xs)',
+                    overflow: 'hidden',
+                    textOverflow: 'ellipsis',
+                    whiteSpace: 'nowrap',
+                    maxWidth: 280,
+                  }}
+                >
+                  {item.error}
+                </span>
+              </Tooltip>
+            ) : item.detail ? (
+              <span className="tg-muted" style={{ fontSize: 'var(--tg-font-size-xs)' }}>
+                {item.detail}
+              </span>
+            ) : null}
+          </span>
+        );
+      },
+    },
+  ];
+
+  const groupColumns: ColumnsType<GroupProfileOut> = [
+    {
+      title: '群',
+      dataIndex: 'title',
+      render: (value: string, record) => (
+        <span className="tg-stack" style={{ gap: 2 }}>
+          <span>{value || '未命名群'}</span>
+          <span className="tg-muted" style={{ fontSize: 'var(--tg-font-size-xs)' }}>
+            {record.username ? `@${record.username}` : record.tg_chat_id}
+          </span>
+        </span>
+      ),
+    },
+    {
+      title: '成员',
+      dataIndex: 'member_count',
+      width: 90,
+      render: (value: number | null) => (value ? formatNumber(value) : '—'),
+    },
+    {
+      title: '发言',
+      dataIndex: 'send_permission',
+      width: 90,
+      render: (value: string | null) =>
+        value === 'open' ? (
+          <Tag color="green">可发言</Tag>
+        ) : (
+          <Tag>{value === 'restricted' ? '禁言' : '未校验'}</Tag>
+        ),
+    },
+  ];
+
+  const groupLinkOf = (item: GroupProfileOut) =>
+    item.invite_link || (item.username ? `@${item.username}` : '');
+
+  const onPickGroups = (keys: string[]) => {
+    const next = { ...pickedGroups };
+    // 当前页先按本次勾选覆盖，其他页已选的保留
+    (groups.data?.items ?? []).forEach((item) => {
+      const key = String(item.tg_chat_id);
+      if (keys.includes(key)) {
+        next[key] = groupLinkOf(item);
+      } else {
+        delete next[key];
+      }
+    });
+    setPickedGroups(next);
+  };
+
+  const applyPickedGroups = () => {
+    const links = Object.values(pickedGroups).filter((link): link is string => Boolean(link));
+    if (!links.length) {
+      toast.warning('选中的群既没有邀请链接，也没有公开用户名');
+      return;
+    }
+    const merged = Array.from(new Set([...splitField(form.getFieldValue('targets')), ...links]));
+    form.setFieldValue('targets', merged.join('\n'));
+    setPickedGroups({});
+    setPickerOpen(false);
+  };
+
+  const onFinish = async (values: Record<string, unknown>) => {
+    if (!autoAccounts && !picked.length) {
+      toast.warning('先在账号表里勾选至少一个号，或打开「自动挑选账号」');
+      return;
+    }
+    const targets = splitField(values.targets);
+    if (!targets.length) {
+      toast.warning('至少填一个群链接');
+      return;
+    }
+    const text = String(values.text ?? '').trim();
+    const materialId = (values.material_id as string | undefined) ?? null;
+    if (mode === 'material' && !materialId) {
+      toast.warning('素材模式要先选一个素材');
+      return;
+    }
+    if (mode === 'text' && !text) {
+      toast.warning('写一段要发布的内容');
+      return;
+    }
+    const maxAccounts = Number(values.max_accounts ?? 0);
+    const payload: JoinAndSendRequest = {
+      // 自动模式：后端按健康分优先挑号；手动模式只跑勾选的号
+      scope: autoAccounts ? 'all' : 'selected',
+      account_ids: autoAccounts ? null : picked,
+      limit: autoAccounts ? Math.max(1, maxAccounts || 500) : Math.min(picked.length, 500),
+      max_accounts: autoAccounts ? maxAccounts : 0,
+      // 轮次：每轮账号数 / 每号每轮群数；0 = 不分轮 / 该号一次拿全部群
+      accounts_per_wave: Number(values.accounts_per_wave ?? 0),
+      groups_per_account: Number(values.groups_per_account ?? 0),
+      dispatch: 'each',
+      targets,
+      // 素材模式：text 是配文；文本模式：text 是正文
+      text: text || null,
+      texts: null,
+      naturalize: false,
+      material_id: mode === 'material' ? materialId : null,
+      parse_mode: '',
+      join_min_interval: Number(values.join_min_interval ?? 20),
+      join_max_interval: Number(values.join_max_interval ?? 60),
+      send_min_interval: Number(values.send_min_interval ?? 3),
+      send_max_interval: Number(values.send_max_interval ?? 8),
+      delay_after_join: Number(values.delay_after_join ?? 0),
+      // 需求：加群后自动过验证；审核制群由 worker 标记「待审批」并跳过发送
+      auto_verify: true,
+      verify_timeout: Number(values.verify_timeout ?? 150),
+      ignore_active_hours: Boolean(values.ignore_active_hours),
+    };
+    setSubmitting(true);
+    try {
+      const res = await campaignApi.joinAndSend(payload);
+      setResult(res);
+      if (res.batch_id) {
+        setBatch(null);
+        setBatchId(res.batch_id);
+      }
+    } catch {
+      /* client 已统一提示 */
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  return (
+    <div className="tg-action-page">
+      <Form
+        form={form}
+        layout="vertical"
+        initialValues={{
+          accounts_per_wave: 0,
+          groups_per_account: 0,
+          max_accounts: 0,
+          join_min_interval: 20,
+          join_max_interval: 60,
+          send_min_interval: 3,
+          send_max_interval: 8,
+          delay_after_join: 0,
+          verify_timeout: 150,
+          ignore_active_hours: false,
+        }}
+        onFinish={(values) => void onFinish(values)}
+      >
+        <div className="tg-form-body">
+          <section className="tg-section">
+            <div className="tg-section-head">
+              <span className="tg-section-bar" />
+              <h2 className="tg-section-title">内容与目标群</h2>
+              <span className="tg-section-note">先写发什么，再挑群；提交后每个号逐群执行</span>
+            </div>
+            <div className="tg-form-grid">
+              <div>
+                <div className="tg-form-group-title">发布内容</div>
+                <Segmented
+                  value={mode}
+                  onChange={(next) => setMode(next as 'text' | 'material')}
+                  options={[
+                    { label: '文本', value: 'text' },
+                    { label: '素材', value: 'material' },
+                  ]}
+                />
+                {mode === 'text' ? (
+                  <Form.Item name="text" style={{ marginTop: 'var(--tg-space-sm)' }}>
+                    <Input.TextArea
+                      placeholder="进群后发送这段话；每个号发同一段"
+                      autoSize={{ minRows: 5, maxRows: 10 }}
+                    />
+                  </Form.Item>
+                ) : (
+                  <>
+                    <Form.Item noStyle shouldUpdate={(prev, next) => prev.material_id !== next.material_id}>
+                      {({ getFieldValue, setFieldValue }) => (
+                        <MaterialPickField
+                          value={getFieldValue('material_id')}
+                          onChange={(next) => setFieldValue('material_id', next)}
+                        />
+                      )}
+                    </Form.Item>
+                    <Form.Item label="配文（可选）" name="text">
+                      <Input.TextArea autoSize={{ minRows: 2, maxRows: 5 }} />
+                    </Form.Item>
+                  </>
+                )}
+              </div>
+              <div>
+                <div className="tg-form-group-title">目标群</div>
+                <Space wrap style={{ marginBottom: 'var(--tg-space-sm)' }}>
+                  <Button size="small" icon={<PlusOutlined />} onClick={() => setPickerOpen(true)}>
+                    从群情报选可发言群
+                  </Button>
+                  <span className="tg-muted">一行一个，最多 100 个</span>
+                </Space>
+                <Form.Item name="targets" rules={[{ required: true, message: '至少一个群链接' }]}>
+                  <Input.TextArea
+                    placeholder={'https://t.me/+AbCdEf123456\n@public_group\nt.me/another_group'}
+                    autoSize={{ minRows: 5, maxRows: 10 }}
+                  />
+                </Form.Item>
+              </div>
+            </div>
+          </section>
+
+          <Collapse
+            size="small"
+            items={[
+              {
+                key: 'rhythm',
+                label: '节奏与验证（已按保守值预设，通常不用改）',
+                children: (
+                  <div className="tg-form-grid">
+                    <Form.Item label="群间最小间隔（秒）" name="join_min_interval">
+                      <InputNumber min={5} max={300} style={{ width: '100%' }} />
+                    </Form.Item>
+                    <Form.Item label="群间最大间隔（秒）" name="join_max_interval">
+                      <InputNumber min={5} max={600} style={{ width: '100%' }} />
+                    </Form.Item>
+                    <Form.Item
+                      label="加群后等待（秒）"
+                      name="delay_after_join"
+                      tooltip="固定等这么久再发言；0 = 用下面的发送间隔"
+                    >
+                      <InputNumber min={0} max={600} style={{ width: '100%' }} />
+                    </Form.Item>
+                    <Form.Item label="发送间隔最小（秒）" name="send_min_interval">
+                      <InputNumber min={1} max={60} style={{ width: '100%' }} />
+                    </Form.Item>
+                    <Form.Item label="发送间隔最大（秒）" name="send_max_interval">
+                      <InputNumber min={1} max={120} style={{ width: '100%' }} />
+                    </Form.Item>
+                    <Form.Item
+                      label="验证等待（秒）"
+                      name="verify_timeout"
+                      tooltip="等待入群验证消息的最长时间（佩奇 Cap / NuoMi Turnstile）"
+                    >
+                      <InputNumber min={30} max={600} style={{ width: '100%' }} />
+                    </Form.Item>
+                    <Form.Item
+                      label="忽略活跃时段"
+                      name="ignore_active_hours"
+                      valuePropName="checked"
+                      tooltip="打开后不受「活跃时段（默认 8-24 点）」限制；熔断与最小间隔照常"
+                    >
+                      <Switch checkedChildren="立即" unCheckedChildren="按时段" />
+                    </Form.Item>
+                  </div>
+                ),
+              },
+            ]}
+          />
+
+          <section className="tg-section">
+            <div className="tg-section-head">
+              <span className="tg-section-bar" />
+              <h2 className="tg-section-title">账号与执行状态</h2>
+              <span className="tg-section-note">
+                自动模式按健康分挑号；轮次跑完一轮才开下一轮，提交后同一张表显示每号进度
+              </span>
+            </div>
+            <div className="tg-form-grid" style={{ marginBottom: 'var(--tg-space-md)' }}>
+              <Form.Item label="账号挑选" tooltip="自动：按健康分优先从可用号里挑，不需要手动勾选">
+                <Switch
+                  checked={autoAccounts}
+                  onChange={setAutoAccounts}
+                  checkedChildren="自动"
+                  unCheckedChildren="手动"
+                />
+              </Form.Item>
+              <Form.Item
+                label="每轮账号数"
+                name="accounts_per_wave"
+                tooltip="例如每轮 100 个号；0 = 全部账号一轮跑完"
+              >
+                <InputNumber min={0} max={1000} style={{ width: '100%' }} />
+              </Form.Item>
+              <Form.Item
+                label="每号每轮群数"
+                name="groups_per_account"
+                tooltip="例如 10 = 每个号每轮处理 10 个群；0 = 一个号一次处理全部群"
+              >
+                <InputNumber min={0} max={100} style={{ width: '100%' }} />
+              </Form.Item>
+              <Form.Item
+                label="最多使用账号数"
+                name="max_accounts"
+                tooltip="0 = 不限制；按健康分排序取前 N 个"
+              >
+                <InputNumber min={0} max={500} style={{ width: '100%' }} />
+              </Form.Item>
+            </div>
+            <Space wrap style={{ marginBottom: 'var(--tg-space-md)' }}>
+              {autoAccounts ? null : (
+                <>
+                  <Button size="small" icon={<TeamOutlined />} onClick={() => setSelected(rows.map((item) => item.id))}>
+                    全选
+                  </Button>
+                  <Button size="small" onClick={() => setSelected([])}>
+                    清空
+                  </Button>
+                </>
+              )}
+              <Button
+                size="small"
+                icon={<ReloadOutlined />}
+                loading={accounts.loading}
+                onClick={() => {
+                  setSelected(null);
+                  void accounts.reload();
+                }}
+              >
+                刷新账号
+              </Button>
+              <span className="tg-muted">
+                {autoAccounts ? (
+                  <>
+                    自动挑选：可用{' '}
+                    <b>{rows.filter((item) => item.status === 'healthy' || item.status === 'limited').length}</b> 个号
+                  </>
+                ) : (
+                  <>
+                    已选 <b>{picked.length}</b> / {rows.length} 个号
+                  </>
+                )}
+              </span>
+              {batchId ? (
+                <>
+                  <Tag color="blue">批次 {batchId.slice(0, 8)}</Tag>
+                  <span className="tg-muted">
+                    {batch
+                      ? `运行 ${batch.counts?.running ?? 0} · 完成 ${batch.counts?.completed ?? 0} · 失败 ${batch.counts?.failed ?? 0}`
+                      : '同步中…'}
+                  </span>
+                  <Button size="small" onClick={() => navigate('/campaigns/batches')}>
+                    批次进度
+                  </Button>
+                </>
+              ) : null}
+            </Space>
+            <Table<AccountOut>
+              size="small"
+              rowKey="id"
+              columns={accountColumns}
+              dataSource={rows}
+              loading={accounts.loading}
+              rowSelection={
+                autoAccounts
+                  ? undefined
+                  : {
+                      selectedRowKeys: picked,
+                      onChange: (keys) => setSelected(keys as string[]),
+                    }
+              }
+              pagination={{ pageSize: 10, size: 'small', showTotal: (total) => `共 ${total} 个号` }}
+            />
+          </section>
+        </div>
+
+        <footer className="tg-submit-dock">
+          <Button type="primary" size="large" htmlType="submit" icon={<RocketOutlined />} loading={submitting}>
+            提交任务
+          </Button>
+          <div className="tg-submit-hint">
+            <strong>提交即排队</strong>
+            <span>按轮次串行执行，每号逐群「加群 → 验证 → 发言」；批次进度页可随时终止</span>
+          </div>
+        </footer>
+      </Form>
+
+      <Modal
+        open={pickerOpen}
+        title="从群情报选择可发言群"
+        width={820}
+        okText={`添加 ${Object.keys(pickedGroups).length} 个群`}
+        okButtonProps={{ disabled: !Object.keys(pickedGroups).length }}
+        onOk={applyPickedGroups}
+        onCancel={() => {
+          setPickerOpen(false);
+          setPickedGroups({});
+        }}
+      >
+        <Space wrap style={{ marginBottom: 'var(--tg-space-md)' }}>
+          <Input.Search
+            allowClear
+            placeholder="按关键词筛选群名 / 用户名"
+            style={{ width: 300 }}
+            onSearch={(value) => {
+              setGroupPage(1);
+              setGroupKeyword(value);
+            }}
+          />
+          <Button icon={<ReloadOutlined />} onClick={() => void groups.reload()}>
+            刷新
+          </Button>
+          <span className="tg-muted">只列「可发言」的讨论组；没有邀请链接时用 @用户名</span>
+        </Space>
+        <Table<GroupProfileOut>
+          size="small"
+          rowKey={(record) => String(record.tg_chat_id)}
+          columns={groupColumns}
+          dataSource={groups.data?.items ?? []}
+          loading={groups.loading}
+          rowSelection={{
+            selectedRowKeys: Object.keys(pickedGroups),
+            onChange: (keys) => onPickGroups(keys.map(String)),
+            getCheckboxProps: (record) => ({ disabled: !groupLinkOf(record) }),
+          }}
+          pagination={{
+            current: groupPage,
+            pageSize: 20,
+            total: groups.data?.total ?? 0,
+            showSizeChanger: false,
+            onChange: (page) => setGroupPage(page),
+          }}
+        />
+      </Modal>
+
+      <BulkResultModal open={!!result} result={result} onClose={() => setResult(null)} />
     </div>
   );
 }
@@ -1008,8 +1618,16 @@ export default function Campaigns() {
   // Bot 列表：私信 / 群发的「用 Bot 发送」通道要用
   const bots = useAsyncData(() => botApi.list(), []);
   const { section } = useParams<{ section: string }>();
+  // 触达中心当前只开放这 5 个页面；其余（批量私信 / 退群 / 强拉进群 / 批量改资料 /
+  // 吵群 / 拟人发言）在 UI 隐藏，旧地址会被下面的 !current 判断重定向回素材库。
+  const VISIBLE_SECTIONS = new Set(['materials', 'join-send', 'batches']);
   const sections = [
     { key: 'materials', label: '素材库', children: <MaterialsTab /> },
+    {
+      key: 'join-send',
+      label: '加群群发',
+      children: <JoinAndSendTab initialTargets={syncedJoinTargets} />,
+    },
     {
       key: 'bulk-pm',
       label: '批量私信',
@@ -1722,7 +2340,7 @@ export default function Campaigns() {
       ),
     },
     { key: 'batches', label: '批次进度', children: <BatchesTab /> },
-  ];
+  ].filter((item) => VISIBLE_SECTIONS.has(item.key));
 
   const current = sections.find((item) => item.key === section);
   if (section && !current) return <Navigate to="/campaigns/materials" replace />;

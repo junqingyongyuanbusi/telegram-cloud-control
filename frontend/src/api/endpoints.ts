@@ -58,6 +58,7 @@ import type {
   GroupBroadcastRequest,
   GroupCreate,
   GroupOut,
+  JoinAndSendRequest,
   JoinGroupRequest,
   LeaveGroupRequest,
   LoginStartRequest,
@@ -531,6 +532,8 @@ export const campaignApi = {
   groupBroadcast: (payload: GroupBroadcastRequest) => api.post<BulkResultOut>('/api/campaigns/group-broadcast', payload),
   materialSend: (payload: MaterialSendRequest) => api.post<BulkResultOut>('/api/campaigns/material-send', payload),
   joinGroup: (payload: JoinGroupRequest) => api.post<BulkResultOut>('/api/campaigns/join-group', payload),
+  /** 加群群发：一个号一条任务，号内逐群「加群 → 过验证 → 发内容」 */
+  joinAndSend: (payload: JoinAndSendRequest) => api.post<BulkResultOut>('/api/campaigns/join-and-send', payload),
   leaveGroup: (payload: LeaveGroupRequest) => api.post<BulkResultOut>('/api/campaigns/leave-group', payload),
   forceAdd: (payload: ForceAddRequest) => api.post<BulkResultOut>('/api/campaigns/force-add', payload),
   profileUpdate: (payload: ProfileBulkRequest) => api.post<BulkResultOut>('/api/campaigns/profile-update', payload),

@@ -1021,6 +1021,31 @@ export interface MaterialSendRequest extends CampaignScopeRequest, CampaignDispa
   max_interval?: number;
 }
 
+export interface JoinAndSendRequest extends CampaignScopeRequest, CampaignDispatchMixin {
+  /** 群链接 / @公开群，一行一个；按每号每轮群数切块执行 */
+  targets: string[];
+  /** 每轮账号数：0 = 全部账号一轮跑完 */
+  accounts_per_wave?: number;
+  /** 每个号每轮处理多少个群：0 = 一个号一次处理全部群 */
+  groups_per_account?: number;
+  /** 自动挑选账号上限：0 = 不限制；按健康分优先 */
+  max_accounts?: number;
+  text?: string | null;
+  texts?: string[] | null;
+  naturalize?: boolean;
+  /** 可选素材：选了就按素材发，text 作为配文 */
+  material_id?: UUID | null;
+  parse_mode?: string;
+  join_min_interval?: number;
+  join_max_interval?: number;
+  send_min_interval?: number;
+  send_max_interval?: number;
+  delay_after_join?: number;
+  auto_verify?: boolean;
+  verify_timeout?: number;
+  ignore_active_hours?: boolean;
+}
+
 export interface JoinGroupRequest extends CampaignScopeRequest {
   target: string;
   /** 忽略活跃时段（默认 8-24 点）限制，凌晨也立即加群 */
@@ -1118,6 +1143,17 @@ export interface CampaignBatchItem {
   status_label: string;
   attempts: number;
   error: string;
+  /** 运行中进度（加群群发等长任务）：stage/detail + 已加/已发/总数 */
+  stage?: string;
+  detail?: string;
+  joined?: number;
+  sent?: number;
+  total?: number;
+  /** 轮次编排：第几轮 / 共几轮 / 第几个群块 / 共几个群块 */
+  wave_index?: number;
+  wave_total?: number;
+  chunk_index?: number;
+  chunk_total?: number;
   started_at?: ISODateTime | null;
   completed_at?: ISODateTime | null;
 }

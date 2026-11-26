@@ -136,6 +136,7 @@ class TaskRunner(CampaignTasksMixin, GroupIntelMixin, OfficialTasksMixin):
             TaskType.group_broadcast.value: self._group_broadcast,
             TaskType.material_send.value: self._material_send,
             TaskType.join_group.value: self._join_group,
+            TaskType.join_and_send.value: self._join_and_send,
             TaskType.leave_group.value: self._leave_group,
             TaskType.force_add_member.value: self._force_add_member,
             TaskType.storm_chat.value: self._storm_chat,

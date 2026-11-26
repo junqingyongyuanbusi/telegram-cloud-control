@@ -13,6 +13,7 @@ Worker 按租约认领执行；`GET /campaigns/batches` 按 batch_id 聚合进�
 from __future__ import annotations
 
 import logging
+import math
 import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Any, Callable, List, Optional
@@ -28,6 +29,7 @@ from app.api.routers.accounts_bulk import _resolve_accounts
 from app.api.routers.tasks import CANCELLABLE_STATUSES
 from app.config import settings
 from app.core.audit import write_audit
+from app.core.batches import mark_batch_cancelled
 from app.core.tasks import cancel_task, enqueue_task
 from app.models import (
     TASK_STATUS_LABELS,
@@ -55,6 +57,7 @@ from app.schemas import (
     CampaignBatchOut,
     ForceAddRequest,
     GroupBroadcastRequest,
+    JoinAndSendRequest,
     JoinGroupRequest,
     JoinMissingRequest,
     LeaveGroupRequest,
@@ -171,7 +174,11 @@ async def _split_by_quota(
     for account in accounts:
         try:
             state = await throttle_state(redis, account)
-            remaining = max(0, int(state.get("daily_limit") or 0) - int(state.get("used_today") or 0))
+            limit = int(state.get("daily_limit") or 0)
+            if limit <= 0:  # 每日额度已关闭（throttle.DAILY_QUOTA_ENABLED=False）→ 不限，直接放行
+                ready.append(account)
+                continue
+            remaining = max(0, limit - int(state.get("used_today") or 0))
         except Exception:  # noqa: BLE001 - 读不到额度就当它够用，别把活卡在入口
             remaining = cost
         (ready if remaining >= cost else out_of_quota).append(account)
@@ -530,7 +537,171 @@ async def material_send(
     )
 
 
-# ---------------- 加群 / 退群 / 强拉 ----------------
+# ---------------- 加群群发（一号一条流水线）/ 退群 / 强拉 ----------------
+
+
+@router.post(
+    "/join-and-send",
+    response_model=BulkResultResponse,
+    summary="加群群发：逐群「加群 → 过验证 → 发内容」，按轮次控制账号数量",
+)
+async def join_and_send(
+    payload: JoinAndSendRequest,
+    session: AsyncSession = Depends(get_session),
+    user: User = Depends(get_current_user),
+) -> BulkResultResponse:
+    """把群链接切成「每号每轮 N 个」的小块，再按轮次派给自动挑选的账号。
+
+    与旧版「一个号一条任务、每个号覆盖全部群」的区别：
+    - 群链接按 `groups_per_account` 切块，每块一条任务（一个号一轮只处理一块）；
+    - 任务按 `accounts_per_wave` 编成轮次，Worker 会等上一轮结束再开下一轮；
+    - 账号按健康分优先自动挑选，`max_accounts` 限制最多用多少个号；
+    - 终止批次会让正在跑的任务在下一组动作前停下，而不是等它把整批群跑完。
+    """
+    if payload.material_id is not None:
+        material = await session.get(Material, payload.material_id)
+        if material is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="素材不存在")
+    targets = [str(item).strip() for item in payload.targets if str(item).strip()]
+    if not targets:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="targets 不能为空：至少给一个群链接")
+
+    accounts, scope, truncated = await _resolve_accounts(session, user, payload, usable_only=True)
+    # 健康分优先；同分时最近有心跳的优先，避免「看起来健康但很久没上线」的号排在前面
+    accounts.sort(
+        key=lambda item: (
+            int(item.health_score or 0),
+            item.last_heartbeat.timestamp() if item.last_heartbeat else 0.0,
+        ),
+        reverse=True,
+    )
+    if payload.max_accounts > 0:
+        accounts = accounts[: payload.max_accounts]
+    accounts, out_of_quota, quota_cost = await _split_by_quota(accounts, TaskType.join_and_send)
+    if not accounts:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=(
+                f"没有可用账号（今日额度都不够，这次动作需要 {quota_cost} 点），"
+                "或所选范围内没有健康 / 限流中的号"
+            ),
+        )
+
+    # 每号每轮处理多少个群：0 = 该号一次拿全部群（旧行为）
+    per_task = payload.groups_per_account or len(targets)
+    chunks = [targets[i : i + per_task] for i in range(0, len(targets), per_task)]
+    wave_size = max(1, payload.accounts_per_wave or len(accounts))
+    wave_total = max(1, math.ceil(len(chunks) / wave_size))
+    batch_id = uuid.uuid4()
+
+    params = {
+        "text": payload.text,
+        "texts": payload.texts,
+        "naturalize": payload.naturalize,
+        "material_id": str(payload.material_id) if payload.material_id else None,
+        "parse_mode": payload.parse_mode,
+        # 号内节奏：跨群间隔 / 加群到发送的等待 / 加群后固定延迟
+        "join_min_interval": payload.join_min_interval,
+        "join_max_interval": payload.join_max_interval,
+        "send_min_interval": payload.send_min_interval,
+        "send_max_interval": payload.send_max_interval,
+        "delay_after_join": payload.delay_after_join,
+        # 加群后自动过验证（佩奇 Cap / NuoMi Turnstile）；审核制群跳过发送
+        "auto_verify": payload.auto_verify,
+        "verify_timeout": payload.verify_timeout,
+        "ignore_active_hours": payload.ignore_active_hours,
+        "dispatch": "each",
+    }
+    items: List[BulkAccountResult] = [
+        _item(account, message=f"今日额度不足（这次动作需要 {quota_cost} 点），额度明天自动恢复")
+        for account in out_of_quota
+    ]
+    task_ids: List[uuid.UUID] = []
+    stagger = max(0.0, float(settings.campaign_stagger_seconds))
+    for chunk_index, chunk in enumerate(chunks):
+        account = accounts[chunk_index % len(accounts)]
+        wave_index = chunk_index // wave_size
+        task_payload = {
+            **params,
+            "targets": chunk,
+            "batch_id": str(batch_id),
+            "account_index": chunk_index,
+            "account_count": len(accounts),
+            "wave_index": wave_index,
+            "wave_total": wave_total,
+            "chunk_index": chunk_index,
+            "chunk_total": len(chunks),
+        }
+        try:
+            task = await enqueue_task(
+                session,
+                type=TaskType.join_and_send,
+                account_id=account.id,
+                payload=task_payload,
+                created_by=user.id,
+                priority=80,
+                # 同轮内错峰；轮与轮之间由 Worker 的「等待上一轮」闸门保证
+                run_after=_now() + timedelta(seconds=stagger * (chunk_index % wave_size)),
+            )
+            task_ids.append(task.id)
+            items.append(
+                _item(account, message=f"已排队（第 {wave_index + 1}/{wave_total} 轮）", task_id=task.id)
+            )
+        except Exception as exc:  # noqa: BLE001 - 单个任务入队失败不影响整批
+            logger.warning("加群群发入队失败 account_id=%s: %s", account.id, exc)
+            items.append(_item(account, ok=False, message=f"入队失败：{exc}"))
+
+    await write_audit(
+        session,
+        action="campaign.join_and_send",
+        user_id=user.id,
+        target_type="campaign_batch",
+        target_id=str(batch_id),
+        detail={
+            "batch_id": str(batch_id),
+            "scope": scope,
+            "task_type": TaskType.join_and_send.value,
+            "targets": len(targets),
+            "chunks": len(chunks),
+            "wave_total": wave_total,
+            "accounts": len(accounts),
+            "truncated": truncated,
+        },
+    )
+    await session.commit()
+    succeeded = len(task_ids)
+    failed = sum(1 for item in items if not item.ok)
+    await publish_task_safely(
+        {
+            "task_id": None,
+            "type": TaskType.join_and_send.value,
+            "ok": failed == 0,
+            "detail": f"批次 {batch_id} 已排队 {succeeded} 个任务（{wave_total} 轮）",
+        }
+    )
+    logger.info(
+        "加群群发提交 batch=%s 目标=%s 任务=%s 轮次=%s 账号=%s by=%s",
+        batch_id, len(targets), succeeded, wave_total, len(accounts), user.username,
+    )
+    return BulkResultResponse(
+        ok=failed == 0,
+        action="campaign.join_and_send",
+        message=(
+            f"批次 {batch_id}：{len(targets)} 个群切成 {len(chunks)} 个任务，"
+            f"分 {wave_total} 轮执行（每轮最多 {wave_size} 个号）"
+            + (f"，{len(out_of_quota)} 个号今日额度不足、已跳过" if out_of_quota else "")
+            + (f"，失败 {failed} 个" if failed else "")
+        ),
+        requested=len(items),
+        succeeded=succeeded,
+        failed=failed,
+        skipped=len(out_of_quota),
+        truncated=truncated,
+        batch_id=batch_id,
+        task_ids=task_ids,
+        items=items,
+    )
+
 
 @router.post("/join-group", response_model=BulkResultResponse, summary="批量加群：邀请链接或公开群")
 async def join_group(
@@ -717,6 +888,9 @@ def _batch_clause(ids: Optional[List[uuid.UUID]]):
 def _enrich_batch_item(task: Task, account: Optional[TgAccount]) -> CampaignBatchItem:
     type_value = enum_value(task.type)
     status_value = enum_value(task.status)
+    # 长任务（加群群发）把运行中的 stage / 计数透给批次详情
+    progress = task.result if isinstance(task.result, dict) else {}
+    payload = task.payload if isinstance(task.payload, dict) else {}
     return CampaignBatchItem(
         account_id=task.account_id,
         account_label=account.phone_masked if account else "",
@@ -727,6 +901,15 @@ def _enrich_batch_item(task: Task, account: Optional[TgAccount]) -> CampaignBatc
         status_label=TASK_STATUS_LABELS.get(status_value, status_value),
         attempts=int(task.attempts or 0),
         error=task.error or "",
+        stage=str(progress.get("stage") or ""),
+        detail=str(progress.get("detail") or ""),
+        joined=int(progress.get("joined") or 0),
+        sent=int(progress.get("sent") or 0),
+        total=int(progress.get("total") or 0),
+        wave_index=int(payload.get("wave_index") or 0),
+        wave_total=int(payload.get("wave_total") or 0),
+        chunk_index=int(payload.get("chunk_index") or 0),
+        chunk_total=int(payload.get("chunk_total") or 0),
         started_at=task.started_at,
         completed_at=task.completed_at,
     )
@@ -827,6 +1010,9 @@ async def cancel_batch(
         if task.status in CANCELLABLE_STATUSES:
             await cancel_task(session, task)
             cancelled += 1
+    # 正在执行的长任务（加群群发）不会因为数据库状态变了就停：写跨进程标志，
+    # Worker 在下一组动作前检查它并收尾。
+    await mark_batch_cancelled(batch_id)
     await write_audit(
         session,
         action="campaign.batch_cancel",

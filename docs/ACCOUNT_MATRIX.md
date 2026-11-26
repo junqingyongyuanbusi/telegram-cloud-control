@@ -91,7 +91,8 @@
 | 批量检测 / 深度验活 | `POST /api/accounts/bulk/check`、`/bulk/probe` | 后者复算健康分 |
 | 批量设置节流 | `POST /api/accounts/bulk/throttle` | 额度、间隔、解熔断、重置养号 |
 | 批量改资料 | `POST /api/campaigns/profile-update` | 改名/简介/用户名/头像，支持按号覆盖 |
-| 批量加群 / 退群 / 强拉 | `POST /api/campaigns/join-group`、`/leave-group`、`/force-add` | 高风险动作按权重计费 |
+| 加群群发（逐群加群 + 发言） | `POST /api/campaigns/join-and-send` | 群链接按「每号每轮群数」切块，任务按「每轮账号数」分轮串行；账号按健康分自动挑选，`max_accounts` 限流；批次可终止（运行中任务在动作间隙停）；加群按 3 倍、发送按 1 倍计费 |
+| 批量加群 / 退群 / 强拉 | `POST /api/campaigns/join-group`、`/leave-group`、`/force-add` | 高风险动作按权重计费（加群入口已在 UI 隐藏，API 保留） |
 | 批量改分组 / 代理 / 停用启用 / 清租约 | `POST /api/accounts/bulk/*` | 账号运维动作 |
 | 批量私信 / 群发 / 素材群发 / 吵群 / 拟人 | `POST /api/campaigns/*` | 按批次执行，可查进度、可取消 |
 | 批量导出 | `GET /api/exports/{resource}.csv` | 账号、会话、消息、任务、审计 |

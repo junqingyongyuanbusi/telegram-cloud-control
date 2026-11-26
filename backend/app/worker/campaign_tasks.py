@@ -27,8 +27,10 @@ from telethon.errors import (
     InviteRequestSentError,
 )
 from telethon.tl import types as tl_types
+from sqlalchemy import Integer, func, select
 
 from app.config import settings
+from app.core.batches import is_batch_cancelled
 from app.models import (
     ACCOUNT_STATUS_LABELS,
     AccountStatus,
@@ -199,6 +201,15 @@ class CampaignTasksMixin:
         if not text:
             raise TaskFailure("任务没有可发送的文本", retryable=False)
         return naturalize(text, rng) if payload.get("naturalize") else text
+
+    def _campaign_text_optional(self, payload: dict, rng: Any) -> str:
+        """同 `_campaign_text`，但允许为空：加群群发可以只发素材（文本作为可选配文）。"""
+        texts = [str(item).strip() for item in (payload.get("texts") or []) if str(item).strip()]
+        if texts:
+            text = pick_for_index(texts, int(payload.get("account_index") or 0))
+        else:
+            text = str(payload.get("text") or "").strip()
+        return naturalize(text, rng) if text and payload.get("naturalize") else text
 
     async def _resolve_group_entity(self, session: Any, task: Task, payload: dict, client: Any) -> Any:
         """目标群 → Telethon 实体：优先 dialog_id，其次 @username / 数字 chat_id。"""
@@ -812,6 +823,238 @@ class CampaignTasksMixin:
         if verified or failed_verify:
             summary["verified"] = verified
             summary["verify_failed"] = failed_verify
+        return summary
+
+    async def _join_target_for_pipeline(self, client: Any, target: str) -> tuple[Any, str, bool]:
+        """加一个群，返回 (chat, via, already)，供加群群发流水线使用。
+
+        与 `_join_group` 的单群逻辑一致，区别是「已在群里」也把 chat 返回：
+        流水线下一步要发消息，必须拿到带 access_hash 的实体。
+        `_join_group` 保持原样不动，避免影响已上线的纯加群任务。
+        """
+        invite_hash = _invite_hash_of(target)
+        if invite_hash:
+            try:
+                updates = await client(functions.messages.ImportChatInviteRequest(hash=invite_hash))
+            except UserAlreadyParticipantError:
+                # 已在群里：CheckChatInvite 返回 ChatInviteAlready，里面带着 chat
+                checked = await client(functions.messages.CheckChatInviteRequest(hash=invite_hash))
+                return getattr(checked, "chat", None), "invite", True
+            chat = next(iter(getattr(updates, "chats", None) or []), None)
+            return chat, "invite", False
+        username = _username_from_target(target)
+        if not username:
+            raise TaskFailure(f"无法识别的加群目标：{target}", retryable=False)
+        resolved = await client(functions.contacts.ResolveUsernameRequest(username=username))
+        if not resolved.chats:
+            if resolved.users:
+                raise TaskFailure(f"@{username} 是用户账号、不是群或频道，无法加群", retryable=False)
+            raise TaskFailure(f"@{username} 解析不到群或频道", retryable=False)
+        chat = resolved.chats[0]
+        if isinstance(chat, tl_types.Chat):
+            raise TaskFailure(
+                f"@{username} 是普通群，不能按用户名直接加入；请用该群的邀请链接（t.me/+...）",
+                retryable=False,
+            )
+        try:
+            await client(functions.channels.JoinChannelRequest(channel=chat))
+        except UserAlreadyParticipantError:
+            return chat, "username", True
+        return chat, "username", False
+
+    async def _wait_previous_waves(self, session: Any, task: Task) -> None:
+        """轮次闸门：同一批次里更早的 wave 没跑完，就把自己放回队列等一会。
+
+        批量提交时任务是一次性全排进去的；只靠「入队顺序」不足以保证 100 个号都做完
+        才开下一轮——Worker 会并发领任务，第 2 轮的任务可能在第 1 轮还没跑完时就开跑。
+        """
+        payload = dict(task.payload or {})
+        batch_id = payload.get("batch_id")
+        try:
+            wave_index = int(payload.get("wave_index") or 0)
+        except (TypeError, ValueError):
+            wave_index = 0
+        if not batch_id or wave_index <= 0:
+            return
+        try:
+            remaining = await session.scalar(
+                select(func.count())
+                .select_from(Task)
+                .where(
+                    Task.payload["batch_id"].astext == str(batch_id),
+                    Task.payload["wave_index"].astext.cast(Integer) < wave_index,
+                    Task.status.in_(
+                        [TaskStatus.pending, TaskStatus.running, TaskStatus.pending_confirmation]
+                    ),
+                )
+            )
+        except Exception:  # noqa: BLE001 - 编排查询失败不该把任务打挂
+            return
+        if remaining:
+            raise TaskFailure(
+                f"等待上一轮完成（同一批次还剩 {int(remaining)} 条任务）",
+                retryable=True,
+                requeue_after=30,
+            )
+
+    async def _join_and_send(self, session: Any, task: Task, account: Optional[TgAccount]) -> dict:
+        """加群群发：一个号一条任务，号内逐群「加群 → 过验证 → 发内容」。
+
+        与旧「加群 + 群发」两组任务的区别：
+        - 不依赖 Dialogs 同步，也不做 only_members 过滤——刚加的群当场就能发；
+        - 号内严格串行（加一个群、发一条、再进下一个），同号不会并发多条任务；
+        - 审核制群（InviteRequestSent）只记「待审批」，跳过发送；
+        - 进度写 `task.result`（stage/joined/sent/done_targets），批次详情逐号可见。
+        """
+        assert account is not None
+        self._ensure_sendable(account)
+        await self._wait_previous_waves(session, task)
+        payload = dict(task.payload or {})
+        targets = [str(item).strip() for item in (payload.get("targets") or []) if str(item).strip()]
+        if not targets:
+            raise TaskFailure("加群群发任务缺少群链接", retryable=False)
+        material = await self._payload_material(session, payload)
+        rng = self._campaign_rng(task, payload)
+        text = self._campaign_text_optional(payload, rng)
+        if not text and material is None:
+            raise TaskFailure("任务没有可发送的内容（文本、文本池、素材都为空）", retryable=False)
+        # 加群是高风险动作：先按权重预检；发送的额度由 _campaign_send_one 单独记
+        await self._throttle_gate(
+            account, task, ignore_active_hours=bool(payload.get("ignore_active_hours"))
+        )
+        client = self._client(account.id)
+        join_min = self._interval_of(payload, "join_min_interval", 20.0)
+        join_max = self._interval_of(payload, "join_max_interval", 60.0)
+        send_min = self._interval_of(payload, "send_min_interval", 3.0)
+        send_max = self._interval_of(payload, "send_max_interval", 8.0)
+        delay_after_join = self._interval_of(payload, "delay_after_join", 0.0)
+        auto_verify = bool(payload.get("auto_verify", True))
+        verify_timeout = float(payload.get("verify_timeout") or 150)
+
+        result = dict(task.result or {})
+        done = {str(item) for item in (result.get("done_targets") or [])}
+        joined = already = sent = pending = skipped = 0
+        results: list[dict] = []
+
+        cancelled = False
+        for index, target in enumerate(targets):
+            # 批次被页面终止：在下一组动作前收尾，不再加群 / 发言
+            if await is_batch_cancelled(payload.get("batch_id")):
+                cancelled = True
+                break
+            if target in done:
+                continue
+            await self._report_progress(
+                session, task, stage="joining",
+                detail=f"正在处理 {index + 1}/{len(targets)}：{target}",
+                joined=joined + already, sent=sent, total=len(targets), done_targets=sorted(done),
+            )
+            item: dict = {"target": target}
+            chat = None
+            try:
+                chat, via, was_already = await self._join_target_for_pipeline(client, target)
+                item["via"] = via
+                if was_already:
+                    already += 1
+                    item["already"] = True
+                else:
+                    await self._throttle_record(account, task)
+                    joined += 1
+                    item["joined"] = True
+                    await self._remember_joined_chat(session, account, client, chat, target)
+            except InviteRequestSentError as exc:
+                # 审核制群：申请已提交，管理员放行前发不了，跳过发送
+                pending += 1
+                item.update({"pending_approval": True, "detail": describe_exception(exc)})
+                done.add(target)
+                results.append(item)
+                continue
+            except (InviteHashExpiredError, InviteHashInvalidError, ValueError) as exc:
+                item["error"] = describe_exception(exc)
+                done.add(target)
+                results.append(item)
+                continue
+            except Exception as exc:  # noqa: BLE001 - FloodWait 等交给上层判定重试
+                await self._apply_status(session, account, exc)
+                item["error"] = describe_exception(exc)
+                results.append(item)
+                continue
+
+            if chat is None:
+                try:
+                    chat = await resolve_chat_entity(client, target, session=session)
+                except Exception as exc:  # noqa: BLE001
+                    item["error"] = f"加群后解析不到会话实体：{describe_exception(exc)}"
+                    results.append(item)
+                    continue
+
+            # 自动过入群验证：没通过就不发，避免发出去也是白费
+            if auto_verify and not item.get("already"):
+                try:
+                    outcome = await GroupVerifier(client).handle(chat, timeout=verify_timeout)
+                    item["verify"] = outcome
+                    if outcome.get("attempted") and not outcome.get("passed"):
+                        skipped += 1
+                        item["error"] = "入群验证未通过，已跳过发送"
+                        done.add(target)
+                        results.append(item)
+                        continue
+                except BaseException as exc:  # noqa: BLE001 - 验证器故障不拖垮整批
+                    item["verify_error"] = f"{type(exc).__name__}: {str(exc)[:120]}"
+
+            # 加群后缓一下再发言：给群一个「我刚刚进来」的缓冲，也避开慢速模式
+            await self._report_progress(
+                session, task, stage="sending",
+                detail=f"已加群，准备发送：{target}",
+                joined=joined + already, sent=sent, total=len(targets), done_targets=sorted(done),
+            )
+            if delay_after_join > 0:
+                await sleep_human(delay_after_join, delay_after_join + 1, rng)
+            else:
+                await sleep_human(send_min, send_max, rng)
+            try:
+                await self._campaign_send_one(
+                    session, task, account, client, chat, text, material=material
+                )
+                sent += 1
+                item["sent"] = True
+                done.add(target)
+            except Exception as exc:  # noqa: BLE001
+                await self._apply_status(session, account, exc)
+                item["error"] = describe_exception(exc)
+            results.append(item)
+            await self._report_progress(
+                session, task, stage="sending",
+                detail=f"已发 {sent} 条 · 最新：{target}",
+                joined=joined + already, sent=sent, total=len(targets), done_targets=sorted(done),
+            )
+            if index < len(targets) - 1:
+                await sleep_human(join_min, join_max, rng)
+
+        if cancelled:
+            await self._report_progress(
+                session, task, stage="cancelled",
+                detail="批次已终止：任务在下一组动作前停止",
+                joined=joined + already, sent=sent, total=len(targets), done_targets=sorted(done),
+            )
+
+        failed = [item for item in results if item.get("error")]
+        if failed and sent == 0 and joined == 0 and already == 0 and pending == 0 and not cancelled:
+            first_error = next((item.get("error") for item in failed), "未知原因")
+            raise TaskFailure(f"加群群发全部失败，首错：{first_error}", retryable=False)
+
+        summary = {
+            "joined": joined,
+            "already": already,
+            "sent": sent,
+            "pending_approval": pending,
+            "skipped": skipped,
+            "total": len(targets),
+            "processed": len(done),
+            "done_targets": sorted(done),
+            "cancelled": cancelled,
+            "results": results[:50],
+        }
         return summary
 
     async def _screen_groups(self, session: Any, task: Task, account: Optional[TgAccount]) -> dict:

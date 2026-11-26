@@ -161,6 +161,62 @@ class GroupBroadcastRequest(BulkScopeRequest, _TextPoolMixin):
     contact_first_name: str = Field(default="", max_length=64, description="发名片：名")
     contact_last_name: str = Field(default="", max_length=64, description="发名片：姓")
 
+class JoinAndSendRequest(BulkScopeRequest):
+    """加群群发：一个号一条任务，号内逐群「加群 → 过验证 → 发内容」。"""
+
+    targets: List[str] = Field(
+        default_factory=list,
+        description="群链接或 @公开群，一行一个；最多 100 个",
+    )
+    accounts_per_wave: int = Field(
+        default=0, ge=0, le=1000, description="每轮账号数：0 = 全部账号一轮跑完；Worker 会等上一轮结束再开下一轮"
+    )
+    groups_per_account: int = Field(
+        default=0, ge=0, le=100, description="每个号每轮处理多少个群：0 = 该号一次处理全部群（旧行为）"
+    )
+    max_accounts: int = Field(
+        default=0, ge=0, le=500, description="自动挑号上限：0 = 不限制；按健康分优先挑选"
+    )
+    text: Optional[str] = Field(default=None, description="所有号发送同一段文本（素材模式下作为配文）")
+    texts: Optional[List[str]] = Field(default=None, description="文本池：按账号顺序取模分配，最多 100 条")
+    naturalize: bool = Field(default=False, description="发送前做轻度口语化")
+    material_id: Optional[uuid.UUID] = Field(
+        default=None, description="可选：附带素材（图片/视频/文档），发送时作为文件+配文"
+    )
+    parse_mode: str = Field(
+        default="",
+        pattern=r"^$|^(md|markdown|html)$",
+        description="富文本解析：md / html；留空 = 纯文本",
+    )
+    join_min_interval: float = Field(default=20.0, ge=5, le=300, description="同一个号两个群之间的最小加群间隔（秒）")
+    join_max_interval: float = Field(default=60.0, ge=5, le=600, description="同一个号两个群之间的最大加群间隔（秒）")
+    send_min_interval: float = Field(default=3.0, ge=1, le=60, description="加群成功到发送之间的最小等待（秒）")
+    send_max_interval: float = Field(default=8.0, ge=1, le=120, description="加群成功到发送之间的最大等待（秒）")
+    delay_after_join: float = Field(
+        default=0.0, ge=0, le=600, description="加群成功后再固定等多少秒才发言（避开慢速模式，0=立刻发）"
+    )
+    auto_verify: bool = Field(default=True, description="加群后自动过入群验证（佩奇 Cap / NuoMi Turnstile）")
+    verify_timeout: int = Field(default=150, ge=30, le=600, description="等待验证消息的秒数")
+    ignore_active_hours: bool = Field(default=False, description="跳过活跃时段闸门（熔断 / 最小间隔照常）")
+
+    @model_validator(mode="after")
+    def _check(self):
+        self.targets = _validate_targets(self.targets)
+        if not self.targets:
+            raise ValueError("targets 不能为空：至少给一个群链接")
+        self.texts = _validate_texts(self.texts)
+        if self.text:
+            if len(str(self.text).encode("utf-8")) > MAX_TEXT_LEN:
+                raise ValueError(f"文本过长：单条最多 {MAX_TEXT_LEN} 字节")
+        if not (self.text or self.texts or self.material_id):
+            raise ValueError("text / texts / material_id 至少要给一个")
+        if self.join_max_interval < self.join_min_interval:
+            raise ValueError("join_max_interval 不能小于 join_min_interval")
+        if self.send_max_interval < self.send_min_interval:
+            raise ValueError("send_max_interval 不能小于 send_min_interval")
+        return self
+
+
 class MaterialSendRequest(BulkScopeRequest):
     material_id: uuid.UUID = Field(description="素材库里的素材")
     target_group: Optional[str] = Field(default=None, description="目标群：@username / chat_id / dialog_id")
@@ -424,6 +480,17 @@ class CampaignBatchItem(BaseModel):
     status_label: str = ""
     attempts: int = 0
     error: str = ""
+    # 运行中进度（来自 task.result）：加群群发等长任务在批次详情里逐号展示
+    stage: str = ""
+    detail: str = ""
+    joined: int = 0
+    sent: int = 0
+    total: int = 0
+    # 轮次编排：同一批次里第几轮、共几轮、第几个群块
+    wave_index: int = 0
+    wave_total: int = 0
+    chunk_index: int = 0
+    chunk_total: int = 0
     started_at: Optional[datetime] = None
     completed_at: Optional[datetime] = None
 

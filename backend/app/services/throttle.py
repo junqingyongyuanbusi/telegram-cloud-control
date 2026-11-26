@@ -53,10 +53,17 @@ ACTION_COST: dict[str, int] = {
     "storm_chat": 3,
     "persona_chat": 3,
     "join_group": 3,
+    # 流水线里加群部分按 3 倍记，发送由 _campaign_send_one 单独按 1 记
+    "join_and_send": 3,
     "force_add_member": 3,
 }
 #: 不加权重的类型（读取类）
 COST_FREE_TYPES = {"sync_dialogs", "sync_messages", "account_check", "update_profile"}
+
+#: 每日额度总开关：False = 关闭「今日额度」上限（对所有账号生效，含后续导入的新号）。
+#: 关闭后 `daily_limit_for` 返回 0 表示「不限」：`allow_action` 跳过每日配额闸门，
+#: 触达中心提交前的额度预检也不再跳过账号；熔断、活跃时段、最小间隔照常生效。
+DAILY_QUOTA_ENABLED = False
 
 
 @dataclass(slots=True)
@@ -125,7 +132,12 @@ def official_overrides(account: TgAccount, *, now: Optional[datetime] = None) ->
 
 
 def daily_limit_for(account: TgAccount, *, now: Optional[datetime] = None) -> int:
-    """每日额度：人工指定的优先；否则按养号阶梯，且不超过全局默认上限。"""
+    """每日额度：人工指定的优先；否则按养号阶梯，且不超过全局默认上限。
+
+    总开关 `DAILY_QUOTA_ENABLED` 关闭时统一返回 0（= 不限），不再读阶梯与人工值。
+    """
+    if not DAILY_QUOTA_ENABLED:
+        return 0
     explicit = int(getattr(account, "daily_message_limit", 0) or 0)
     if explicit > 0:
         return explicit
@@ -295,13 +307,13 @@ async def allow_action(
         except ValueError:
             pass
 
-    # 4) 每日配额
+    # 4) 每日配额（`DAILY_QUOTA_ENABLED` 关闭时 limit=0 表示不限，直接放行）
     key = THROTTLE_KEY.format(account=account.id, day=_day_key(moment))
     try:
         used = int(await redis.get(key) or 0)
     except Exception:  # noqa: BLE001
         used = 0
-    if used + weight > limit:
+    if limit > 0 and used + weight > limit:
         return ThrottleDecision(
             ok=False,
             reason=f"今日额度已用 {used}/{limit}（这次动作需要 {weight}）",
@@ -334,7 +346,7 @@ async def record_action(
         task_type,
         cost,
         used,
-        daily_limit_for(account, now=moment),
+        daily_limit_for(account, now=moment) or "不限",
     )
     return used
 
@@ -359,6 +371,7 @@ async def note_flood(account: TgAccount, seconds: int, *, now: Optional[datetime
 __all__ = [
     "ACTION_COST",
     "COST_FREE_TYPES",
+    "DAILY_QUOTA_ENABLED",
     "THROTTLE_KEY",
     "ThrottleDecision",
     "WARMUP_LADDER",

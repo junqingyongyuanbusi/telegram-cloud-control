@@ -489,7 +489,6 @@ export default function Accounts() {
       return;
     }
     const values = throttleForm.getFieldsValue() as {
-      daily?: number;
       interval?: number;
       resetFlood?: boolean;
       warmupNow?: boolean;
@@ -499,7 +498,7 @@ export default function Accounts() {
       const res = await accountBulkApiExtra.throttle({
         scope: 'selected',
         account_ids: selection.selectedIds,
-        daily_message_limit: values.daily ?? undefined,
+        // 每日额度已关闭（后端 throttle.DAILY_QUOTA_ENABLED=False），这里不再下发 daily_message_limit
         min_action_seconds: values.interval ?? undefined,
         reset_flood: Boolean(values.resetFlood),
         start_warmup_now: Boolean(values.warmupNow),
@@ -557,37 +556,17 @@ export default function Accounts() {
     },
   };
 
-  /** 今日额度：已用/上限；快满了标黄、满了标红——省得提交一堆任务才发现发不出去 */
-  const quotaColumn: ColumnsType<AccountOut>[number] = {
-    title: '今日额度',
-    key: 'quota',
-    width: 96,
-    render: (_: unknown, record) => {
-      const used = Number(record.used_today ?? 0);
-      const limit = Number(record.daily_limit ?? 0);
-      if (!limit) return <span className="tg-muted">—</span>;
-      const ratio = used / limit;
-      const tone = ratio >= 1 ? 'danger' : ratio >= 0.8 ? 'warning' : 'success';
-      return (
-        <Tooltip title={`今日已用 ${used} / 上限 ${limit}（一条群发按 3 点计；发完消息这里会自己刷新）`}>
-          <span className="tg-num" style={{ color: `var(--tg-color-${tone})` }}>
-            {used}/{limit}
-          </span>
-        </Tooltip>
-      );
-    },
-  };
+  // 每日额度已在后端关闭（throttle.DAILY_QUOTA_ENABLED=False），列表不再展示「今日额度」列
 
   const columns: ColumnsType<AccountOut> = [
     selectColumn,
     clientColumn,
     apiColumn,
     healthColumn,
-    quotaColumn,
     ...baseColumns,
   ];
 
-  // 额度或任务进度变了就刷新列表：不用手动点，发完一条这里就跟着动
+  // 任务进度变了就刷新列表：不用手动点，发完一条这里就跟着动
   useWsEvent('task', () => {
     void accounts.reload();
   });
@@ -1086,12 +1065,9 @@ export default function Accounts() {
             type="info"
             showIcon
             message={`将对选中的 ${selection.count} 个账号应用节流设置`}
-            description="每日上限与最小间隔留空表示不修改；填 0 表示回到「按号龄自动阶梯」（新号 20 条/天起，老号最多 200 条/天）。"
+            description="每日额度已关闭（所有账号不再受每日上限约束）。最小动作间隔留空表示不修改；填 0 表示回到「按号龄自动阶梯」。"
           />
-          <Form form={throttleForm} layout="vertical" initialValues={{ daily: undefined, interval: undefined }}>
-            <Form.Item label="每日发送上限" name="daily">
-              <InputNumber min={0} max={2000} style={{ width: 200 }} placeholder="留空不改；0 = 自动阶梯" />
-            </Form.Item>
+          <Form form={throttleForm} layout="vertical" initialValues={{ interval: undefined }}>
             <Form.Item label="最小动作间隔（秒）" name="interval">
               <InputNumber min={0} max={3600} style={{ width: 200 }} placeholder="留空不改；0 = 自动阶梯" />
             </Form.Item>

@@ -2949,6 +2949,7 @@ body .ant-spin-container::after {
 .tg-form-body > .tg-form-group-title,
 .tg-form-body > .tg-form-grid,
 .tg-form-body > .tg-section,
+.tg-form-body > .ant-collapse,
 .tg-form-body > .tg-preset-row,
 .tg-form-body > .ant-form-item:has(.tg-preset-row),
 .tg-form-body > .ant-form-item:has(.ant-segmented),

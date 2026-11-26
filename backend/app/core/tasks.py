@@ -186,6 +186,9 @@ async def fail_task(
     # 顶着一个「失败 5 次」的结论死掉，而它其实一次都没发出去。
     if "节流拦下" in task.error and task.attempts > 0:
         task.attempts -= 1
+    # 「等待上一轮」同理：轮次闸门是编排等待，不是一次真的执行失败。
+    if "等待上一轮" in task.error and task.attempts > 0:
+        task.attempts -= 1
     exhausted = task.attempts >= task.max_attempts
     if retryable and not exhausted:
         delay = requeue_after if requeue_after is not None else backoff_seconds(task.attempts)

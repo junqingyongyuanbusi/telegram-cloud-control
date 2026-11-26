@@ -102,6 +102,7 @@ class TaskType(str, enum.Enum):
     bulk_pm = "bulk_pm"                  # 批量私信：向目标逐个发消息
     group_broadcast = "group_broadcast"  # 群发：向指定群发消息
     material_send = "material_send"      # 素材群发：按素材库内容发送
+    join_and_send = "join_and_send"      # 加群群发：逐群「加群 → 验证 → 发内容」，一号一条任务
     join_group = "join_group"            # 加群：邀请链接 / 公开群
     leave_group = "leave_group"          # 退群
     force_add_member = "force_add_member"  # 强拉进群：把成员拉进群（需管理员）
@@ -147,6 +148,7 @@ TASK_TYPE_LABELS = {
     "bulk_pm": "批量私信",
     "group_broadcast": "群发",
     "material_send": "素材群发",
+    "join_and_send": "加群群发",
     "join_group": "加群",
     "leave_group": "退群",
     "force_add_member": "强拉进群",
