@@ -764,6 +764,7 @@ async def test_external_web_and_unverified_pending() -> None:
                 "include_linked_groups": False,
                 "enrich_tme": False,
                 "verify_activity": False,
+                "simple_screen": False,
                 "expand_external_web": True,
             }
         )
@@ -841,6 +842,7 @@ async def test_channel_posts_seed_and_stars_fallback() -> None:
                 "include_linked_groups": True,
                 "enrich_tme": False,
                 "verify_activity": False,
+                "simple_screen": False,
                 "expand_channel_posts": True,
                 "channel_posts_query_limit": 2,
                 "allow_paid_channel_posts": True,
@@ -884,6 +886,7 @@ async def test_channel_posts_seed_and_stars_fallback() -> None:
                 "include_linked_groups": False,
                 "enrich_tme": False,
                 "verify_activity": False,
+                "simple_screen": False,
                 "expand_channel_posts": True,
                 "channel_posts_query_limit": 2,
             }
@@ -962,6 +965,7 @@ async def test_common_chat_graph_and_rpc_budget() -> None:
                 "include_linked_groups": False,
                 "enrich_tme": False,
                 "verify_activity": False,
+                "simple_screen": False,
                 "expand_common_chats": True,
                 "common_chat_user_limit": 5,
             }
@@ -990,6 +994,7 @@ async def test_common_chat_graph_and_rpc_budget() -> None:
                 "include_linked_groups": False,
                 "enrich_tme": False,
                 "verify_activity": False,
+                "simple_screen": False,
             }
         )
         res_b = await _Harness(c_budget)._search_groups_precise(_FakeSession(), task_b, acc_b, task_b.payload)
@@ -997,6 +1002,91 @@ async def test_common_chat_graph_and_rpc_budget() -> None:
         assert res_b["source_stats"].get("rpc_used") == 20
         assert res_b["source_stats"].get("budget_stopped") == 1
         assert any("RPC 预算上限" in n for n in res_b["ai_notes"]), res_b["ai_notes"]
+    finally:
+        worker_gi.sleep_human = orig_sleep
+        worker_gi.upsert_profile = orig_upsert
+
+
+async def test_simple_screen_activity_and_speakable() -> None:
+    """简化筛选：只看近 3 个月有消息 + 可发言；评分门槛与成员数不参与判定。"""
+    orig_sleep = worker_gi.sleep_human
+    orig_upsert = worker_gi.upsert_profile
+    worker_gi.sleep_human = _noop_sleep
+    try:
+        async def _fake_upsert(_session: Any, *, tg_chat_id: int, **_kwargs: Any):
+            return SimpleNamespace(id=uuid.uuid5(uuid.NAMESPACE_DNS, f"simple-{tg_chat_id}"))
+
+        worker_gi.upsert_profile = _fake_upsert
+
+        readonly_group = Channel(
+            id=9103, title="Forex Thailand Readonly", username="fx_readonly_9103", participants_count=600
+        )
+        # Telethon 语义：True = 被禁止，故 send_messages=True 表示默认禁言（只读）
+        readonly_group.default_banned_rights = SimpleNamespace(send_messages=True, send_plain=True)
+
+        class _SimpleScreenClient:
+            async def __call__(self, req: Any) -> Any:
+                if isinstance(req, functions.contacts.SearchRequest):
+                    return SimpleNamespace(
+                        chats=[
+                            Channel(id=9101, title="Forex Thailand Active", username="fx_active_9101", participants_count=600),
+                            Channel(id=9102, title="Forex Thailand Dormant", username="fx_dormant_9102", participants_count=600),
+                            readonly_group,
+                        ]
+                    )
+                if isinstance(req, functions.channels.GetFullChannelRequest):
+                    return SimpleNamespace(
+                        full_chat=SimpleNamespace(about="Forex Thailand traders", participants_count=600, linked_chat_id=None),
+                        chats=[],
+                    )
+                return SimpleNamespace(chats=[])
+
+            async def iter_messages(self, chat: Any, limit: int = 20):
+                dormant = int(getattr(chat, "id", 0)) == 9102
+                when = datetime.now(tz=timezone.utc) - timedelta(days=120 if dormant else 0)
+                for _ in range(2):
+                    yield SimpleNamespace(date=when, text="hello forex thailand")
+
+        account, task = _make_account_and_task(
+            {
+                "mode": "precise",
+                "keywords": ["Forex Thailand"],
+                "country": "TH",
+                "languages": ["th", "en"],
+                "max_queries": 1,
+                "contacts_query_limit": 1,
+                "search_messages": False,
+                "expand_short_queries": False,
+                "scan_joined_groups": False,
+                "expand_recommendations": False,
+                "expand_channel_messages": False,
+                "include_linked_groups": False,
+                "enrich_tme": False,
+                "exclude_readonly": False,
+                "min_members": 5000,
+                "min_relevance_score": 100,
+            }
+        )
+        session = _FakeSession()
+        res = await _Harness(_SimpleScreenClient())._search_groups_precise(session, task, account, task.payload)
+        assert res["accepted"] == 1, res
+        assert res["rejected"] == 2, res
+        assert res["source_stats"].get("readonly") == 1, res["source_stats"]
+
+        saved = {
+            {col.key: val.value for col, val in stmt._values.items()}["tg_chat_id"]: {
+                col.key: val.value for col, val in stmt._values.items()
+            }
+            for stmt in session.executed
+            if getattr(stmt, "table", None) is not None and stmt.table.name == "group_search_matches"
+        }
+        assert saved[9101]["status"] == "accepted"
+        assert saved[9101]["raw"]["activity"]["recent_90d"] == 2
+        assert any("近3个月活跃" in reason for reason in saved[9101]["reasons"])
+        assert saved[9102]["status"] == "rejected"
+        assert "近3个月无消息（疑似沉寂）" in saved[9102]["reasons"]
+        assert saved[9103]["status"] == "rejected"
+        assert "默认权限为只读" in saved[9103]["reasons"]
     finally:
         worker_gi.sleep_human = orig_sleep
         worker_gi.upsert_profile = orig_upsert
@@ -1136,6 +1226,7 @@ async def _run_all() -> None:
     await test_external_web_and_unverified_pending()
     await test_channel_posts_seed_and_stars_fallback()
     await test_common_chat_graph_and_rpc_budget()
+    await test_simple_screen_activity_and_speakable()
     await test_batch_merge_and_hydration()
     print("group_precise_pipeline_check: ok")
 

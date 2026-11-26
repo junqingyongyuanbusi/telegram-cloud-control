@@ -164,7 +164,7 @@ async def search_public_groups(
     )
 
 
-@router.post("/search/precise", response_model=BulkResultResponse, summary="精准检索讨论组（多语言 + 类型/权限校验 + 评分）")
+@router.post("/search/precise", response_model=BulkResultResponse, summary="精准检索讨论组（多源召回 + 活跃/可发言校验）")
 async def precise_search_groups(
     payload: PreciseSearchRequest,
     session: AsyncSession = Depends(get_session),
@@ -192,6 +192,7 @@ async def precise_search_groups(
             "include_linked_groups": payload.include_linked_groups,
             "max_linked_chats": payload.max_linked_chats,
             "exclude_readonly": payload.exclude_readonly,
+            "simple_screen": payload.simple_screen,
             "search_messages": payload.search_messages,
             "message_search_queries": payload.message_search_queries,
             "message_search_pages": payload.message_search_pages,

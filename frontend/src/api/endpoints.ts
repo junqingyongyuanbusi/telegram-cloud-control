@@ -401,6 +401,7 @@ export const groupIntelApi = {
     include_linked_groups?: boolean;
     max_linked_chats?: number;
     exclude_readonly?: boolean;
+    simple_screen?: boolean;
     search_messages?: boolean;
     message_search_queries?: number;
     message_search_pages?: number;

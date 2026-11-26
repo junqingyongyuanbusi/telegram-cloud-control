@@ -1299,9 +1299,10 @@ class GroupIntelMixin:
         on_rpc_error: Optional[Callable[[BaseException], Awaitable[Any]]] = None,
         on_rpc: Optional[Callable[[], bool]] = None,
     ) -> tuple[Optional[dict[str, Any]], list[str]]:
-        """只读抽样最近 20 条消息，统计 7 天活跃度、发言人数与广告链接占比。"""
+        """只读抽样最近 20 条消息，统计 3 个月/7 天活跃度、发言人数与广告链接占比。"""
 
-        cutoff = now - timedelta(days=7)
+        cutoff_7d = now - timedelta(days=7)
+        cutoff_90d = now - timedelta(days=90)
         topics = canonical_topics(keywords)
         match_terms = list(
             dict.fromkeys(
@@ -1314,6 +1315,8 @@ class GroupIntelMixin:
         )
         total_sampled = 0
         recent_7d = 0
+        recent_90d = 0
+        last_message_at: Optional[datetime] = None
         ad_count = 0
         keyword_hits = 0
         senders: set[int] = set()
@@ -1326,8 +1329,12 @@ class GroupIntelMixin:
                 msg_date = getattr(message, "date", None)
                 if msg_date is not None:
                     aware = msg_date if msg_date.tzinfo else msg_date.replace(tzinfo=timezone.utc)
-                    if aware >= cutoff:
+                    if aware >= cutoff_7d:
                         recent_7d += 1
+                    if aware >= cutoff_90d:
+                        recent_90d += 1
+                    if last_message_at is None or aware > last_message_at:
+                        last_message_at = aware
                 sender_id = getattr(message, "sender_id", None)
                 if sender_id:
                     senders.add(int(sender_id))
@@ -1355,6 +1362,8 @@ class GroupIntelMixin:
             "checked": True,
             "total_sampled": total_sampled,
             "recent_7d": recent_7d,
+            "recent_90d": recent_90d,
+            "last_message_days": (now - last_message_at).days if last_message_at else None,
             "unique_senders": len(senders),
             "ad_ratio": round(ad_ratio, 2),
             "keyword_hits": keyword_hits,
@@ -1420,6 +1429,8 @@ class GroupIntelMixin:
         group_only = bool(payload.get("group_only", True))
         public_only = bool(payload.get("public_only", True))
         exclude_readonly = bool(payload.get("exclude_readonly", True))
+        # 简化筛选：只保留「近 3 个月有消息 + 可发言」，其余评分/成员数/AI 规则不参与判定。
+        simple_screen = bool(payload.get("simple_screen", True))
         enable_contacts_search = bool(payload.get("enable_contacts_search", True))
         contacts_query_limit = payload_int("contacts_query_limit", max_queries, 0, 300)
         include_linked = bool(payload.get("include_linked_groups", True))
@@ -1453,7 +1464,7 @@ class GroupIntelMixin:
         expand_common_chats = bool(payload.get("expand_common_chats", False)) or expand_scope_preset
         common_chat_user_limit = payload_int("common_chat_user_limit", 8, 0, 25)
         rpc_budget = payload_int("rpc_budget", 180, 20, 500)
-        verify_activity = bool(payload.get("verify_activity", True))
+        verify_activity = simple_screen or bool(payload.get("verify_activity", True))
         activity_check_limit = payload_int("activity_check_limit", 25, 0, 60)
         ai_expand = bool(payload.get("ai_expand", False))
         ai_review = bool(payload.get("ai_review", False))
@@ -2667,7 +2678,7 @@ class GroupIntelMixin:
                 if exclude_readonly and flags_pre["readonly"]:
                     continue
                 pre_members = self._chat_members_of(chat)
-                if min_members and pre_members is not None and pre_members < min_members:
+                if not simple_screen and min_members and pre_members is not None and pre_members < min_members:
                     continue
                 eligible_ids.append(cid)
 
@@ -2768,7 +2779,7 @@ class GroupIntelMixin:
                         source_counts=entry["source_counts"],
                         joined=entry["joined"],
                     ).score
-                    if s_pre >= 35 or entry["message_hits"] > 0:
+                    if simple_screen or s_pre >= 35 or entry["message_hits"] > 0:
                         pre_ranked.append((cid, s_pre))
                 pre_ranked.sort(
                     key=lambda pair: (pair[1], self._chat_members_of(candidates[pair[0]]["chat"]) or 0),
@@ -2876,7 +2887,7 @@ class GroupIntelMixin:
                 members = self._chat_members_of(chat, full_chat, tme_info)
                 if members is None and cached is not None:
                     members = cached.member_count
-                if min_members and (members or 0) < min_members:
+                if not simple_screen and min_members and (members or 0) < min_members:
                     metrics["dropped_members"] += 1
                     continue
 
@@ -2920,9 +2931,29 @@ class GroupIntelMixin:
                     elif not ai_row.get("relevant", True):
                         reasons.append("AI复核：疑似跑题或广告群")
 
-                status = classify(final_score, min_score=min_score)
-                if ai_row and not ai_row.get("relevant", True) and status == "accepted":
-                    status = "needs_review"
+                if simple_screen:
+                    activity = entry.get("activity")
+                    reasons = [r for r in reasons if not r.startswith(("近7天", "近期活跃"))]
+                    if activity is None:
+                        status = "needs_review"
+                        reasons.append("无法读取近期消息，活跃度待确认")
+                    elif activity.get("recent_90d"):
+                        status = "accepted"
+                        days = activity.get("last_message_days")
+                        suffix = f"，最近一条约 {days} 天前" if days is not None else ""
+                        reasons.append(
+                            f"近3个月活跃（抽样 {activity.get('total_sampled', 0)} 条中 "
+                            f"{activity['recent_90d']} 条{suffix}）"
+                        )
+                    else:
+                        status = "rejected"
+                        reasons.append("近3个月无消息（疑似沉寂）")
+                    if ai_row and not ai_row.get("relevant", True):
+                        reasons.append("AI复核：疑似跑题或广告群（仅提示，不影响判定）")
+                else:
+                    status = classify(final_score, min_score=min_score)
+                    if ai_row and not ai_row.get("relevant", True) and status == "accepted":
+                        status = "needs_review"
                 if group_only and not type_ok:
                     status = "rejected"
                     reasons.append(f"类型不合格：{type_reason}")
@@ -2930,7 +2961,7 @@ class GroupIntelMixin:
                 if public_only and not flags["is_public"]:
                     status = "rejected"
                     reasons.append("没有公开用户名")
-                if exclude_readonly and flags["readonly"]:
+                if (simple_screen or exclude_readonly) and flags["readonly"]:
                     status = "rejected"
                     reasons.append("默认权限为只读")
                     metrics["readonly"] += 1

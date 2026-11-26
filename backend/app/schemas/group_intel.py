@@ -277,7 +277,7 @@ class SearchGroupsRequest(BulkScopeRequest):
 
 
 class PreciseSearchRequest(BulkScopeRequest):
-    """多语言关键词精准检索讨论组（多源召回 + 严格校验 + 评分）。"""
+    """多语言关键词精准检索讨论组（多源召回 + 统一核验）。"""
 
     dispatch: str = Field(
         default="round_robin",
@@ -287,18 +287,24 @@ class PreciseSearchRequest(BulkScopeRequest):
     country: Optional[str] = Field(default=None, max_length=8, description="目标地区代码，如 TH / MY / SG / ID")
     languages: List[str] = Field(default_factory=list, max_length=6, description="目标语言，如 th/en/zh/ms")
     per_keyword: int = Field(default=50, ge=1, le=100, description="每条查询最多取多少个实体")
-    min_members: int = Field(default=0, ge=0, le=1000000, description="成员数门槛")
+    min_members: int = Field(default=0, ge=0, le=1000000, description="成员数门槛（simple_screen=true 时忽略）")
     max_queries: int = Field(default=120, ge=1, le=300, description="最多执行多少条查询")
     group_only: bool = Field(default=True, description="只保留讨论组（超级群），排除广播频道")
     public_only: bool = Field(default=True, description="只保留有公开用户名的实体")
     include_linked_groups: bool = Field(default=True, description="是否从频道展开 linked_chat 讨论组")
     max_linked_chats: int = Field(default=50, ge=0, le=200, description="最多检查多少个频道的 linked_chat")
     exclude_readonly: bool = Field(default=True, description="排除默认权限为只读的群")
+    simple_screen: bool = Field(
+        default=True,
+        description="简化筛选：只按「近 3 个月有消息 + 可发言」判定保留，忽略评分门槛、成员数与 AI 复核",
+    )
     search_messages: bool = Field(default=True, description="是否用 messages.searchGlobal 补充召回")
     message_search_queries: int = Field(default=5, ge=0, le=20, description="用前几条查询做消息搜索")
     message_search_pages: int = Field(default=2, ge=1, le=5, description="每条消息搜索查询最多翻页数")
     full_check_limit: int = Field(default=60, ge=0, le=200, description="最多对多少个讨论组拉 GetFullChannel")
-    min_relevance_score: int = Field(default=60, ge=0, le=100, description="保留门槛；低于它但 ≥40 的进待确认")
+    min_relevance_score: int = Field(
+        default=60, ge=0, le=100, description="保留门槛；低于它但 ≥40 的进待确认（simple_screen=true 时忽略）"
+    )
     enable_contacts_search: bool = Field(default=True, description="是否执行 contacts.search 原生搜索")
     contacts_query_limit: int = Field(default=120, ge=0, le=300, description="原生搜索最多执行多少条查询")
     expand_short_queries: bool = Field(
@@ -362,7 +368,7 @@ class PreciseSearchRequest(BulkScopeRequest):
     )
     ai_review: bool = Field(
         default=False,
-        description="可选：用已配置的 AI 模型对候选群做语义复核与反垃圾降噪（未配置时自动降级为规则打分）",
+        description="可选：AI 语义复核（simple_screen=true 时只作提示，不影响判定）",
     )
     candidate_links: List[str] = Field(
         default_factory=list,

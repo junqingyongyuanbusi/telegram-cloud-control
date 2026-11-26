@@ -148,14 +148,12 @@ export default function GroupIntel() {
   const [findExpandMessages, setFindExpandMessages] = useState(true);
   const [findExpandRecommendations, setFindExpandRecommendations] = useState(true);
   const [findEnrichTme, setFindEnrichTme] = useState(true);
-  // 精准检索：多语言 + 类型/权限校验 + 评分 + 图扩散 + 验活 + 可选 AI
+  // 精准检索：多源召回 + 近 3 个月活跃/可发言校验
   const [preciseOpen, setPreciseOpen] = useState(false);
   const [preciseBusy, setPreciseBusy] = useState(false);
   const [preciseKeywords, setPreciseKeywords] = useState('');
   const [preciseCountry, setPreciseCountry] = useState<string | undefined>('TH');
   const [preciseLanguages, setPreciseLanguages] = useState<string[]>(['th', 'en']);
-  const [preciseMinScore, setPreciseMinScore] = useState(60);
-  const [preciseMinMembers, setPreciseMinMembers] = useState(0);
   const [preciseFullLimit, setPreciseFullLimit] = useState(60);
   const [preciseContactsSearch, setPreciseContactsSearch] = useState(true);
   const [preciseContactsLimit, setPreciseContactsLimit] = useState(120);
@@ -187,9 +185,7 @@ export default function GroupIntel() {
   const [preciseCommonUserLimit, setPreciseCommonUserLimit] = useState(8);
   const [preciseRpcBudget, setPreciseRpcBudget] = useState(180);
   const [preciseAllowDuplicateAccounts, setPreciseAllowDuplicateAccounts] = useState(false);
-  const [preciseVerifyActivity, setPreciseVerifyActivity] = useState(true);
   const [preciseAiExpand, setPreciseAiExpand] = useState(false);
-  const [preciseAiReview, setPreciseAiReview] = useState(false);
   const [preciseCandidateLinks, setPreciseCandidateLinks] = useState('');
   const [preciseResultTab, setPreciseResultTab] = useState<'verified' | 'pending'>('verified');
   const [preciseTaskId, setPreciseTaskId] = useState<string | null>(null);
@@ -1163,7 +1159,7 @@ export default function GroupIntel() {
       <Modal
         open={preciseOpen}
         width={1040}
-        title="精准找群：多源召回 · 统一核验 · 分层展示"
+        title="精准找群：多源召回 · 统一核验"
         okText={preciseBatchId || preciseTaskId ? '重新检索' : '开始检索'}
         cancelText="关闭"
         confirmLoading={preciseBusy}
@@ -1195,7 +1191,6 @@ export default function GroupIntel() {
               country: preciseCountry || null,
               languages: preciseLanguages,
               per_keyword: 50,
-              min_members: preciseMinMembers,
               max_queries: 120,
               group_only: true,
               public_only: true,
@@ -1208,7 +1203,7 @@ export default function GroupIntel() {
               message_search_queries: preciseMessageQueries,
               message_search_pages: preciseMessagePages,
               full_check_limit: preciseFullLimit,
-              min_relevance_score: preciseMinScore,
+              simple_screen: true,
               expand_short_queries: preciseShortQueries,
               short_query_limit: preciseShortLimit,
               expand_recommendations: preciseRecommendations,
@@ -1232,10 +1227,9 @@ export default function GroupIntel() {
               expand_common_chats: preciseCommonChats,
               common_chat_user_limit: preciseCommonUserLimit,
               rpc_budget: preciseRpcBudget,
-              verify_activity: preciseVerifyActivity,
-              activity_check_limit: 25,
+              verify_activity: true,
+              activity_check_limit: 60,
               ai_expand: preciseAiExpand,
-              ai_review: preciseAiReview,
               candidate_links: candidateLinks,
             });
             setPreciseRows([]);
@@ -1257,8 +1251,8 @@ export default function GroupIntel() {
             <Alert
               type="info"
               showIcon
-              message="多源召回 → 统一候选池 → 统一 Telegram 核验 → 交叉可信度评分"
-              description="所有外部网页/目录、帖子搜索与图扩展仅向候选池提供候选，绝不跳过讨论组类型、公开性、只读权限、活跃度与相关性评分。私群邀请单独进「私群线索」。"
+              message="多源召回 → 统一候选池 → 统一 Telegram 核验"
+              description="当前只保留「近 3 个月有消息 + 可发言」的讨论组；评分门槛、成员数、AI 复核等其他规则暂不参与判定。私群邀请单独进「私群线索」。"
             />
             <div className="tg-stack" style={{ gap: 2 }}>
               <span>关键词（逗号或换行分隔，最多 20 个）</span>
@@ -1322,27 +1316,7 @@ export default function GroupIntel() {
                   ]}
                 />
               </span>
-              <span>
-                低分门槛
-                <InputNumber
-                  min={40}
-                  max={100}
-                  value={preciseMinScore}
-                  onChange={(v) => setPreciseMinScore(Number(v) || 60)}
-                  style={{ width: 72, marginLeft: 6 }}
-                />
-              </span>
-              <span>
-                成员数 ≥
-                <InputNumber
-                  min={0}
-                  max={1000000}
-                  step={50}
-                  value={preciseMinMembers}
-                  onChange={(v) => setPreciseMinMembers(Number(v) || 0)}
-                  style={{ width: 90, marginLeft: 6 }}
-                />
-              </span>
+              <Tag color="green">筛选规则：近 3 个月有消息 + 可发言（其他规则已隐藏）</Tag>
               <span>
                 全检上限
                 <InputNumber
@@ -1404,9 +1378,6 @@ export default function GroupIntel() {
                     <Checkbox checked={preciseEnrichTme} onChange={(e) => setPreciseEnrichTme(e.target.checked)}>
                       t.me 页面补充 (tme_preview)
                     </Checkbox>
-                    <Checkbox checked={preciseVerifyActivity} onChange={(e) => setPreciseVerifyActivity(e.target.checked)}>
-                      近 20 条真人群验活
-                    </Checkbox>
                   </Space>
                 </div>
 
@@ -1440,9 +1411,6 @@ export default function GroupIntel() {
                     </Checkbox>
                     <Checkbox checked={preciseAiExpand} onChange={(e) => setPreciseAiExpand(e.target.checked)}>
                       AI 同义扩词
-                    </Checkbox>
-                    <Checkbox checked={preciseAiReview} onChange={(e) => setPreciseAiReview(e.target.checked)}>
-                      AI 语义复核
                     </Checkbox>
                   </Space>
                 </div>
