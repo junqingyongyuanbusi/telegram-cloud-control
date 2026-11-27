@@ -221,7 +221,14 @@ export function DataTable<T extends object>({
     if (onSortChange) {
       const columnKey = String(single?.columnKey ?? (single?.field as string) ?? '');
       const field = sortableColumns?.[columnKey] ?? (single?.order ? columnKey : null);
-      onSortChange(single?.order ? field : null, (single?.order as 'asc' | 'desc' | undefined) ?? null);
+      // antd 给的是 ascend / descend，接口约定是 asc / desc；
+      // 直接透传会把非法值写进查询（翻页时也会带出当前排序，导致一翻页就 400）。
+      const direction =
+        single?.order === 'ascend' ? 'asc' : single?.order === 'descend' ? 'desc' : null;
+      const nextSort = direction ? field : null;
+      if (nextSort !== (sortField ?? null) || direction !== (sortOrder ?? null)) {
+        onSortChange(nextSort, direction);
+      }
     }
     if (onPageChange) {
       const nextPage = pagination.current ?? 1;
