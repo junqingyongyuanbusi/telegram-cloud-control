@@ -13,9 +13,11 @@ import { useEffect, useMemo, useState } from 'react';
 import { Alert, Button, Form, Input, Modal, Segmented, Select, Space, Switch, Table, Tag, Typography, Upload, Tooltip } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
 import { InboxOutlined, RocketOutlined } from '@ant-design/icons';
+import { useTranslation } from 'react-i18next';
 import { accountImportApi, groupApi, proxyApi } from '../../api/endpoints';
 import { useAsyncData } from '../../hooks/useAsyncData';
 import { notifySuccess, toast } from '../../utils/feedback';
+import { isEnglish } from '../../i18n';
 import type { ImportItemPreview, ImportResponse, ImportResultItem } from '../../api/types';
 
 interface Props {
@@ -25,14 +27,8 @@ interface Props {
   onImported?: (result: ImportResponse) => void;
 }
 
-const KIND_TIP: Record<string, string> = {
-  phone: '每行一个号码，号码后可用逗号加备注；导入后走验证码登录拿会话。',
-  session_string: '每行一个 Telethon StringSession；也支持 `手机号,session` 或 `session,备注`。',
-  session_file: '选一个或多个 .session 文件（Telethon / Pyrogram 的 SQLite 会话），自动转成 StringSession。',
-  tdata: '把 Telegram Desktop 的 tdata 目录打包成 zip 上传；一个包里可以含多个账号。',
-};
-
 export default function AccountImportModal({ open, onClose, onImported }: Props) {
+  const { t, i18n } = useTranslation('accounts');
   const [kind, setKind] = useState('');
   const [text, setText] = useState('');
   const [files, setFiles] = useState<File[]>([]);
@@ -85,7 +81,7 @@ export default function AccountImportModal({ open, onClose, onImported }: Props)
 
   const handleParse = async () => {
     if (!text.trim() && files.length === 0) {
-      toast.warning('先粘贴清单或选择文件');
+      toast.warning(t('importModal.needInputWarning'));
       return;
     }
     setBusy(true);
@@ -93,7 +89,7 @@ export default function AccountImportModal({ open, onClose, onImported }: Props)
       const res = await accountImportApi.parse(buildForm());
       setPreview(res.items);
       setPreviewMeta({ total: res.total, ready: res.ready, failed: res.failed });
-      if (res.failed) toast.warning(`有 ${res.failed} 条解析失败，下面标红的原因可以先改掉`);
+      if (res.failed) toast.warning(t('importModal.parseFailedWarning', { count: res.failed }));
     } catch {
       /* client 已统一提示 */
     } finally {
@@ -116,25 +112,26 @@ export default function AccountImportModal({ open, onClose, onImported }: Props)
   };
 
   const previewColumns: ColumnsType<ImportItemPreview> = [
-    { title: '来源', dataIndex: 'source', width: 110, render: (value: string) => <Tag>{value}</Tag> },
-    { title: '标识', dataIndex: 'label', width: 200, ellipsis: true },
+    { title: t('importModal.previewColumns.source'), dataIndex: 'source', width: 110, render: (value: string) => <Tag>{value}</Tag> },
+    { title: t('importModal.previewColumns.label'), dataIndex: 'label', width: 200, ellipsis: true },
     {
-      title: '会话',
+      title: t('importModal.previewColumns.session'),
       dataIndex: 'has_session',
       width: 80,
-      render: (value: boolean) => (value ? <Tag color="green">已带</Tag> : <Tag>待登录</Tag>),
+      render: (value: boolean) =>
+        value ? <Tag color="green">{t('importModal.previewColumns.hasSession')}</Tag> : <Tag>{t('importModal.previewColumns.pendingLogin')}</Tag>,
     },
-    { title: 'DC', dataIndex: 'dc_id', width: 60, render: (value: number | null) => value ?? '—' },
+    { title: t('importModal.previewColumns.dc'), dataIndex: 'dc_id', width: 60, render: (value: number | null) => value ?? '—' },
     {
-      title: '解析结果',
+      title: t('importModal.previewColumns.parseResult'),
       dataIndex: 'error',
       width: 320,
       ellipsis: { showTitle: false },
       render: (value: string | null) => {
-        const text = value || '可以导入';
+        const displayText = value || t('importModal.previewColumns.readyToImport');
         return (
-          <Tooltip title={text} placement="topLeft">
-            <span className={value ? 'tg-clamp-cell tg-text-danger' : 'tg-clamp-cell'}>{text}</span>
+          <Tooltip title={displayText} placement="topLeft">
+            <span className={value ? 'tg-clamp-cell tg-text-danger' : 'tg-clamp-cell'}>{displayText}</span>
           </Tooltip>
         );
       },
@@ -142,20 +139,32 @@ export default function AccountImportModal({ open, onClose, onImported }: Props)
   ];
 
   const resultColumns: ColumnsType<ImportResultItem> = [
-    { title: '标识', dataIndex: 'label', width: 200, ellipsis: true },
+    { title: t('importModal.resultColumns.label'), dataIndex: 'label', width: 200, ellipsis: true },
     {
-      title: '结果',
+      title: t('importModal.resultColumns.result'),
       dataIndex: 'ok',
       width: 90,
-      render: (value: boolean) => (value ? <Tag color="green">成功</Tag> : <Tag color="red">跳过</Tag>),
+      render: (value: boolean) =>
+        value ? <Tag color="green">{t('importModal.resultColumns.ok')}</Tag> : <Tag color="red">{t('importModal.resultColumns.skipped')}</Tag>,
     },
-    { title: '说明', dataIndex: 'message', ellipsis: true },
+    { title: t('importModal.resultColumns.message'), dataIndex: 'message', ellipsis: true },
   ];
+
+  const english = isEnglish(i18n.language);
+  const formatLabelOf = (item: { kind: string; label: string }) =>
+    english
+      ? t(`importModal.formatLabels.${item.kind}`, { defaultValue: item.label })
+      : item.label || t(`importModal.formatLabels.${item.kind}`, { defaultValue: item.kind });
+
+  const formatTipOf = (k: string, backendDesc?: string) =>
+    english
+      ? t(`importModal.tips.${k}`, { defaultValue: backendDesc ?? '' })
+      : backendDesc || t(`importModal.tips.${k}`, { defaultValue: '' });
 
   return (
     <Modal
       open={open}
-      title="批量导入账号"
+      title={t('importModal.title')}
       width={860}
       onCancel={() => {
         reset();
@@ -164,7 +173,7 @@ export default function AccountImportModal({ open, onClose, onImported }: Props)
       footer={
         <Space>
           <Button onClick={handleParse} loading={busy} disabled={tdataBlocked}>
-            预览解析结果
+            {t('importModal.previewBtn')}
           </Button>
           <Button
             type="primary"
@@ -173,7 +182,7 @@ export default function AccountImportModal({ open, onClose, onImported }: Props)
             disabled={tdataBlocked}
             onClick={() => void handleImport()}
           >
-            开始导入
+            {t('importModal.startBtn')}
           </Button>
         </Space>
       }
@@ -192,21 +201,21 @@ export default function AccountImportModal({ open, onClose, onImported }: Props)
             setPreview(null);
             setResult(null);
           }}
-          options={(formats.data?.formats ?? []).map((item) => ({ label: item.label, value: item.kind }))}
+          options={(formats.data?.formats ?? []).map((item) => ({ label: formatLabelOf(item), value: item.kind }))}
           block
         />
 
         <Alert
           type={tdataBlocked ? 'warning' : 'info'}
           showIcon
-          message={activeFormat?.label ?? '导入方式'}
+          message={activeFormat ? formatLabelOf(activeFormat) : t('importModal.defaultModeTitle')}
           description={
             <>
-              {activeFormat?.description ?? KIND_TIP[kind]}
+              {formatTipOf(kind, activeFormat?.description)}
               {tdataBlocked ? (
                 <>
                   <br />
-                  {activeFormat?.hint ?? '当前环境没有安装 opentele2，tdata 转换不可用；可先用 .session 文件或验证码登录导入。'}
+                  {english ? t('importModal.tdataUnavailableHint') : activeFormat?.hint ?? t('importModal.tdataUnavailableHint')}
                 </>
               ) : null}
             </>
@@ -220,8 +229,8 @@ export default function AccountImportModal({ open, onClose, onImported }: Props)
             onChange={(event) => setText(event.target.value)}
             placeholder={
               kind === 'phone'
-                ? '+12025550143\n+447700900123,备注'
-                : '1BVtsOK...（一行一个）\n+12025550143,1BVtsOK...'
+                ? t('importModal.phonePlaceholder')
+                : t('importModal.sessionPlaceholder')
             }
             style={{ fontFamily: 'var(--tg-font-family-mono, monospace)' }}
           />
@@ -239,42 +248,49 @@ export default function AccountImportModal({ open, onClose, onImported }: Props)
             <p className="ant-upload-drag-icon">
               <InboxOutlined />
             </p>
-            <p className="ant-upload-text">点击或拖拽文件到这里（{activeFormat?.accept ?? '.session / .zip'}）</p>
-            <p className="ant-upload-hint">可一次选多个文件；点「预览解析结果」先看内容再导入</p>
+            <p className="ant-upload-text">
+              {t('importModal.dragText', { accept: activeFormat?.accept ?? '.session / .zip' })}
+            </p>
+            <p className="ant-upload-hint">{t('importModal.dragHint')}</p>
           </Upload.Dragger>
         )}
 
         <Form layout="vertical" size="small">
           <Space wrap align="start">
-            <Form.Item label="绑定代理（可选）" style={{ marginBottom: 0 }}>
+            <Form.Item label={t('importModal.bindProxy')} style={{ marginBottom: 0 }}>
               <Select
                 allowClear
                 style={{ width: 200 }}
-                placeholder="不绑定"
+                placeholder={t('importModal.noProxy')}
                 value={proxyId}
                 loading={proxies.loading}
                 onChange={setProxyId}
-                options={(proxies.data ?? []).map((item) => ({ value: item.id, label: `${item.name}（${item.endpoint}）` }))}
+                options={(proxies.data ?? []).map((item) => ({ value: item.id, label: `${item.name} (${item.endpoint})` }))}
               />
             </Form.Item>
-            <Form.Item label="归入分组（可选）" style={{ marginBottom: 0 }}>
+            <Form.Item label={t('importModal.assignGroup')} style={{ marginBottom: 0 }}>
               <Select
                 allowClear
                 style={{ width: 180 }}
-                placeholder="不分组"
+                placeholder={t('importModal.noGroup')}
                 value={groupId}
                 loading={groups.loading}
                 onChange={setGroupId}
                 options={(groups.data ?? []).map((item) => ({ value: item.id, label: item.name }))}
               />
             </Form.Item>
-            <Form.Item label="备注" style={{ marginBottom: 0 }}>
-              <Input style={{ width: 200 }} value={remark} onChange={(event) => setRemark(event.target.value)} placeholder="例如：八月推广批" />
+            <Form.Item label={t('importModal.remark')} style={{ marginBottom: 0 }}>
+              <Input
+                style={{ width: 200 }}
+                value={remark}
+                onChange={(event) => setRemark(event.target.value)}
+                placeholder={t('importModal.remarkPlaceholder')}
+              />
             </Form.Item>
-            <Form.Item label="养号起点" style={{ marginBottom: 0 }}>
+            <Form.Item label={t('importModal.warmupStart')} style={{ marginBottom: 0 }}>
               <Switch checked={startWarmup} onChange={setStartWarmup} />
               <Typography.Text type="secondary" style={{ marginLeft: 8, fontSize: 'var(--tg-font-size-xs)' }}>
-                从今天起按最严间隔限速（每日额度已不限）
+                {t('importModal.warmupHint')}
               </Typography.Text>
             </Form.Item>
           </Space>
@@ -283,8 +299,8 @@ export default function AccountImportModal({ open, onClose, onImported }: Props)
         {previewMeta ? (
           <div>
             <Typography.Text type="secondary" style={{ fontSize: 'var(--tg-font-size-sm)' }}>
-              解析出 {previewMeta.total} 条：可导入 {previewMeta.ready} 条
-              {previewMeta.failed ? `，${previewMeta.failed} 条有问题` : ''}
+              {t('importModal.previewSummary', { total: previewMeta.total, ready: previewMeta.ready })}
+              {previewMeta.failed ? t('importModal.previewFailedSuffix', { count: previewMeta.failed }) : ''}
             </Typography.Text>
             <Table<ImportItemPreview>
               size="small"

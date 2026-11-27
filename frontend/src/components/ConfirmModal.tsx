@@ -25,6 +25,7 @@
 import { useEffect, useState, type ReactNode } from 'react';
 import { Alert, Button, Input, Modal, Typography } from 'antd';
 import { ExclamationCircleFilled } from '@ant-design/icons';
+import { useTranslation } from 'react-i18next';
 
 export interface ConfirmModalProps {
   open: boolean;
@@ -48,8 +49,8 @@ export function ConfirmModal({
   title,
   content,
   description,
-  okText = '确定',
-  cancelText = '取消',
+  okText,
+  cancelText,
   danger = false,
   loading = false,
   onOk,
@@ -59,6 +60,7 @@ export function ConfirmModal({
   extra,
   width = 420,
 }: ConfirmModalProps) {
+  const { t } = useTranslation('common');
   const [submitting, setSubmitting] = useState(false);
   const [phrase, setPhrase] = useState('');
 
@@ -99,7 +101,7 @@ export function ConfirmModal({
       confirmLoading={loading || submitting}
       footer={[
         <Button key="cancel" onClick={onCancel}>
-          {cancelText}
+          {cancelText ?? t('cancel')}
         </Button>,
         <Button
           key="ok"
@@ -109,7 +111,7 @@ export function ConfirmModal({
           disabled={!phraseOk}
           onClick={handleOk}
         >
-          {okText}
+          {okText ?? t('ok')}
         </Button>,
       ]}
     >
@@ -125,7 +127,7 @@ export function ConfirmModal({
             <Alert
               type="warning"
               showIcon
-              message={`这是不可撤销的操作，请输入「${confirmPhrase}」确认`}
+              message={t('confirmPhrasePrompt', { phrase: confirmPhrase })}
               style={{ marginBottom: 'var(--tg-space-md)' }}
             />
             <Input

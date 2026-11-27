@@ -13,6 +13,7 @@
 import { Component, type ErrorInfo, type ReactNode } from 'react';
 import { Button } from 'antd';
 import { ReloadOutlined } from '@ant-design/icons';
+import i18n from '../i18n';
 import ErrorState from './ErrorState';
 
 export interface ErrorBoundaryProps {
@@ -54,21 +55,21 @@ export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundarySt
     return (
       <ErrorState
         compact={compact}
-        title={title ?? '页面出错了'}
+        title={title ?? i18n.t('common:pageErrorTitle')}
         description={
           description ?? (
             <span>
-              这个区块渲染时抛出异常，其它部分仍可正常使用。可以点「重试」重新渲染，或刷新整个页面。
+              {i18n.t('common:pageErrorDesc')}
               <br />
               <span className="tg-mono tg-break">{error.message || String(error)}</span>
             </span>
           )
         }
         onRetry={this.reset}
-        retryText="重试"
+        retryText={i18n.t('common:retry')}
         extra={
           <Button type="text" icon={<ReloadOutlined />} onClick={() => window.location.reload()}>
-            刷新页面
+            {i18n.t('common:reloadPage')}
           </Button>
         }
       />

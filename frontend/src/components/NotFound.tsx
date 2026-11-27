@@ -6,6 +6,7 @@
 import { Button } from 'antd';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { HomeOutlined } from '@ant-design/icons';
+import { useTranslation } from 'react-i18next';
 import EmptyState from './EmptyState';
 
 export interface NotFoundProps {
@@ -14,6 +15,7 @@ export interface NotFoundProps {
 }
 
 export function NotFound({ pathname, onBack }: NotFoundProps) {
+  const { t } = useTranslation('common');
   const navigate = useNavigate();
   const location = useLocation();
   const current = pathname ?? location.pathname;
@@ -22,11 +24,12 @@ export function NotFound({ pathname, onBack }: NotFoundProps) {
       <div className="tg-card" style={{ padding: 'var(--tg-space-xl)' }}>
         <EmptyState
           art="search"
-          title="页面不存在"
+          title={t('notFoundTitle')}
           description={
             <>
-              没有找到 <code className="tg-mono">{current}</code> 对应的页面。
-              可能是链接过期，或侧栏里已经改了入口。
+              {t('notFoundDescPrefix')}
+              <code className="tg-mono">{current}</code>
+              {t('notFoundDescSuffix')}
             </>
           }
           action={
@@ -38,7 +41,7 @@ export function NotFound({ pathname, onBack }: NotFoundProps) {
                 else navigate('/');
               }}
             >
-              回到工作台
+              {t('backToDashboard')}
             </Button>
           }
         />

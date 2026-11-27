@@ -7,6 +7,7 @@
 import { Dropdown, Tooltip } from 'antd';
 import type { MenuProps } from 'antd';
 import { BgColorsOutlined, CheckOutlined, MoonOutlined, SunOutlined } from '@ant-design/icons';
+import { useTranslation } from 'react-i18next';
 import { useTheme } from '../../theme';
 import type { ThemePreference } from '../../theme';
 
@@ -14,30 +15,26 @@ export interface ThemeToggleProps {
   size?: 'sm' | 'md';
 }
 
-const LABELS: Record<ThemePreference, string> = {
-  light: '浅色',
-  dark: '深色',
-  system: '跟随系统',
-};
-
 export function ThemeToggle({ size = 'md' }: ThemeToggleProps) {
+  const { t } = useTranslation('shell');
   const { preference, mode, setPreference } = useTheme();
+  const currentLabel = t(`theme.${preference}`);
 
   const items: MenuProps['items'] = (['light', 'dark', 'system'] as ThemePreference[]).map((value) => ({
     key: value,
     icon: value === 'light' ? <SunOutlined /> : value === 'dark' ? <MoonOutlined /> : <BgColorsOutlined />,
-    label: LABELS[value],
+    label: t(`theme.${value}`),
     onClick: () => setPreference(value),
     extra: preference === value ? <CheckOutlined style={{ color: 'var(--tg-color-primary)' }} /> : null,
   }));
 
   return (
     <Dropdown menu={{ items, selectedKeys: [preference] }} trigger={['click']} placement="bottomRight">
-      <Tooltip title={`主题：${LABELS[preference]}`}>
+      <Tooltip title={t('theme.tooltip', { label: currentLabel })}>
         <button
           type="button"
           className="app-icon-button"
-          aria-label={`主题：${LABELS[preference]}`}
+          aria-label={t('theme.tooltip', { label: currentLabel })}
           style={size === 'sm' ? { width: 28, height: 28 } : undefined}
         >
           {mode === 'dark' ? <MoonOutlined /> : <SunOutlined />}

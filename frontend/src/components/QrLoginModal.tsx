@@ -9,6 +9,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { Alert, Button, Form, Input, Modal, Select, Space, Spin, Typography } from 'antd';
 import QRCode from 'qrcode';
+import { useTranslation } from 'react-i18next';
 import { accountQrLoginApi } from '../api/endpoints';
 import { ApiError } from '../api/client';
 import type { AccountOut, GroupOut, ProxyOut, QrLoginState } from '../api/types';
@@ -26,6 +27,7 @@ interface Props {
 const TERMINAL = new Set(['done', 'expired', 'failed', 'cancelled']);
 
 export function QrLoginModal({ open, account, groups, proxies, onClose, onDone }: Props) {
+  const { t } = useTranslation(['accounts', 'common']);
   const [form] = Form.useForm();
   const [pwdForm] = Form.useForm<{ password: string }>();
   const [loginId, setLoginId] = useState<string | null>(null);
@@ -104,7 +106,7 @@ export function QrLoginModal({ open, account, groups, proxies, onClose, onDone }
         if (err instanceof ApiError && err.status === 404) {
           stopped = true;
           setState((prev) =>
-            prev ? { ...prev, status: 'expired', message: '扫码会话已过期，请重新生成' } : prev,
+            prev ? { ...prev, status: 'expired', message: t('accounts:qrLogin.sessionExpired') } : prev,
           );
           return;
         }
@@ -142,11 +144,11 @@ export function QrLoginModal({ open, account, groups, proxies, onClose, onDone }
         status: res.status,
         qr_url: null,
         expires_at: null,
-        message: '已排队生成二维码，请稍候…',
+        message: t('accounts:qrLogin.queuedMessage'),
         phone_masked: account?.phone_masked ?? null,
       });
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : '生成二维码失败，请稍后重试');
+      setError(err instanceof ApiError ? err.message : t('accounts:qrLogin.startFailed'));
     } finally {
       setStarting(false);
     }
@@ -160,10 +162,10 @@ export function QrLoginModal({ open, account, groups, proxies, onClose, onDone }
       await accountQrLoginApi.password(loginId, values.password);
       pwdForm.resetFields();
       setState((prev) =>
-        prev ? { ...prev, message: '密码已提交，正在校验…' } : prev,
+        prev ? { ...prev, message: t('accounts:qrLogin.passwordSubmitted') } : prev,
       );
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : '提交密码失败，请重试');
+      setError(err instanceof ApiError ? err.message : t('accounts:qrLogin.passwordFailed'));
     } finally {
       setPwdSending(false);
     }
@@ -191,10 +193,12 @@ export function QrLoginModal({ open, account, groups, proxies, onClose, onDone }
         <Alert
           type="success"
           showIcon
-          message="扫码登录成功"
+          message={t('accounts:qrLogin.doneTitle')}
           description={
             <span>
-              会话已加密写回账号{state.phone_masked ? `（${state.phone_masked}）` : ''}，可以关闭本窗口。
+              {state.phone_masked
+                ? t('accounts:qrLogin.doneDescWithPhone', { phone: state.phone_masked })
+                : t('accounts:qrLogin.doneDesc')}
             </span>
           }
         />
@@ -205,11 +209,13 @@ export function QrLoginModal({ open, account, groups, proxies, onClose, onDone }
         <Alert
           type="info"
           showIcon
-          message={state.message || '请用手机 Telegram 扫码'}
+          message={state.message || t('accounts:qrLogin.pendingTitleFallback')}
           description={
             expiresIn !== null
-              ? `二维码 ${expiresIn > 0 ? `${expiresIn} 秒后` : '即将'}自动刷新，无需手动操作。`
-              : '正在申请二维码…'
+              ? expiresIn > 0
+                ? t('accounts:qrLogin.refreshInSeconds', { seconds: expiresIn })
+                : t('accounts:qrLogin.refreshSoon')
+              : t('accounts:qrLogin.requestingQr')
           }
         />
       );
@@ -219,24 +225,28 @@ export function QrLoginModal({ open, account, groups, proxies, onClose, onDone }
         <Alert
           type="info"
           showIcon
-          message="手机端已确认，该账号开启了两步验证"
-          description="请输入两步验证密码；密码只用于本次登录，校验后立即丢弃。"
+          message={t('accounts:qrLogin.passwordRequiredTitle')}
+          description={t('accounts:qrLogin.passwordRequiredDesc')}
         />
       );
     }
-    return <Alert type="warning" showIcon message={state.message || '扫码未完成'} />;
+    return <Alert type="warning" showIcon message={state.message || t('accounts:qrLogin.incompleteFallback')} />;
   };
 
   return (
     <Modal
       open={open}
-      title={account ? `扫码重新登录：${account.phone_masked}` : '扫码登录新账号'}
+      title={
+        account
+          ? t('accounts:qrLogin.titleRelogin', { phone: account.phone_masked })
+          : t('accounts:qrLogin.titleNew')
+      }
       onCancel={() => void handleClose()}
       maskClosable={false}
       width={560}
       footer={
         <Space>
-          <Button onClick={() => void handleClose()}>关闭</Button>
+          <Button onClick={() => void handleClose()}>{t('common:close')}</Button>
           {!loginId || (state && TERMINAL.has(state.status) && state.status !== 'done') ? (
             <Button
               type="primary"
@@ -252,7 +262,7 @@ export function QrLoginModal({ open, account, groups, proxies, onClose, onDone }
                 void handleStart(values);
               }}
             >
-              {loginId ? '重新生成' : '生成二维码'}
+              {loginId ? t('accounts:qrLogin.regenerate') : t('accounts:qrLogin.generate')}
             </Button>
           ) : null}
         </Space>
@@ -267,18 +277,18 @@ export function QrLoginModal({ open, account, groups, proxies, onClose, onDone }
         autoComplete="off"
         disabled={Boolean(loginId)}
       >
-        <Form.Item label="分组（可选）" name="group_id">
+        <Form.Item label={t('accounts:qrLogin.groupLabel')} name="group_id">
           <Select
             allowClear
-            placeholder="不选则不分组"
+            placeholder={t('accounts:qrLogin.groupPlaceholder')}
             options={groups.map((g) => ({ value: g.id, label: g.name }))}
           />
         </Form.Item>
-        <Form.Item label="代理（可选）" name="proxy_id">
+        <Form.Item label={t('accounts:qrLogin.proxyLabel')} name="proxy_id">
           <Select
             allowClear
-            placeholder="不选则直连"
-            options={proxies.map((p) => ({ value: p.id, label: `${p.name}（${p.endpoint}）` }))}
+            placeholder={t('accounts:qrLogin.proxyPlaceholder')}
+            options={proxies.map((p) => ({ value: p.id, label: `${p.name} (${p.endpoint})` }))}
           />
         </Form.Item>
       </Form>
@@ -291,13 +301,13 @@ export function QrLoginModal({ open, account, groups, proxies, onClose, onDone }
               {image ? (
                 <img
                   src={image}
-                  alt="Telegram 扫码登录二维码"
+                  alt={t('accounts:qrLogin.qrAlt')}
                   width={240}
                   height={240}
                   style={{ display: 'block', margin: '0 auto', borderRadius: 8 }}
                 />
               ) : (
-                <Spin tip="正在生成二维码…" style={{ marginTop: 96 }} />
+                <Spin tip={t('accounts:qrLogin.generatingQr')} style={{ marginTop: 96 }} />
               )}
             </div>
           ) : null}
@@ -311,29 +321,29 @@ export function QrLoginModal({ open, account, groups, proxies, onClose, onDone }
             >
               <Form.Item
                 name="password"
-                rules={[{ required: true, message: '请输入两步验证密码' }]}
+                rules={[{ required: true, message: t('accounts:qrLogin.passwordRequired') }]}
                 style={{ flex: 1, marginBottom: 0 }}
               >
                 <Input.Password
-                  placeholder="两步验证密码"
+                  placeholder={t('accounts:qrLogin.passwordPlaceholder')}
                   autoComplete="current-password"
                   allowClear
                 />
               </Form.Item>
               <Form.Item style={{ marginBottom: 0 }}>
                 <Button type="primary" htmlType="submit" loading={pwdSending}>
-                  提交密码
+                  {t('accounts:qrLogin.submitPassword')}
                 </Button>
               </Form.Item>
             </Form>
           ) : null}
           {state?.status === 'done' ? (
             <Typography.Paragraph type="secondary" style={{ marginBottom: 0 }}>
-              手机端已确认，Worker 正在把会话写回账号；列表会自动刷新。
+              {t('accounts:qrLogin.doneParagraph')}
             </Typography.Paragraph>
           ) : null}
           <Typography.Text type="secondary">
-            手机 Telegram → 设置 → 设备 → 扫描二维码。扫码确认在手机上完成；若账号开了两步验证，确认后按上方提示补密码。
+            {t('accounts:qrLogin.instructions')}
           </Typography.Text>
         </Space>
       ) : null}

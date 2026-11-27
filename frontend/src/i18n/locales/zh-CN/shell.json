@@ -1,0 +1,121 @@
+{
+  "nav": {
+    "ariaLabel": "主导航",
+    "groups": {
+      "overview": "总览",
+      "accounts": "账号",
+      "messages": "消息",
+      "ops": "运营"
+    },
+    "items": {
+      "dashboard": "工作台",
+      "dashboardDesc": "在线数、异常数、失败任务",
+      "accounts": "账号管理",
+      "accountsDesc": "状态、分组、心跳、当前任务、单号检测",
+      "groups": "账号分组",
+      "groupsDesc": "自定义标签，用来把号分给同事",
+      "network": "网络",
+      "networkDesc": "账号出站地址（代理）",
+      "inbox": "客服收件箱",
+      "inboxDesc": "跨账号汇总待处理私信，未读优先，点进去直接回复",
+      "dialogs": "会话",
+      "dialogsDesc": "群聊和私信",
+      "groupIntel": "群情报",
+      "groupIntelDesc": "入群即采：群档案、成员名单与入退群流水",
+      "tasks": "任务中心",
+      "tasksDesc": "同步、单条发送、转发，含失败原因与重试次数",
+      "campaigns": "触达中心",
+      "campaignsDesc": "批量私信、群发、素材、加退群、强拉、改资料、吵群、拟人发言",
+      "campaignsMaterials": "素材库",
+      "campaignsMaterialsDesc": "文字与媒体素材，批量动作共用",
+      "campaignsJoinSend": "加群群发",
+      "campaignsJoinSendDesc": "逐群「加群 → 过验证 → 发内容」，一个号一条任务",
+      "campaignsBatches": "批次进度",
+      "campaignsBatchesDesc": "按批次查进度、取消未完成任务",
+      "assignments": "员工分配",
+      "assignmentsDesc": "谁可以操作哪个号",
+      "audit": "操作记录",
+      "auditDesc": "谁在什么时间对哪个号做了什么"
+    },
+    "enterSubpage": "{{label}}（进入「{{sub}}」）",
+    "submenuAria": "{{label}}（{{action}}子菜单）",
+    "expand": "展开",
+    "collapse": "收起",
+    "expandSidebar": "展开侧栏",
+    "collapseSidebar": "收起侧栏",
+    "openNav": "打开导航"
+  },
+  "topbar": {
+    "breadcrumbAria": "当前位置",
+    "globalSearch": "全局搜索",
+    "globalSearchShortcut": "全局搜索（{{shortcut}}）",
+    "searchPlaceholder": "搜索账号、会话、消息…"
+  },
+  "theme": {
+    "light": "浅色",
+    "dark": "深色",
+    "system": "跟随系统",
+    "tooltip": "主题：{{label}}"
+  },
+  "language": {
+    "zh-CN": "简体中文",
+    "en-US": "English",
+    "tooltip": "语言：{{label}}",
+    "ariaLabel": "切换语言：当前 {{label}}"
+  },
+  "ws": {
+    "open": "实时连接正常",
+    "connecting": "实时连接中…",
+    "closed": "实时连接已断开",
+    "hintOpen": "新消息会实时推到当前打开的会话",
+    "hintConnecting": "正在建立长连接，稍后自动重试",
+    "hintClosed": "长连接已断开，页面会指数退避重连；数据仍以 Postgres 为准"
+  },
+  "notifications": {
+    "title": "通知",
+    "markAllRead": "全部已读",
+    "refreshAria": "刷新通知",
+    "derivedBanner": "通知接口未就绪，下面按工作台实时数据派生，字段与真实通知一致。",
+    "empty": "没有需要处理的通知",
+    "unreadAria": "通知（{{count}} 条未读）",
+    "derived": {
+      "taskFailedKind": "任务失败",
+      "taskFailedTitle": "{{count}} 个任务失败",
+      "taskFailedBody": "到任务中心看失败原因，可单条重试。",
+      "accountAbnormalKind": "账号异常",
+      "accountAbnormalTitle": "{{count}} 个账号异常",
+      "accountAbnormalBody": "要验证码 / 冻结 / 失效的号不再替它执行发送。",
+      "workerStaleKind": "Worker 心跳",
+      "workerStaleTitle": "{{count}} 个 Worker 超过 60 秒没有心跳",
+      "workerStaleBody": "先看 Worker 进程是否还在；单个号异常只清它的租约，不要重启全部连接。",
+      "taskOverdueKind": "任务逾期",
+      "taskOverdueTitle": "{{count}} 个任务到期未执行",
+      "taskOverdueBody": "检查 Worker 是否在认领任务。"
+    }
+  },
+  "userMenu": {
+    "ariaLabel": "当前用户菜单",
+    "adminScope": " · 可管全部账号与员工",
+    "operatorScope": " · 只能操作分配到的账号",
+    "logout": "退出登录",
+    "adminTag": "管理员"
+  },
+  "search": {
+    "placeholder": "搜索账号、会话、消息，或直接跳到页面…",
+    "commonPages": "常用页面",
+    "searching": "搜索中…",
+    "noResult": "没有匹配「{{query}}」的结果",
+    "unreadCount": "{{count}} 条未读",
+    "unknownSender": "未知发送人",
+    "kinds": {
+      "page": "页面",
+      "account": "账号",
+      "dialog": "会话",
+      "message": "消息"
+    },
+    "hintSelect": "选择",
+    "hintOpen": "打开",
+    "hintClose": "关闭",
+    "hintMinChars": "消息正文搜索至少输入 2 个字符"
+  }
+}

@@ -1,0 +1,153 @@
+{
+  "page": {
+    "title": "Task Center",
+    "description": "Queue view for all async tasks: track pending, awaiting confirmation, running, and failed tasks; retry failed tasks or cancel active ones."
+  },
+  "summary": {
+    "overdue": "Overdue",
+    "overdueTooltip": "Dashboard metric: pending tasks past their scheduled run time",
+    "stuck": "Stuck",
+    "stuckTooltip": "Dashboard metric: running tasks with no progress for an extended period",
+    "retryAllFailed": "Retry All Failed ({{count}})"
+  },
+  "chips": {
+    "clearFilter": "Click to clear status filter",
+    "filterByStatus": "Filter by \"{{label}}\""
+  },
+  "filters": {
+    "status": "Status",
+    "type": "Type",
+    "account": "Account",
+    "bot": "Bot",
+    "onlyFailed": "Failed only",
+    "enabled": "On",
+    "autoRefresh": "Auto-refresh (10s)",
+    "accountWithRemark": "{{phone}} ({{remark}})"
+  },
+  "columns": {
+    "type": "Type",
+    "batch": "Batch",
+    "status": "Status",
+    "owner": "Account / Bot",
+    "error": "Failure Reason",
+    "attempts": "Attempts",
+    "createdAt": "Created",
+    "startedAt": "Started",
+    "completedAt": "Completed",
+    "worker": "Worker",
+    "actions": "Actions"
+  },
+  "table": {
+    "selectPageAll": "Select all tasks on this page",
+    "selectTask": "Select task {{id}}",
+    "batchTooltip": "Batch {{batch}} — Click to filter this batch",
+    "batchTooltipWithCount": "Batch {{batch}} ({{count}} accounts) — Click to filter this batch",
+    "accountIdTooltip": "Account ID {{id}}",
+    "lastAttemptFailed": "Last attempt failed: {{error}}",
+    "lastFailedPrefix": "Last failed: {{error}}"
+  },
+  "actions": {
+    "logs": "Logs",
+    "logsWithCount": "Logs {{count}}",
+    "logsTooltipCount": "Open log drawer ({{count}} entries, streams while running)",
+    "logsTooltipEmpty": "Open task drawer — logs appear in real time once running",
+    "retryTooltip": "Requeue task (resets attempts)",
+    "retryDisabledHint": "Only failed or awaiting-confirmation tasks can be retried",
+    "cancelTooltip": "Cancel task",
+    "cancelDisabledHint": "Only pending, awaiting-confirmation, or running tasks can be cancelled",
+    "detail": "Details"
+  },
+  "toolbar": {
+    "batchRetry": "Batch Retry",
+    "batchRetryWithCount": "Batch Retry ({{count}})",
+    "clearSelection": "Clear selection"
+  },
+  "empty": {
+    "title": "No matching tasks",
+    "description": "Try adjusting your filters or click Reset to view all tasks."
+  },
+  "expanded": {
+    "logsSummaryWrap": " ({{summary}})",
+    "logsPendingStep": "(No logs emitted yet for this step; batch logs will refresh automatically)",
+    "currentStatus": "Current status: {{status}}",
+    "errorReason": "Failure reason: {{error}}",
+    "noResult": "(No result yet)",
+    "taskId": "Task ID: {{id}}",
+    "createdBy": "Created by: {{name}}",
+    "nextRunAt": "Next run: {{time}}",
+    "dialogId": "Dialog: {{id}}",
+    "emptyHint": {
+      "pending": "Queued: waiting for a Worker to claim this account; execution logs will appear here",
+      "running": "Running: logs will appear shortly (this page auto-refreshes)",
+      "failed": "Failed with no execution logs — click Retry to requeue",
+      "completed": "Completed with no log entries (this task type may not emit steps)",
+      "cancelled": "Cancelled"
+    }
+  },
+  "countdown": {
+    "soon": "Auto-retrying soon",
+    "hoursMinutes": "Auto-retry in {{hours}}h {{minutes}}m",
+    "minutesSeconds": "Auto-retry in {{minutes}}m {{seconds}}s",
+    "seconds": "Auto-retry in {{seconds}}s"
+  },
+  "toast": {
+    "requeued": "Task requeued",
+    "cancelled": "Task cancelled",
+    "noFailedTasks": "No failed tasks to retry",
+    "retryAllSuccess": "Requeued {{count}} failed tasks",
+    "retryAllPartial": "Retry complete: {{succeeded}} succeeded, {{failed}} failed",
+    "batchRetrySuccess": "Batch retry succeeded: {{count}} tasks requeued",
+    "batchRetryPartial": "Batch retry complete: {{succeeded}} succeeded, {{failed}} failed",
+    "batchRetryPartialWithReason": "Batch retry complete: {{succeeded}} succeeded, {{failed}} failed ({{reason}}{{etc}})",
+    "etcSuffix": ", etc.",
+    "batchRetryFailed": "Batch retry failed"
+  },
+  "detail": {
+    "title": "Task Details",
+    "systemTask": "System Task",
+    "logsTitle": "Execution Logs",
+    "basicInfo": "Basic Info",
+    "taskType": "Task Type",
+    "status": "Status",
+    "taskId": "Task ID",
+    "attempts": "Attempts",
+    "priority": "Priority",
+    "worker": "Worker",
+    "createdBy": "Created By",
+    "nextRunAt": "Next Run",
+    "timeline": "Timeline",
+    "timelineCreated": "Created",
+    "timelineStarted": "Started",
+    "timelineCompleted": "Completed",
+    "timelineNextRun": "Next Run",
+    "errorReason": "Error Details",
+    "payloadTitle": "Payload",
+    "resultTitle": "Result",
+    "noResult": "(No result yet: task has not finished or wrote no output)",
+    "noLogsFallback": "No logs recorded for this task yet.",
+    "emptyLogHint": {
+      "pending": "Queued: waiting for a Worker to claim this account; logs will appear here",
+      "running": "Running: logs will appear shortly (drawer auto-refreshes while open)",
+      "failed": "Failed with no execution logs — click Retry below to requeue",
+      "completed": "Completed with no log entries (this task type may not emit steps)",
+      "cancelled": "Cancelled",
+      "pending_confirmation": "Awaiting confirmation before running; logs will appear once started"
+    }
+  },
+  "stages": {
+    "start": "Started",
+    "scanning": "Scanning",
+    "searching": "Searching",
+    "sending": "Sending",
+    "progress": "In Progress",
+    "online": "Online",
+    "done": "Done",
+    "error": "Error",
+    "failed": "Failed"
+  },
+  "jsonBlock": {
+    "empty": "(None)",
+    "copyFull": "Copy full content",
+    "copyNamed": "Copy {{title}}"
+  }
+}

@@ -47,6 +47,8 @@ class MessageOut(ORMModel):
     sender_name: str = ""
     has_media: bool = False
     media_type: Optional[str] = None
+    # 消息直链（运营发出后回填）：https://t.me/<群名>/<消息ID>
+    link: str = ""
     created_by: Optional[uuid.UUID] = None
     created_at: Optional[datetime] = None
 

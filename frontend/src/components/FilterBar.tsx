@@ -25,6 +25,7 @@
 import { useEffect, useRef, useState, type CSSProperties, type KeyboardEvent, type ReactNode } from 'react';
 import { Button } from 'antd';
 import { CloseOutlined, DownOutlined, ReloadOutlined, SearchOutlined, UpOutlined } from '@ant-design/icons';
+import { useTranslation } from 'react-i18next';
 import { useBreakpoint } from '../hooks/useMediaQuery';
 import type { ActiveFilter } from '../hooks/useTableQuery';
 
@@ -54,11 +55,12 @@ export function FilterBar({
   loading = false,
   collapsible = false,
   defaultCollapsed,
-  resetText = '重置',
-  searchText = '查询',
+  resetText,
+  searchText,
   className,
   style,
 }: FilterBarProps) {
+  const { t } = useTranslation('common');
   const { isCompact } = useBreakpoint();
   const [collapsed, setCollapsed] = useState<boolean>(() => defaultCollapsed ?? false);
   const touchedRef = useRef(false);
@@ -96,18 +98,18 @@ export function FilterBar({
           {extra}
           {collapsible ? (
             <Button type="text" onClick={toggle} icon={collapsed ? <DownOutlined /> : <UpOutlined />}>
-              {collapsed ? '更多筛选' : '收起筛选'}
+              {collapsed ? t('moreFilters') : t('collapseFilters')}
             </Button>
           ) : null}
           {onReset ? (
             <Button icon={<ReloadOutlined />} onClick={onReset} disabled={loading}>
-              {resetText}
+              {resetText ?? t('reset')}
               {activeFilters.length ? `(${activeFilters.length})` : ''}
             </Button>
           ) : null}
           {onSearch ? (
             <Button type="primary" icon={<SearchOutlined />} loading={loading} onClick={onSearch}>
-              {searchText}
+              {searchText ?? t('search')}
             </Button>
           ) : null}
         </div>
@@ -115,7 +117,7 @@ export function FilterBar({
 
       {activeFilters.length ? (
         <div className="tg-filter-active">
-          <span className="tg-filter-active-label">已选条件：</span>
+          <span className="tg-filter-active-label">{t('activeFilters')}</span>
           {activeFilters.map((filter) => (
             <span className="tg-filter-tag" key={filter.key}>
               <span className="tg-filter-tag-key">{filter.label}</span>
@@ -123,7 +125,7 @@ export function FilterBar({
               <button
                 type="button"
                 className="tg-filter-tag-close"
-                aria-label={`移除筛选：${filter.label}`}
+                aria-label={t('removeFilter', { label: filter.label })}
                 onClick={filter.onRemove}
               >
                 <CloseOutlined />
@@ -132,7 +134,7 @@ export function FilterBar({
           ))}
           {onReset ? (
             <Button type="link" size="small" onClick={onReset} style={{ padding: 0 }}>
-              全部清除
+              {t('clearAll')}
             </Button>
           ) : null}
         </div>

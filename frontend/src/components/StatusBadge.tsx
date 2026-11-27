@@ -15,8 +15,10 @@
  */
 import type { CSSProperties } from 'react';
 import { Tooltip } from 'antd';
+import { useTranslation } from 'react-i18next';
 import type { AccountStatus } from '../api/types';
 import { ACCOUNT_STATUS_LABELS } from '../constants';
+import { resolveEnumLabel } from '../i18n';
 
 export interface StatusBadgeProps {
   status?: AccountStatus | null;
@@ -39,10 +41,13 @@ export function StatusBadge({
   className,
   style,
 }: StatusBadgeProps) {
+  const { t } = useTranslation(['common', 'enums']);
   const key = status ?? 'disabled';
   // 后端将来新增状态时，宁可显示「未知状态」也不要把英文枚举裸露给值班同事；原始值放 title 供排查
   const rawUnknown = status && !ACCOUNT_STATUS_LABELS[status] ? status : null;
-  const text = label || (status ? ACCOUNT_STATUS_LABELS[status] : '') || (status ? '未知状态' : '未知');
+  const text = status
+    ? resolveEnumLabel(`accountStatus.${status}`, label, ACCOUNT_STATUS_LABELS[status] || t('common:unknownStatus'))
+    : label || t('common:unknown');
   const known = Boolean(status);
 
   const colorFg = known ? `var(--tg-color-account-${key}-fg)` : 'var(--tg-color-neutral)';
@@ -59,7 +64,7 @@ export function StatusBadge({
 
   const badge = (
     <span
-      title={rawUnknown ? `未知状态（原始值：${rawUnknown}）` : reason || undefined}
+      title={rawUnknown ? t('common:unknownStatusRaw', { raw: rawUnknown }) : reason || undefined}
       className={['tg-status-badge', className].filter(Boolean).join(' ')}
       style={{
         height: size === 'sm' ? 20 : 24,

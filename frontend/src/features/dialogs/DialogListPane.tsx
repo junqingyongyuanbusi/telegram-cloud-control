@@ -2,7 +2,7 @@
  * 会话列表左栏：关键词搜索 + 折叠筛选（通道/类型/账号/Bot/只看未读）+ 排序切换 +
  * 滚动到底自动加载下一页；每条含渠道色条、未读角标、最后消息预览。
  */
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Button, Input, Popover, Select, Switch, Tooltip } from 'antd';
 import {
   FilterOutlined,
@@ -10,13 +10,14 @@ import {
   SortAscendingOutlined,
   SortDescendingOutlined,
 } from '@ant-design/icons';
+import { useTranslation } from 'react-i18next';
 import { EmptyState, ErrorState, RelativeTime, SoftTag } from '../../components';
 import { useDebouncedValue } from '../../hooks/useDebouncedValue';
 import { previewText } from '../../utils/format';
-import { DIALOG_CHANNEL_LABELS, DIALOG_KIND_LABELS } from '../../constants';
+import { getDialogChannelOptions, getDialogKindOptions } from '../../constants';
+import { resolveEnumLabel } from '../../i18n';
 import type { DialogChannel, DialogKind, DialogOut, WsStatus } from '../../api/types';
 import type { DialogListFilters } from './useDialogList';
-import { WS_STATUS_TEXT } from '../../hooks/useWebSocket';
 
 export interface SelectOptionLike {
   value: string;
@@ -64,10 +65,14 @@ export function DialogListPane({
   botOptions,
   wsStatus,
 }: DialogListPaneProps) {
+  const { t, i18n } = useTranslation(['dialogs', 'common', 'shell', 'enums']);
   const [keywordInput, setKeywordInput] = useState(filters.keyword);
   const [filterOpen, setFilterOpen] = useState(false);
   const debouncedKeyword = useDebouncedValue(keywordInput, 400);
   const sentinelRef = useRef<HTMLDivElement | null>(null);
+
+  const channelOptions = useMemo(() => getDialogChannelOptions(), [i18n.language]);
+  const kindOptions = useMemo(() => getDialogKindOptions(), [i18n.language]);
 
   // 关键词防抖后才会触发查询（避免每敲一个字就请求一次）
   useEffect(() => {
@@ -97,31 +102,25 @@ export function DialogListPane({
       <Select
         allowClear
         size="small"
-        placeholder="通道"
+        placeholder={t('dialogs:list.filterChannel')}
         value={filters.channel || undefined}
         onChange={(value) => onFiltersChange({ channel: (value as DialogChannel) ?? '' })}
-        options={[
-          { value: 'user_account', label: '用户号' },
-          { value: 'bot', label: 'Bot' },
-        ]}
+        options={channelOptions}
       />
       <Select
         allowClear
         size="small"
-        placeholder="类型"
+        placeholder={t('dialogs:list.filterKind')}
         value={filters.kind || undefined}
         onChange={(value) => onFiltersChange({ kind: (value as DialogKind) ?? '' })}
-        options={[
-          { value: 'group', label: '群聊' },
-          { value: 'private', label: '私信' },
-        ]}
+        options={kindOptions}
       />
       <Select
         allowClear
         showSearch
         optionFilterProp="label"
         size="small"
-        placeholder="账号"
+        placeholder={t('dialogs:list.filterAccount')}
         value={filters.account_id ?? undefined}
         onChange={(value) => onFiltersChange({ account_id: value ?? null })}
         options={accountOptions}
@@ -131,14 +130,14 @@ export function DialogListPane({
         showSearch
         optionFilterProp="label"
         size="small"
-        placeholder="Bot"
+        placeholder={t('dialogs:list.filterBot')}
         value={filters.bot_id ?? undefined}
         onChange={(value) => onFiltersChange({ bot_id: value ?? null })}
         options={botOptions}
       />
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
         <span style={{ color: 'var(--tg-color-text-secondary)', fontSize: 'var(--tg-font-size-sm)' }}>
-          只看未读
+          {t('dialogs:list.onlyUnread')}
         </span>
         <Switch
           size="small"
@@ -148,13 +147,13 @@ export function DialogListPane({
       </div>
       {activeCount > 0 ? (
         <Button size="small" block onClick={onResetFilters}>
-          清空筛选
+          {t('dialogs:list.clearFilters')}
         </Button>
       ) : null}
     </div>
   );
 
-  const wsText = WS_STATUS_TEXT[wsStatus];
+  const wsText = t(`shell:ws.${wsStatus}`);
 
   return (
     <div className="im-list-pane">
@@ -162,7 +161,7 @@ export function DialogListPane({
         <Input
           allowClear
           size="small"
-          placeholder="搜索会话（标题 / 对方 / 正文）"
+          placeholder={t('dialogs:list.searchPlaceholder')}
           value={keywordInput}
           onChange={(event) => setKeywordInput(event.target.value)}
         />
@@ -174,31 +173,31 @@ export function DialogListPane({
             placement="bottomLeft"
             content={filterPopover}
           >
-            <Tooltip title="筛选">
+            <Tooltip title={t('dialogs:list.filter')}>
               <Button size="small" icon={<FilterOutlined />} style={{ position: 'relative' }}>
-                筛选
+                {t('dialogs:list.filter')}
                 {activeCount > 0 ? <span className="im-filter-badge">{activeCount}</span> : null}
               </Button>
             </Tooltip>
           </Popover>
-          <Tooltip title={sortOrder === 'desc' ? '按最后消息时间：最新在前' : '按最后消息时间：最早在前'}>
+          <Tooltip title={sortOrder === 'desc' ? t('dialogs:list.sortDescTooltip') : t('dialogs:list.sortAscTooltip')}>
             <Button
               size="small"
               icon={sortOrder === 'desc' ? <SortDescendingOutlined /> : <SortAscendingOutlined />}
               onClick={onToggleSort}
             >
-              {sortOrder === 'desc' ? '最新' : '最早'}
+              {sortOrder === 'desc' ? t('dialogs:list.sortNewest') : t('dialogs:list.sortOldest')}
             </Button>
           </Tooltip>
-          <Tooltip title="刷新">
-            <Button size="small" type="text" icon={<ReloadOutlined />} loading={loading} onClick={onReload} aria-label="刷新" />
+          <Tooltip title={t('common:refresh')}>
+            <Button size="small" type="text" icon={<ReloadOutlined />} loading={loading} onClick={onReload} aria-label={t('common:refresh')} />
           </Tooltip>
         </div>
         <div className="im-list-meta">
           <span>
-            共 {total} 个会话
-            {filters.only_unread ? '（只看未读）' : ''}
-            {filters.keyword.trim() ? ` · 含「${filters.keyword.trim()}」` : ''}
+            {t('dialogs:list.totalDialogs', { count: total })}
+            {filters.only_unread ? t('dialogs:list.onlyUnreadSuffix') : ''}
+            {filters.keyword.trim() ? t('dialogs:list.keywordSuffix', { keyword: filters.keyword.trim() }) : ''}
           </span>
           <span className="im-ws-dot">
             <span
@@ -223,7 +222,7 @@ export function DialogListPane({
 
         {!error && loading && !items.length ? (
           <div className="im-list-empty" style={{ textAlign: 'center', color: 'var(--tg-color-text-tertiary)' }}>
-            加载中…
+            {t('dialogs:list.loading')}
           </div>
         ) : null}
 
@@ -232,16 +231,16 @@ export function DialogListPane({
             <EmptyState
               compact
               art={activeCount > 0 || filters.keyword.trim() ? 'search' : 'inbox'}
-              title={activeCount > 0 || filters.keyword.trim() ? '没有符合条件的会话' : '还没有会话'}
+              title={activeCount > 0 || filters.keyword.trim() ? t('dialogs:list.emptyFilteredTitle') : t('dialogs:list.emptyTitle')}
               description={
                 activeCount > 0 || filters.keyword.trim()
-                  ? '换个关键词或清空筛选看看。'
-                  : '账号登录后会自动同步它的群聊与私信。'
+                  ? t('dialogs:list.emptyFilteredDesc')
+                  : t('dialogs:list.emptyDesc')
               }
               action={
                 activeCount > 0 || filters.keyword.trim() ? (
                   <Button size="small" onClick={onResetFilters}>
-                    清空筛选
+                    {t('dialogs:list.clearFilters')}
                   </Button>
                 ) : undefined
               }
@@ -275,22 +274,22 @@ export function DialogListPane({
               <div className="im-dialog-main">
                 <div className="im-dialog-title-row">
                   <span className="im-dialog-title">
-                    {dialog.title || dialog.peer_display || `会话 ${dialog.tg_chat_id}`}
+                    {dialog.title || dialog.peer_display || t('dialogs:list.fallbackTitle', { chatId: dialog.tg_chat_id })}
                   </span>
                   <SoftTag tone={isBot ? 'info' : 'primary'} size="sm">
-                    {dialog.channel_label || DIALOG_CHANNEL_LABELS[dialog.channel]}
+                    {resolveEnumLabel(`dialogChannel.${dialog.channel}`, dialog.channel_label, dialog.channel)}
                   </SoftTag>
                   <SoftTag tone="neutral" size="sm">
-                    {dialog.kind_label || DIALOG_KIND_LABELS[dialog.kind]}
+                    {resolveEnumLabel(`dialogKind.${dialog.kind}`, dialog.kind_label, dialog.kind)}
                   </SoftTag>
                 </div>
                 <div className="im-dialog-preview">
-                  {previewText(dialog.last_message_preview, 40) || '暂无消息'}
+                  {previewText(dialog.last_message_preview, 40) || t('dialogs:list.noMessages')}
                 </div>
                 <div className="im-dialog-sub">
                   {dialog.account_label ||
                     (dialog.bot_label ? `@${dialog.bot_label}` : '—')}
-                  {dialog.member_count ? ` · ${dialog.member_count} 人` : ''}
+                  {dialog.member_count ? ` · ${t('dialogs:list.memberCount', { count: dialog.member_count })}` : ''}
                   {dialog.username ? ` · @${dialog.username}` : ''}
                 </div>
               </div>
@@ -314,13 +313,13 @@ export function DialogListPane({
 
       <div className="im-list-footer">
         {loadingMore ? (
-          '加载中…'
+          t('dialogs:list.loading')
         ) : items.length < total ? (
           <Button type="link" size="small" onClick={onLoadMore}>
-            加载更多（已显示 {items.length} / {total}）
+            {t('dialogs:list.loadMore', { shown: items.length, total })}
           </Button>
         ) : items.length > 0 ? (
-          '已加载全部会话'
+          t('dialogs:list.allLoaded')
         ) : null}
       </div>
     </div>

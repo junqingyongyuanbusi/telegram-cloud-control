@@ -5,6 +5,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { dialogApi } from '../../api/endpoints';
 import type { DialogChannel, DialogKind, DialogOut } from '../../api/types';
+import i18n from '../../i18n';
 import { DIALOG_PAGE_SIZE } from './types';
 
 export interface DialogListFilters {
@@ -83,7 +84,7 @@ export function useDialogList(): DialogListState {
         setError(null);
       } catch (err) {
         if (seq !== seqRef.current) return;
-        setError((err as Error)?.message || '会话列表加载失败');
+        setError((err as Error)?.message || i18n.t('dialogs:list.loadError'));
       } finally {
         if (seq === seqRef.current) {
           setLoading(false);

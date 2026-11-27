@@ -13,23 +13,27 @@
 import { Suspense, useEffect, useState } from 'react';
 import { Navigate, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { Badge, Drawer } from 'antd';
+import { useTranslation } from 'react-i18next';
 import Sidebar from './Sidebar';
 import Topbar from './Topbar';
 import GlobalSearch from './GlobalSearch';
 import { matchNavTrail } from './nav';
+import { OPERATOR_HOME } from './navAccess';
 import { useShellData } from './useShellData';
 import { useAuth } from '../../auth/AuthContext';
 import { useBreakpoint } from '../../hooks/useMediaQuery';
 import { useLocalStorage } from '../../hooks/useLocalStorage';
 import { useWebSocket } from '../../hooks/useWebSocket';
-import { USER_ROLE_LABELS } from '../../constants';
 import { ErrorBoundary } from '../ErrorBoundary';
 import { PageSkeleton } from '../LoadingSkeleton';
+import Forbidden from '../Forbidden';
 
 const SIDEBAR_STORAGE_KEY = 'tgcc_ui:sidebar_collapsed';
 
 export function AppShell() {
+  const { t } = useTranslation(['shell', 'common', 'enums']);
   const { user, logout } = useAuth();
+  const isAdmin = user?.role === 'admin';
   const location = useLocation();
   const navigate = useNavigate();
   const { isNarrow, isCompact } = useBreakpoint();
@@ -78,20 +82,21 @@ export function AppShell() {
   const matched = matchNavTrail(location.pathname);
   const breadcrumb = matched
     ? [
-        { title: matched.group.title },
+        { title: t(`shell:${matched.group.titleKey}`, { defaultValue: matched.group.title }) },
         ...matched.trail.map((node, index) => ({
-          title: node.label,
+          title: t(`shell:${node.labelKey}`, { defaultValue: node.label }),
           // 前级给可跳转地址：父节点（触达中心）进它的第一个子页面
           href:
             index < matched.trail.length - 1 ? node.children?.[0]?.path ?? node.path : undefined,
         })),
       ]
-    : [{ title: '控制台' }];
+    : [{ title: t('common:console') }];
 
   const sidebar = (
     <Sidebar
       collapsed={isNarrow ? false : collapsed}
       counts={shell.counts}
+      isAdmin={isAdmin}
       activePath={location.pathname}
       onNavigate={() => setDrawerOpen(false)}
       onToggleCollapse={isNarrow ? undefined : toggleCollapse}
@@ -135,9 +140,9 @@ export function AppShell() {
             onNavigate: (link) => navigate(link),
           }}
           user={{
-            name: user?.display_name || user?.username || '未登录',
-            roleLabel: user ? USER_ROLE_LABELS[user.role] ?? user.role : '—',
-            isAdmin: user?.role === 'admin',
+            name: user?.display_name || user?.username || t('common:notLoggedIn'),
+            roleLabel: user ? t(`enums:userRole.${user.role}`, { defaultValue: user.role }) : '—',
+            isAdmin,
             onLogout: () => void logout(),
           }}
         />
@@ -162,11 +167,12 @@ export function AppShell() {
 
 /** 未登录时兜底：直接回登录页（校验中显示骨架，避免刷新闪回登录页） */
 export function RequireAuth({ children }: { children: React.ReactNode }) {
+  const { t } = useTranslation('common');
   const { user, token, ready } = useAuth();
   if (!ready) {
     return (
       <div className="app-center">
-        <Badge status="processing" text="正在校验登录状态…" />
+        <Badge status="processing" text={t('checkingAuth')} />
       </div>
     );
   }
@@ -174,6 +180,21 @@ export function RequireAuth({ children }: { children: React.ReactNode }) {
     return <Navigate to="/login" replace />;
   }
   return <>{children}</>;
+}
+
+/**
+ * operator 访问管理员专属页面：外壳内渲染 403 卡片（不请求接口、不跳登录）。
+ * 页面可见性策略见 navAccess.ts；后端接口仍有 403 兜底。
+ */
+export function RequireAdmin({ children }: { children: React.ReactNode }) {
+  const { isAdmin } = useAuth();
+  return isAdmin ? <>{children}</> : <Forbidden />;
+}
+
+/** 工作台仅管理员可见：operator 落到任务中心（登录后跳 `/` 也不至于 403） */
+export function AdminHome({ children }: { children: React.ReactNode }) {
+  const { isAdmin } = useAuth();
+  return isAdmin ? <>{children}</> : <Navigate to={OPERATOR_HOME} replace />;
 }
 
 export default AppShell;

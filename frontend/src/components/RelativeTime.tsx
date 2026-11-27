@@ -15,6 +15,7 @@
 import { useEffect, useState, type CSSProperties, type ReactNode } from 'react';
 import { Tooltip } from 'antd';
 import dayjs from 'dayjs';
+import { useTranslation } from 'react-i18next';
 import { formatTime } from '../utils/format';
 
 export interface RelativeTimeProps {
@@ -36,6 +37,7 @@ export function RelativeTime({
   className,
   style,
 }: RelativeTimeProps) {
+  const { i18n } = useTranslation();
   const [, forceTick] = useState(0);
 
   useEffect(() => {
@@ -55,7 +57,7 @@ export function RelativeTime({
     );
   }
 
-  const relative = parsed.fromNow();
+  const relative = parsed.locale(i18n.language === 'en-US' ? 'en' : 'zh-cn').fromNow();
   const absolute = formatTime(value);
 
   return (

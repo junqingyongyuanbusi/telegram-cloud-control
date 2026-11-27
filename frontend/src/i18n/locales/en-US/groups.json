@@ -1,0 +1,57 @@
+{
+  "title": "Account Groups",
+  "description": "Groups are custom tags for assigning accounts to team members; each account belongs to at most one group.",
+  "create": "New Group",
+  "columns": {
+    "name": "Group Name",
+    "description": "Description",
+    "accountCount": "Accounts",
+    "distribution": "Status Breakdown",
+    "createdAt": "Created At",
+    "actions": "Actions"
+  },
+  "status": {
+    "healthy": "Healthy",
+    "pending": "Pending Login",
+    "abnormal": "Abnormal",
+    "tooltip": "{{label}}: {{count}}",
+    "tooltipPartial": "{{label}}: {{count}} (based on first 200 accounts)"
+  },
+  "actions": {
+    "manageAccounts": "Manage Accounts",
+    "edit": "Edit",
+    "delete": "Delete"
+  },
+  "empty": {
+    "title": "No groups yet",
+    "description": "Create a group and add accounts in bulk to organize assignments."
+  },
+  "footnote": "Status breakdown is computed from loaded accounts (first 200 if over 200 total); account counts always come from the backend.",
+  "deleteConfirm": {
+    "title": "Delete group \"{{name}}\"?",
+    "content": "Accounts themselves will not be deleted; they will simply become ungrouped.",
+    "ok": "Delete"
+  },
+  "membersModal": {
+    "title": "Manage Group Accounts: {{name}}",
+    "hint": "Check to add to this group, uncheck to remove; only changes are submitted on save."
+  },
+  "form": {
+    "editTitle": "Edit Group: {{name}}",
+    "createTitle": "New Group",
+    "nameLabel": "Group Name",
+    "nameRequired": "Please enter a group name",
+    "nameMax": "At most 64 characters",
+    "namePlaceholder": "e.g., Team A / On-call",
+    "descriptionLabel": "Description",
+    "descriptionPlaceholder": "Description (optional)"
+  },
+  "toast": {
+    "deleted": "Group deleted",
+    "addedMembers": "Added {{count}} account(s)",
+    "removedMembers": "Removed {{count}} account(s)",
+    "noMemberChange": "No changes to group membership",
+    "updated": "Group updated",
+    "created": "Group created"
+  }
+}

@@ -1,6 +1,7 @@
-"""网络：账号固定的出站地址（代理）。
+"""网络：账号固定的出站地址（代理），管理员专属。
 
 用户名 / 口令加密入库（`security.encrypt_secret`），接口只回 `has_auth`，永不回明文。
+前端只有 /network 页与账号导入弹窗用这些接口，两者都是管理员页面。
 """
 
 from __future__ import annotations
@@ -14,7 +15,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app import security
-from app.api.deps import assert_accounts_access, get_current_user, get_session
+from app.api.deps import assert_accounts_access, get_session, require_admin
 from app.api.routers import AccountIdsRequest, proxy_out
 from app.core.audit import write_audit
 from app.models import Proxy, TgAccount, User
@@ -40,7 +41,7 @@ async def _counts(session: AsyncSession) -> dict:
 @router.get("", response_model=List[ProxyOut], summary="代理列表")
 async def list_proxies(
     session: AsyncSession = Depends(get_session),
-    user: User = Depends(get_current_user),
+    user: User = Depends(require_admin),
 ) -> List[ProxyOut]:
     """endpoint 形如 socks5://host:port；has_auth 表示存了用户名 / 口令。"""
     proxies = list((await session.scalars(select(Proxy).order_by(Proxy.name))).all())
@@ -52,7 +53,7 @@ async def list_proxies(
 async def create_proxy(
     payload: ProxyCreate,
     session: AsyncSession = Depends(get_session),
-    user: User = Depends(get_current_user),
+    user: User = Depends(require_admin),
 ) -> ProxyOut:
     """代理名唯一；用户名 / 口令加密保存。"""
     exists = await session.scalar(select(Proxy.id).where(Proxy.name == payload.name))
@@ -87,7 +88,7 @@ async def update_proxy(
     proxy_id: uuid.UUID,
     payload: ProxyUpdate,
     session: AsyncSession = Depends(get_session),
-    user: User = Depends(get_current_user),
+    user: User = Depends(require_admin),
 ) -> ProxyOut:
     """不传 username / password 就保持原值（前端留空 = 不改）。"""
     proxy = await _get_proxy(session, proxy_id)
@@ -122,7 +123,7 @@ async def update_proxy(
 async def delete_proxy(
     proxy_id: uuid.UUID,
     session: AsyncSession = Depends(get_session),
-    user: User = Depends(get_current_user),
+    user: User = Depends(require_admin),
 ) -> dict:
     """删代理不会删号：tg_accounts.proxy_id 外键是 ON DELETE SET NULL，号变成直连。"""
     proxy = await _get_proxy(session, proxy_id)
@@ -146,7 +147,7 @@ async def bind_accounts(
     proxy_id: uuid.UUID,
     payload: AccountIdsRequest,
     session: AsyncSession = Depends(get_session),
-    user: User = Depends(get_current_user),
+    user: User = Depends(require_admin),
 ) -> dict:
     """一个号同一时刻只用一个出站地址；worker 认领时读取这个字段。"""
     proxy = await _get_proxy(session, proxy_id)

@@ -12,14 +12,14 @@ import {
   SearchOutlined,
   SendOutlined,
 } from '@ant-design/icons';
+import { useTranslation } from 'react-i18next';
 import { DetailDrawer, CopyableText, EmptyState, SoftTag, StatusBadge } from '../../components';
 import { api } from '../../api/client';
-import { DIALOG_CHANNEL_LABELS, DIALOG_KIND_LABELS } from '../../constants';
+import { resolveEnumLabel } from '../../i18n';
 import { formatTime } from '../../utils/format';
 import type { AccountOut } from '../../api/types';
 import type { ChatRoomState } from './useChatRoom';
 import { MessageList } from './MessageList';
-import { WS_STATUS_TEXT } from '../../hooks/useWebSocket';
 
 interface ChatPaneProps {
   room: ChatRoomState;
@@ -28,6 +28,7 @@ interface ChatPaneProps {
 const { Text } = Typography;
 
 export function ChatPane({ room }: ChatPaneProps) {
+  const { t } = useTranslation(['dialogs', 'shell', 'enums']);
   const dialog = room.dialog;
   const [infoOpen, setInfoOpen] = useState(false);
   const [account, setAccount] = useState<AccountOut | null>(null);
@@ -48,8 +49,8 @@ export function ChatPane({ room }: ChatPaneProps) {
         <div className="im-chat-empty">
           <EmptyState
             art="inbox"
-            title="从左边选择一个会话"
-            description="打开后可以查看聊天记录、回消息、生成 AI 草稿；新消息会实时推送。"
+            title={t('dialogs:chat.emptySelectTitle')}
+            description={t('dialogs:chat.emptySelectDesc')}
           />
         </div>
       </div>
@@ -57,27 +58,30 @@ export function ChatPane({ room }: ChatPaneProps) {
   }
 
   const isBot = dialog.channel === 'bot';
+  const channelLabel = resolveEnumLabel(`dialogChannel.${dialog.channel}`, dialog.channel_label, dialog.channel);
+  const kindLabel = resolveEnumLabel(`dialogKind.${dialog.kind}`, dialog.kind_label, dialog.kind);
+  const dialogDisplayTitle = dialog.title || dialog.peer_display || t('dialogs:list.fallbackTitle', { chatId: dialog.tg_chat_id });
 
   const infoSections = [
     {
-      title: '会话信息',
+      title: t('dialogs:chat.infoSection.dialogTitle'),
       items: [
-        { label: '通道', value: <SoftTag tone={isBot ? 'info' : 'primary'} size="sm">{dialog.channel_label || DIALOG_CHANNEL_LABELS[dialog.channel]}</SoftTag> },
-        { label: '类型', value: dialog.kind_label || DIALOG_KIND_LABELS[dialog.kind] },
-        { label: 'Telegram chat_id', value: <CopyableText value={dialog.tg_chat_id} mono /> },
-        { label: '用户名', value: dialog.username || undefined },
-        { label: '成员数', value: dialog.member_count ?? undefined },
-        { label: '置顶', value: dialog.is_pinned ? '是' : '否' },
-        { label: '未读', value: dialog.unread_count },
-        { label: '最后消息时间', value: formatTime(dialog.last_message_at) },
-        { label: '最后消息预览', value: dialog.last_message_preview || undefined, span: 'full' as const },
+        { label: t('dialogs:chat.infoSection.channel'), value: <SoftTag tone={isBot ? 'info' : 'primary'} size="sm">{channelLabel}</SoftTag> },
+        { label: t('dialogs:chat.infoSection.kind'), value: kindLabel },
+        { label: t('dialogs:chat.infoSection.chatId'), value: <CopyableText value={dialog.tg_chat_id} mono /> },
+        { label: t('dialogs:chat.infoSection.username'), value: dialog.username || undefined },
+        { label: t('dialogs:chat.infoSection.memberCount'), value: dialog.member_count ?? undefined },
+        { label: t('dialogs:chat.infoSection.pinned'), value: dialog.is_pinned ? t('dialogs:chat.infoSection.yes') : t('dialogs:chat.infoSection.no') },
+        { label: t('dialogs:chat.infoSection.unread'), value: dialog.unread_count },
+        { label: t('dialogs:chat.infoSection.lastMessageAt'), value: formatTime(dialog.last_message_at) },
+        { label: t('dialogs:chat.infoSection.lastMessagePreview'), value: dialog.last_message_preview || undefined, span: 'full' as const },
       ],
     },
     {
-      title: '归属',
+      title: t('dialogs:chat.infoSection.ownershipTitle'),
       items: [
         {
-          label: '账号',
+          label: t('dialogs:chat.infoSection.account'),
           value: dialog.account_label ? (
             <Space size={4}>
               <span>{dialog.account_label}</span>
@@ -86,7 +90,7 @@ export function ChatPane({ room }: ChatPaneProps) {
           ) : undefined,
         },
         {
-          label: 'Bot',
+          label: t('dialogs:chat.infoSection.bot'),
           value: dialog.bot_label ? (
             <Space size={4}>
               <span>@{dialog.bot_label}</span>
@@ -105,28 +109,28 @@ export function ChatPane({ room }: ChatPaneProps) {
         <div className="im-chat-title-wrap">
           <div className="im-chat-title">
             <Text strong ellipsis style={{ maxWidth: 320, fontSize: 'var(--tg-font-size)' }}>
-              {dialog.title || dialog.peer_display || `会话 ${dialog.tg_chat_id}`}
+              {dialogDisplayTitle}
             </Text>
             <SoftTag tone={isBot ? 'info' : 'primary'} size="sm">
-              {dialog.channel_label || DIALOG_CHANNEL_LABELS[dialog.channel]}
+              {channelLabel}
             </SoftTag>
             <SoftTag tone="neutral" size="sm">
-              {dialog.kind_label || DIALOG_KIND_LABELS[dialog.kind]}
+              {kindLabel}
             </SoftTag>
             {dialog.kind === 'group' && dialog.member_count ? (
-              <span className="im-chat-meta">{dialog.member_count} 人</span>
+              <span className="im-chat-meta">{t('dialogs:list.memberCount', { count: dialog.member_count })}</span>
             ) : null}
           </div>
           <div className="im-chat-meta">
-            {dialog.account_label ? `账号 ${dialog.account_label}` : ''}
-            {dialog.bot_label ? `Bot @${dialog.bot_label}` : ''}
+            {dialog.account_label ? t('dialogs:chat.accountPrefix', { label: dialog.account_label }) : ''}
+            {dialog.bot_label ? t('dialogs:chat.botPrefix', { label: dialog.bot_label }) : ''}
             {` · chat_id ${dialog.tg_chat_id}`}
             {dialog.username ? ` · @${dialog.username}` : ''}
           </div>
         </div>
 
         <div className="im-chat-actions">
-          <Tooltip title={WS_STATUS_TEXT[room.wsStatus]}>
+          <Tooltip title={t(`shell:ws.${room.wsStatus}`)}>
             <span
               style={{
                 width: 8,
@@ -142,26 +146,26 @@ export function ChatPane({ room }: ChatPaneProps) {
             allowClear
             size="small"
             prefix={<SearchOutlined style={{ color: 'var(--tg-color-text-tertiary)' }} />}
-            placeholder="在本会话内搜索"
+            placeholder={t('dialogs:chat.searchPlaceholder')}
             style={{ width: 180 }}
             value={room.searchQ}
             onChange={(event) => room.setSearchQ(event.target.value)}
           />
           <Button size="small" icon={<CheckOutlined />} onClick={() => void room.markRead()}>
-            标记已读
+            {t('dialogs:chat.markRead')}
           </Button>
-          <Tooltip title={isBot ? 'Bot 通道不支持补拉历史：Telegram Bot API 没有历史消息接口' : '排队一条同步任务，把云端历史消息拉下来'}>
+          <Tooltip title={isBot ? t('dialogs:chat.syncBotDisabledTooltip') : t('dialogs:chat.syncTooltip')}>
             <Button
               size="small"
               icon={<CloudSyncOutlined />}
               disabled={isBot}
               onClick={() => void room.syncHistory()}
             >
-              同步历史
+              {t('dialogs:chat.syncHistory')}
             </Button>
           </Tooltip>
           <Button size="small" icon={<InfoCircleOutlined />} onClick={() => setInfoOpen(true)}>
-            会话信息
+            {t('dialogs:chat.dialogInfo')}
           </Button>
         </div>
       </div>
@@ -181,9 +185,13 @@ export function ChatPane({ room }: ChatPaneProps) {
           }}
         >
           <SearchOutlined />
-          在「{dialog.title || dialog.peer_display}」内搜索「{room.searchQ.trim()}」：找到 {room.searchTotal} 条
+          {t('dialogs:chat.searchBanner', {
+            title: dialog.title || dialog.peer_display,
+            query: room.searchQ.trim(),
+            count: room.searchTotal,
+          })}
           <Button type="link" size="small" onClick={room.clearSearch}>
-            退出搜索
+            {t('dialogs:chat.exitSearch')}
           </Button>
         </div>
       ) : null}
@@ -216,7 +224,7 @@ export function ChatPane({ room }: ChatPaneProps) {
             showIcon
             closable
             onClose={room.dismissSendError}
-            message="发送失败"
+            message={t('dialogs:chat.sendFailedTitle')}
             description={room.sendError}
           />
         ) : null}
@@ -227,7 +235,7 @@ export function ChatPane({ room }: ChatPaneProps) {
             showIcon
             closable
             onClose={room.dismissAiGuide}
-            message="AI 草稿"
+            message={t('dialogs:chat.aiDraftTitle')}
             description={room.aiGuide}
           />
         ) : null}
@@ -236,11 +244,11 @@ export function ChatPane({ room }: ChatPaneProps) {
           <Alert
             type="warning"
             showIcon
-            message="AI 草稿已填入输入框，点「发送」才会发出去"
-            description="丢弃后草稿作废；发送成功会在操作记录里留下是谁点的发送。"
+            message={t('dialogs:chat.draftReadyTitle')}
+            description={t('dialogs:chat.draftReadyDesc')}
             action={
               <Button size="small" onClick={() => void room.discardDraft()}>
-                丢弃草稿
+                {t('dialogs:chat.discardDraft')}
               </Button>
             }
           />
@@ -250,22 +258,20 @@ export function ChatPane({ room }: ChatPaneProps) {
           <Alert
             type="info"
             showIcon
-            message={`有 ${room.unreadMarker.count} 条未读消息`}
-            description="消息流里有分隔线标出未读起点，点击分隔线即可标记已读。"
+            message={t('dialogs:chat.unreadBannerTitle', { count: room.unreadMarker.count })}
+            description={t('dialogs:chat.unreadBannerDesc')}
           />
         ) : null}
 
         <div className="im-composer-hints">
           {account ? (
             <Space size={4}>
-              <span className="im-composer-note">账号状态</span>
+              <span className="im-composer-note">{t('dialogs:chat.accountStatusLabel')}</span>
               <StatusBadge status={account.status} label={account.status_label} size="sm" />
             </Space>
           ) : null}
           <span className="im-composer-note">
-            {isBot
-              ? 'Bot 通道：点发送由 API 直接发出；发送失败原因会显示在上方。'
-              : '用户号通道：发送会写成待发送任务，等持有租约的 Worker 发出；账号状态异常时发送会被拒绝。'}
+            {isBot ? t('dialogs:chat.botChannelHint') : t('dialogs:chat.userChannelHint')}
           </span>
         </div>
 
@@ -273,9 +279,7 @@ export function ChatPane({ room }: ChatPaneProps) {
           value={room.text}
           onChange={(event) => room.setText(event.target.value)}
           placeholder={
-            isBot
-              ? '输入回复内容，Bot 会直接发出（Ctrl/⌘ + Enter 发送）'
-              : '输入回复内容，发送后排队等待 Worker 发出（Ctrl/⌘ + Enter 发送）'
+            isBot ? t('dialogs:chat.botComposerPlaceholder') : t('dialogs:chat.userComposerPlaceholder')
           }
           autoSize={{ minRows: 2, maxRows: 6 }}
           onKeyDown={(event) => {
@@ -292,14 +296,14 @@ export function ChatPane({ room }: ChatPaneProps) {
             style={{ width: 260 }}
             value={room.instruction}
             onChange={(event) => room.setInstruction(event.target.value)}
-            placeholder="给 AI 的要求（可选），例如：用中文礼貌回复"
+            placeholder={t('dialogs:chat.aiInstructionPlaceholder')}
             prefix={<RobotOutlined />}
           />
           <Button icon={<RobotOutlined />} loading={room.drafting} onClick={() => void room.generateDraft()}>
-            AI 草稿
+            {t('dialogs:chat.aiDraftTitle')}
           </Button>
           <div className="im-composer-spacer" />
-          <span className="im-composer-note">Ctrl/⌘ + Enter 快捷发送</span>
+          <span className="im-composer-note">{t('dialogs:chat.shortcutHint')}</span>
           <Button
             type="primary"
             icon={<SendOutlined />}
@@ -307,7 +311,7 @@ export function ChatPane({ room }: ChatPaneProps) {
             disabled={!room.text.trim()}
             onClick={() => void room.send()}
           >
-            发送
+            {t('dialogs:chat.send')}
           </Button>
         </div>
       </div>
@@ -316,23 +320,23 @@ export function ChatPane({ room }: ChatPaneProps) {
       <DetailDrawer
         open={infoOpen}
         onClose={() => setInfoOpen(false)}
-        title={dialog.title || dialog.peer_display || `会话 ${dialog.tg_chat_id}`}
-        subtitle={dialog.channel_label || DIALOG_CHANNEL_LABELS[dialog.channel]}
+        title={dialogDisplayTitle}
+        subtitle={channelLabel}
         width={560}
         sections={infoSections}
         footer={
           <Space>
             <Button icon={<CheckOutlined />} onClick={() => void room.markRead()}>
-              标记已读
+              {t('dialogs:chat.markRead')}
             </Button>
-            <Tooltip title={isBot ? 'Bot 通道不支持补拉历史' : '排队同步该会话的历史消息'}>
+            <Tooltip title={isBot ? t('dialogs:chat.syncBotDisabledShort') : t('dialogs:chat.syncDrawerTooltip')}>
               <Button
                 type="primary"
                 icon={<CloudSyncOutlined />}
                 disabled={isBot}
                 onClick={() => void room.syncHistory()}
               >
-                同步历史消息
+                {t('dialogs:chat.syncHistoryFull')}
               </Button>
             </Tooltip>
           </Space>

@@ -17,6 +17,7 @@
  *                  action={<Button onClick={onReset}>重置筛选</Button>} />
  */
 import type { CSSProperties, ReactNode } from 'react';
+import { useTranslation } from 'react-i18next';
 
 export type EmptyArt =
   | 'search'
@@ -138,7 +139,7 @@ function Art({ kind }: { kind: EmptyArt }) {
 
 export function EmptyState({
   art = 'inbox',
-  title = '暂无数据',
+  title,
   description,
   action,
   secondaryAction,
@@ -147,11 +148,13 @@ export function EmptyState({
   style,
   children,
 }: EmptyStateProps) {
+  const { t } = useTranslation('common');
+  const resolvedTitle = title === undefined ? t('noData') : title;
   const isNode = art !== null && typeof art === 'object';
   return (
     <div className={['tg-empty', compact ? 'is-compact' : '', className].filter(Boolean).join(' ')} style={style}>
       <div className="tg-empty-art">{isNode ? (art as ReactNode) : <Art kind={art as EmptyArt} />}</div>
-      {title ? <div className="tg-empty-title">{title}</div> : null}
+      {resolvedTitle ? <div className="tg-empty-title">{resolvedTitle}</div> : null}
       {description ? <div className="tg-empty-desc">{description}</div> : null}
       {action || secondaryAction ? (
         <div className="tg-empty-actions">

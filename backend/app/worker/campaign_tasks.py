@@ -31,6 +31,21 @@ from sqlalchemy import Integer, func, select
 
 from app.config import settings
 from app.core.batches import is_batch_cancelled
+
+
+def _message_link(entity: Any, sent: Any) -> str:
+    """消息直链：公开群用用户名；私有超级群用 t.me/c/…（仅群成员可打开）。"""
+    message_id = int(getattr(sent, "id", 0) or 0)
+    if not message_id:
+        return ""
+    username = str(getattr(entity, "username", "") or "").strip()
+    if username:
+        return f"https://t.me/{username}/{message_id}"
+    if isinstance(entity, tl_types.Channel):
+        chat_id = str(getattr(entity, "id", "") or "")
+        if chat_id:
+            return f"https://t.me/c/{chat_id}/{message_id}"
+    return ""
 from app.models import (
     ACCOUNT_STATUS_LABELS,
     AccountStatus,
@@ -305,7 +320,7 @@ class CampaignTasksMixin:
             direction=MessageDirection.outgoing,
             status=MessageStatus.sent,
             sender_name=account.display_name or "",
-            raw={"source": "campaign"},
+            raw={"source": "campaign", "link": _message_link(entity, sent)},
         )
         if not data.tg_chat_id:
             return
@@ -1013,11 +1028,12 @@ class CampaignTasksMixin:
             else:
                 await sleep_human(send_min, send_max, rng)
             try:
-                await self._campaign_send_one(
+                sent_msg = await self._campaign_send_one(
                     session, task, account, client, chat, text, material=material
                 )
                 sent += 1
                 item["sent"] = True
+                item["link"] = _message_link(chat, sent_msg)
                 done.add(target)
             except Exception as exc:  # noqa: BLE001
                 await self._apply_status(session, account, exc)
@@ -1053,6 +1069,7 @@ class CampaignTasksMixin:
             "processed": len(done),
             "done_targets": sorted(done),
             "cancelled": cancelled,
+            "links": [item["link"] for item in results if item.get("link")],
             "results": results[:50],
         }
         return summary

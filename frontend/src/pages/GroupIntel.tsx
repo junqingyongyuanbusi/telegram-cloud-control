@@ -28,7 +28,9 @@ import {
   SearchOutlined,
 } from '@ant-design/icons';
 import { useNavigate } from 'react-router-dom';
+import { useTranslation } from 'react-i18next';
 import { PageContainer, RelativeTime, SoftTag, CopyableText } from '../components';
+import { isEnglish } from '../i18n';
 import { toast } from '../utils/feedback';
 import { groupIntelApi } from '../api/endpoints';
 import { useAsyncData } from '../hooks/useAsyncData';
@@ -40,17 +42,10 @@ import type {
   UnverifiedCandidateOut,
 } from '../api/types';
 
-const KIND_LABEL: Record<string, string> = {
-  group: '普通群',
-  megagroup: '超级群',
-  channel: '频道',
-  chat: '群聊',
-};
-
-const SEND_LABEL: Record<string, { text: string; color?: string }> = {
-  open: { text: '可发言', color: 'green' },
-  restricted: { text: '禁言', color: 'red' },
-  unknown: { text: '未校验' },
+const SEND_COLOR: Record<string, string | undefined> = {
+  open: 'green',
+  restricted: 'red',
+  unknown: undefined,
 };
 
 /** 结果表只列讨论组：频道/讨论区在搜索阶段已排除。 */
@@ -59,50 +54,34 @@ const isDiscussionRow = (row: GroupSearchMatchOut) => {
   return reason ? reason === 'ok' : row.status !== 'rejected';
 };
 
-/** 近 3 个月活跃度与发言权限都来自候选核验结果（matches.raw）。 */
-const activityLabel = (row: GroupSearchMatchOut) => {
-  const act = row.raw?.activity as { recent_90d?: number } | undefined;
-  if (!act) return { text: '未确认', color: undefined };
-  const recent = Number(act.recent_90d ?? 0);
-  return recent > 0
-    ? { text: `有 ${recent} 条`, color: 'green' }
-    : { text: '无消息', color: 'red' };
-};
-
-const speakLabel = (row: GroupSearchMatchOut) => {
-  const perm = String(row.raw?.send_permission ?? 'unknown');
-  if (perm === 'restricted' || row.raw?.readonly === true) return { text: '禁言', color: 'red' };
-  if (perm === 'open') return { text: '可发言', color: 'green' };
-  return { text: '未校验', color: undefined };
-};
-
-const SOURCE_LABEL: Record<string, string> = {
-  contacts_search: '原生搜索',
-  global_message_search: '消息反查',
-  short_query: '短词召回',
-  linked_chat: '频道讨论群',
-  channel_recommendation: '相似推荐',
-  channel_message_link: '频道外链',
-  joined_group_graph: '已入群图谱',
-  candidate_link: '人工候选链接',
-  tme_preview: 't.me公开页',
-  external_web: '外部网页/目录',
-  channel_posts: '频道帖子搜索',
-  common_chat_graph: '共同群扩展',
-  local_index: '本地历史群库',
-  // 兼容历史记录中的旧短键
-  contacts: '原生搜索',
-  short_core: '短词兜底',
-  message_search: '消息反查',
-  joined_dialog: '已入群',
-  joined_link: '已入群内链',
-  recommendation: '相似推荐',
-  channel_link: '频道外链',
-  web_candidate: '外部候选',
-};
-
 export default function GroupIntel() {
+  const { t } = useTranslation(['groupIntel', 'common']);
   const navigate = useNavigate();
+
+  const kindLabel = (value: string) => t(`groupIntel:kind.${value}`, { defaultValue: value });
+  const discoverySourceLabel = (value: string) =>
+    t(`groupIntel:discoverySource.${value}`, { defaultValue: value });
+
+  /** 近 3 个月活跃度与发言权限都来自候选核验结果（matches.raw）。 */
+  const activityLabel = (row: GroupSearchMatchOut) => {
+    const act = row.raw?.activity as { recent_90d?: number } | undefined;
+    if (!act) return { text: t('groupIntel:activity.unconfirmed'), color: undefined };
+    const recent = Number(act.recent_90d ?? 0);
+    return recent > 0
+      ? { text: t('groupIntel:activity.hasMessages', { count: recent }), color: 'green' }
+      : { text: t('groupIntel:activity.noMessages'), color: 'red' };
+  };
+
+  const speakLabel = (row: GroupSearchMatchOut) => {
+    const perm = String(row.raw?.send_permission ?? 'unknown');
+    if (perm === 'restricted' || row.raw?.readonly === true) {
+      return { text: t('groupIntel:sendPermission.restricted'), color: 'red' };
+    }
+    if (perm === 'open') {
+      return { text: t('groupIntel:sendPermission.open'), color: 'green' };
+    }
+    return { text: t('groupIntel:sendPermission.unknown'), color: undefined };
+  };
   const [keyword, setKeyword] = useState('');
   const [speakableOnly, setSpeakableOnly] = useState(false);
   const [page, setPage] = useState(1);
@@ -200,7 +179,7 @@ export default function GroupIntel() {
         if (pageNo * 200 >= res.total) break;
       }
       if (!targets.size) {
-        toast.warning('没有可同步的群：这些群既没采到邀请链接，也没有公开用户名');
+        toast.warning(t('groupIntel:profiles.syncEmptyWarning'));
         return;
       }
       navigate('/campaigns/join-send', { state: { joinTargets: [...targets.values()] } });
@@ -213,91 +192,106 @@ export default function GroupIntel() {
 
   const profileColumns: ColumnsType<GroupProfileOut> = [
     {
-      title: '群',
+      title: t('groupIntel:profiles.columns.group'),
       dataIndex: 'title',
       render: (value: string, record) => (
         <span className="tg-stack" style={{ gap: 2 }}>
-          <span style={{ fontWeight: 'var(--tg-font-weight-medium)' }}>{value || '未命名群'}</span>
+          <span style={{ fontWeight: 'var(--tg-font-weight-medium)' }}>
+            {value || t('groupIntel:profiles.unnamedGroup')}
+          </span>
           <span className="tg-muted" style={{ fontSize: 'var(--tg-font-size-xs)' }}>
             {record.username ? `@${record.username}` : record.tg_chat_id}
           </span>
         </span>
       ),
     },
-    { title: '类型', dataIndex: 'kind', width: 90, render: (value: string) => <Tag>{KIND_LABEL[value] ?? value}</Tag> },
     {
-      title: '发言',
+      title: t('groupIntel:profiles.columns.kind'),
+      dataIndex: 'kind',
+      width: 90,
+      render: (value: string) => <Tag>{kindLabel(value)}</Tag>,
+    },
+    {
+      title: t('groupIntel:profiles.columns.speak'),
       dataIndex: 'send_permission',
       width: 84,
       render: (value: string | null) => {
-        const label = value ? SEND_LABEL[value] : undefined;
-        return label ? <Tag color={label.color}>{label.text}</Tag> : <span className="tg-muted">—</span>;
+        if (!value || !(value in SEND_COLOR)) return <span className="tg-muted">—</span>;
+        return (
+          <Tag color={SEND_COLOR[value]}>
+            {t(`groupIntel:sendPermission.${value}`)}
+          </Tag>
+        );
       },
     },
     {
-      title: '成员数',
+      title: t('groupIntel:profiles.columns.memberCount'),
       dataIndex: 'member_count',
       width: 90,
       render: (value: number | null) => <span className="tg-num">{value ?? '—'}</span>,
     },
     {
-      title: '已采成员',
+      title: t('groupIntel:profiles.columns.memberSampled'),
       dataIndex: 'member_sampled',
       width: 100,
       render: (value: number, record) => (
         <span>
           <span className="tg-num">{value}</span>
-          {record.member_synced_at ? null : <Tag style={{ marginLeft: 6 }}>未同步</Tag>}
+          {record.member_synced_at ? null : (
+            <Tag style={{ marginLeft: 6 }}>{t('groupIntel:profiles.unsynced')}</Tag>
+          )}
         </span>
       ),
     },
     {
-      title: '采集时间',
+      title: t('groupIntel:profiles.columns.collectedAt'),
       dataIndex: 'collected_at',
       width: 130,
       render: (value: string | null) => <RelativeTime value={value} />,
     },
     {
-      title: '来源',
+      title: t('groupIntel:profiles.columns.source'),
       dataIndex: 'source',
       width: 110,
       render: (value: string) => (
-        <SoftTag tone="neutral" size="sm">{value === 'join_event' ? '入群事件' : value === 'profile_sync' ? '资料同步' : value}</SoftTag>
+        <SoftTag tone="neutral" size="sm">
+          {t(`groupIntel:profiles.sources.${value}`, { defaultValue: value })}
+        </SoftTag>
       ),
     },
   ];
 
   return (
     <PageContainer
-      title="群情报"
-      description="用关键词找群或精准找群，找到的群统一沉淀为群档案。"
+      title={t('groupIntel:title')}
+      description={t('groupIntel:description')}
       actions={
         <Space>
           <Button icon={<ReloadOutlined />} onClick={() => void profiles.reload()}>
-            刷新
+            {t('common:refresh')}
           </Button>
           <Button icon={<SearchOutlined />} onClick={() => setFindOpen(true)}>
-            按关键词找群
+            {t('groupIntel:actions.keywordSearch')}
           </Button>
           <Button type="primary" ghost icon={<AimOutlined />} onClick={() => setPreciseOpen(true)}>
-            精准找群
+            {t('groupIntel:actions.preciseSearch')}
           </Button>
         </Space>
       }
     >
       <Card
         size="small"
-        title="群档案"
+        title={t('groupIntel:profiles.cardTitle')}
         extra={
           <Space>
-            <Tooltip title="按当前关键词筛出可发言群，把邀请链接 / @用户名 带到「加群」页">
+            <Tooltip title={t('groupIntel:actions.syncToJoinTooltip')}>
               <Button
                 size="small"
                 icon={<CloudUploadOutlined />}
                 loading={syncingJoin}
                 onClick={() => void syncSpeakableToJoin()}
               >
-                同步到加群
+                {t('groupIntel:actions.syncToJoin')}
               </Button>
             </Tooltip>
           </Space>
@@ -307,7 +301,7 @@ export default function GroupIntel() {
           <input
             className="ant-input"
             style={{ width: 240, height: 'var(--tg-layout-control-height)' }}
-            placeholder="按群名 / 用户名搜索"
+            placeholder={t('groupIntel:profiles.searchPlaceholder')}
             value={keyword}
             onChange={(event) => setKeyword(event.target.value)}
             onKeyDown={(event) => {
@@ -318,7 +312,7 @@ export default function GroupIntel() {
             }}
           />
           <Button icon={<SearchOutlined />} onClick={() => { setPage(1); void profiles.reload(); }}>
-            搜索
+            {t('groupIntel:profiles.searchButton')}
           </Button>
           <Select
             value={speakableOnly ? 'speakable' : 'all'}
@@ -328,12 +322,12 @@ export default function GroupIntel() {
             }}
             style={{ width: 168 }}
             options={[
-              { label: '全部群', value: 'all' },
-              { label: '只看能发言的', value: 'speakable' },
+              { label: t('groupIntel:profiles.filterAll'), value: 'all' },
+              { label: t('groupIntel:profiles.filterSpeakable'), value: 'speakable' },
             ]}
           />
           <Typography.Text type="secondary" style={{ fontSize: 'var(--tg-font-size-sm)' }}>
-            共 {profiles.data?.total ?? 0} 个群
+            {t('groupIntel:profiles.totalGroups', { count: profiles.data?.total ?? 0 })}
           </Typography.Text>
         </Space>
 
@@ -351,16 +345,16 @@ export default function GroupIntel() {
             onChange: setPage,
             size: 'small',
           }}
-          locale={{ emptyText: '还没有群档案：用右上角「按关键词找群」或「精准找群」开始搜索' }}
+          locale={{ emptyText: t('groupIntel:profiles.emptyText') }}
         />
       </Card>
 
 
       <Modal
         open={findOpen}
-        title="按关键词找公开群"
-        okText="开始搜索"
-        cancelText="取消"
+        title={t('groupIntel:findModal.title')}
+        okText={t('groupIntel:findModal.okText')}
+        cancelText={t('common:cancel')}
         confirmLoading={findBusy}
         onCancel={() => setFindOpen(false)}
         onOk={async () => {
@@ -369,7 +363,7 @@ export default function GroupIntel() {
             .map((item) => item.trim())
             .filter(Boolean);
           if (!keywords.length) {
-            toast.warning('至少填一个关键词');
+            toast.warning(t('groupIntel:findModal.keywordRequired'));
             return;
           }
           setFindBusy(true);
@@ -408,21 +402,21 @@ export default function GroupIntel() {
           <Alert
             type="info"
             showIcon
-            message="用 Telegram 原生搜索找群，不依赖第三方目录站"
-            description="输入关键词，系统直接调 Telegram 的公开搜索（可选按地区/语言扩展成多组查询），连成员数一起返回；找到的群会落进下面的群档案，之后可以接着用「筛群」判断值不值得投。全程只读：不加群、不发言。"
+            message={t('groupIntel:findModal.alertTitle')}
+            description={t('groupIntel:findModal.alertDescription')}
           />
           <div className="tg-stack" style={{ gap: 2 }}>
-            <span>关键词（逗号或换行分隔，最多 20 个）</span>
+            <span>{t('groupIntel:findModal.keywordsLabel')}</span>
             <Input.TextArea
               rows={2}
               style={{ maxWidth: 460 }}
-              placeholder={'USDT\n开卡\ncrypto 中文'}
+              placeholder={t('groupIntel:findModal.keywordsPlaceholder')}
               value={findKeywords}
               onChange={(e) => setFindKeywords(e.target.value)}
             />
           </div>
           <div className="tg-stack" style={{ gap: 6 }}>
-            <span>地区扩展（可选；不选则只搜原始关键词）</span>
+            <span>{t('groupIntel:findModal.regionExpandLabel')}</span>
             <Space wrap>
               <Select
                 mode="multiple"
@@ -430,12 +424,12 @@ export default function GroupIntel() {
                 value={findRegions}
                 onChange={setFindRegions}
                 style={{ minWidth: 220 }}
-                placeholder="选择地区，例如马来西亚"
+                placeholder={t('groupIntel:findModal.regionPlaceholder')}
                 options={[
-                  { label: '马来西亚 MY', value: 'MY' },
-                  { label: '新加坡 SG', value: 'SG' },
-                  { label: '印度尼西亚 ID', value: 'ID' },
-                  { label: '泰国 TH', value: 'TH' },
+                  { label: t('groupIntel:findModal.regions.MY'), value: 'MY' },
+                  { label: t('groupIntel:findModal.regions.SG'), value: 'SG' },
+                  { label: t('groupIntel:findModal.regions.ID'), value: 'ID' },
+                  { label: t('groupIntel:findModal.regions.TH'), value: 'TH' },
                 ]}
               />
               <Select
@@ -444,44 +438,43 @@ export default function GroupIntel() {
                 value={findLanguages}
                 onChange={setFindLanguages}
                 style={{ minWidth: 200 }}
-                placeholder="群组后缀语言（默认按地区）"
+                placeholder={t('groupIntel:findModal.languagePlaceholder')}
                 options={[
-                  { label: '马来语 ms', value: 'ms' },
-                  { label: '英语 en', value: 'en' },
-                  { label: '中文 zh', value: 'zh' },
-                  { label: '印尼语 id', value: 'id' },
-                  { label: '泰语 th', value: 'th' },
+                  { label: t('groupIntel:findModal.languages.ms'), value: 'ms' },
+                  { label: t('groupIntel:findModal.languages.en'), value: 'en' },
+                  { label: t('groupIntel:findModal.languages.zh'), value: 'zh' },
+                  { label: t('groupIntel:findModal.languages.id'), value: 'id' },
+                  { label: t('groupIntel:findModal.languages.th'), value: 'th' },
                 ]}
               />
             </Space>
             <Checkbox checked={findExpandLinked} onChange={(e) => setFindExpandLinked(e.target.checked)}>
-              顺着公开频道的讨论群继续找（linked_chat，只读）
+              {t('groupIntel:findModal.expandLinked')}
             </Checkbox>
             <Checkbox checked={findExpandMessages} onChange={(e) => setFindExpandMessages(e.target.checked)}>
-              读频道最近消息里的 t.me / @username，继续反查（图扩散 depth=1）
+              {t('groupIntel:findModal.expandMessages')}
             </Checkbox>
             <Checkbox
               checked={findExpandRecommendations}
               onChange={(e) => setFindExpandRecommendations(e.target.checked)}
             >
-              取 Telegram 的相似频道推荐
+              {t('groupIntel:findModal.expandRecommendations')}
             </Checkbox>
             <Checkbox checked={findEnrichTme} onChange={(e) => setFindEnrichTme(e.target.checked)}>
-              访问 t.me 公开页，补简介和成员数（不登录）
+              {t('groupIntel:findModal.enrichTme')}
             </Checkbox>
             <span className="tg-muted">
-              选了地区后，会把「主题词 × 地区 / 城市 / 本地语 / 中文 / 群组后缀」展开成多组查询（最多 120 条），
-              比单词搜索覆盖更全；频道也会作为种子落档。本轮的查询产出会记进绩效表，跑满 5 次且连续 3 次 0 产出的扩展词会自动停用。
+              {t('groupIntel:findModal.expandHint')}
             </span>
           </div>
           <Space size="large" wrap>
             <span>
-              每个词取
+              {t('groupIntel:findModal.perKeywordPrefix')}
               <InputNumber min={1} max={100} value={findPer} onChange={(v) => setFindPer(Number(v) || 50)} style={{ width: 90, margin: '0 6px' }} />
-              个
+              {t('groupIntel:findModal.perKeywordSuffix')}
             </span>
             <span>
-              成员数 ≥
+              {t('groupIntel:findModal.minMembersLabel')}
               <InputNumber min={0} max={1000000} step={100} value={findMinMembers} onChange={(v) => setFindMinMembers(Number(v) || 0)} style={{ width: 120, margin: '0 6px' }} />
             </span>
             <Select
@@ -489,9 +482,9 @@ export default function GroupIntel() {
               onChange={setFindKind}
               style={{ width: 130 }}
               options={[
-                { value: 'group', label: '只要群' },
-                { value: 'channel', label: '只要频道' },
-                { value: 'any', label: '群和频道' },
+                { value: 'group', label: t('groupIntel:findModal.kindOptions.group') },
+                { value: 'channel', label: t('groupIntel:findModal.kindOptions.channel') },
+                { value: 'any', label: t('groupIntel:findModal.kindOptions.any') },
               ]}
             />
           </Space>
@@ -501,9 +494,13 @@ export default function GroupIntel() {
       <Modal
         open={preciseOpen}
         width={preciseBatchId || preciseTaskId ? 1040 : 640}
-        title="精准找群"
-        okText={preciseBatchId || preciseTaskId ? '重新检索' : '开始检索'}
-        cancelText="关闭"
+        title={t('groupIntel:preciseModal.title')}
+        okText={
+          preciseBatchId || preciseTaskId
+            ? t('groupIntel:preciseModal.okRestart')
+            : t('groupIntel:preciseModal.okStart')
+        }
+        cancelText={t('common:close')}
         confirmLoading={preciseBusy}
         onCancel={() => setPreciseOpen(false)}
         onOk={async () => {
@@ -520,7 +517,7 @@ export default function GroupIntel() {
             .map((item) => item.trim())
             .filter(Boolean);
           if (!keywords.length) {
-            toast.warning('至少填一个关键词');
+            toast.warning(t('groupIntel:preciseModal.keywordRequired'));
             return;
           }
           setPreciseBusy(true);
@@ -585,10 +582,10 @@ export default function GroupIntel() {
         {!(preciseBatchId || preciseTaskId) ? (
           <div className="tg-stack" style={{ gap: 'var(--tg-space-md)' }}>
             <div className="tg-stack" style={{ gap: 2 }}>
-              <span>关键词（逗号或换行分隔，最多 20 个）</span>
+              <span>{t('groupIntel:preciseModal.keywordsLabel')}</span>
               <Input.TextArea
                 rows={3}
-                placeholder={'Forex Thailand\nกลุ่มเทรด Forex\nCrypto MY'}
+                placeholder={t('groupIntel:preciseModal.keywordsPlaceholder')}
                 value={preciseKeywords}
                 onChange={(e) => setPreciseKeywords(e.target.value)}
               />
@@ -602,57 +599,108 @@ export default function GroupIntel() {
               message={
                 preciseBatch
                   ? preciseRows.length
-                    ? `检索到 ${preciseRows.length} 个讨论组（已完成 ${preciseBatch.completed_tasks}/${preciseBatch.total_tasks} 个账号任务）`
-                    : `多号检索进行中（已完成 ${preciseBatch.completed_tasks}/${preciseBatch.total_tasks}，运行中 ${preciseBatch.active_tasks}）；每 3 秒自动刷新`
+                    ? t('groupIntel:preciseModal.status.batchFound', {
+                        count: preciseRows.length,
+                        completed: preciseBatch.completed_tasks,
+                        total: preciseBatch.total_tasks,
+                      })
+                    : t('groupIntel:preciseModal.status.batchRunning', {
+                        completed: preciseBatch.completed_tasks,
+                        total: preciseBatch.total_tasks,
+                        active: preciseBatch.active_tasks,
+                      })
                   : preciseRows.length
-                    ? `已产出 ${preciseRows.length} 条匹配`
-                    : '检索任务已排队，正在搜索/校验；结果每 3 秒刷新。'
+                    ? t('groupIntel:preciseModal.status.taskFound', { count: preciseRows.length })
+                    : t('groupIntel:preciseModal.status.taskQueued')
               }
               description={
                 preciseBatch
-                  ? `批次 ${preciseBatch.batch_id}${preciseBatch.failed_tasks ? `（${preciseBatch.failed_tasks} 个子任务失败）` : ''}；近 3 个月有消息且可发言的群写入群档案，其余只在这里显示；未核验公开链接见下方「待核验候选」。`
-                  : `任务 ${preciseTaskId}；近 3 个月有消息且可发言的群写入群档案。`
+                  ? t('groupIntel:preciseModal.status.batchDesc', {
+                      batchId: preciseBatch.batch_id,
+                      failedPart: preciseBatch.failed_tasks
+                        ? t('groupIntel:preciseModal.status.failedTasksPart', {
+                            count: preciseBatch.failed_tasks,
+                          })
+                        : '',
+                    })
+                  : t('groupIntel:preciseModal.status.taskDesc', { taskId: preciseTaskId })
               }
             />
             {preciseBatch && preciseBatch.ai_notes.length > 0 ? (
               <Alert
                 type="warning"
                 showIcon
-                message="渠道/预算/AI 降级提示"
-                description={preciseBatch.ai_notes.join('；')}
+                message={t('groupIntel:preciseModal.aiNotesTitle')}
+                description={preciseBatch.ai_notes.join(isEnglish() ? '; ' : '；')}
               />
             ) : null}
             {preciseBatch?.source_stats && Object.keys(preciseBatch.source_stats).length > 0 ? (
               <Space size={[6, 6]} wrap>
-                <Tag color="blue">原生搜索 {preciseBatch.source_stats.contacts_search ?? 0}</Tag>
-                <Tag color="cyan">消息反查 {preciseBatch.source_stats.global_message_search ?? 0}</Tag>
+                <Tag color="blue">
+                  {t('groupIntel:preciseModal.stats.contactsSearch', {
+                    count: preciseBatch.source_stats.contacts_search ?? 0,
+                  })}
+                </Tag>
+                <Tag color="cyan">
+                  {t('groupIntel:preciseModal.stats.messageSearch', {
+                    count: preciseBatch.source_stats.global_message_search ?? 0,
+                  })}
+                </Tag>
                 <Tag color="geekblue">
-                  频道关联{' '}
-                  {(preciseBatch.source_stats.linked_chat ?? 0) +
-                    (preciseBatch.source_stats.channel_recommendation ?? 0) +
-                    (preciseBatch.source_stats.channel_message_link ?? 0)}
+                  {t('groupIntel:preciseModal.stats.channelLinked', {
+                    count:
+                      (preciseBatch.source_stats.linked_chat ?? 0) +
+                      (preciseBatch.source_stats.channel_recommendation ?? 0) +
+                      (preciseBatch.source_stats.channel_message_link ?? 0),
+                  })}
                 </Tag>
-                <Tag>帖子种子 {preciseBatch.source_stats.channel_posts_seeds ?? 0}</Tag>
-                <Tag>外部链接 {preciseBatch.source_stats.external_links ?? 0}</Tag>
                 <Tag>
-                  关系图谱{' '}
-                  {(preciseBatch.source_stats.joined_group_graph ?? 0) +
-                    (preciseBatch.source_stats.common_chat_graph ?? 0)}
+                  {t('groupIntel:preciseModal.stats.postSeeds', {
+                    count: preciseBatch.source_stats.channel_posts_seeds ?? 0,
+                  })}
                 </Tag>
-                <Tag color="green">核验保留 {preciseBatch.source_stats.accepted ?? 0}</Tag>
-                <Tag color="gold">待确认 {preciseBatch.source_stats.needs_review ?? 0}</Tag>
                 <Tag>
-                  被过滤{' '}
-                  {(preciseBatch.source_stats.rejected ?? 0) +
-                    (preciseBatch.source_stats.dropped_members ?? 0)}
+                  {t('groupIntel:preciseModal.stats.externalLinks', {
+                    count: preciseBatch.source_stats.external_links ?? 0,
+                  })}
                 </Tag>
-                <Tag>RPC消耗 {preciseBatch.source_stats.rpc_used ?? 0}</Tag>
+                <Tag>
+                  {t('groupIntel:preciseModal.stats.relationGraph', {
+                    count:
+                      (preciseBatch.source_stats.joined_group_graph ?? 0) +
+                      (preciseBatch.source_stats.common_chat_graph ?? 0),
+                  })}
+                </Tag>
+                <Tag color="green">
+                  {t('groupIntel:preciseModal.stats.accepted', {
+                    count: preciseBatch.source_stats.accepted ?? 0,
+                  })}
+                </Tag>
+                <Tag color="gold">
+                  {t('groupIntel:preciseModal.stats.needsReview', {
+                    count: preciseBatch.source_stats.needs_review ?? 0,
+                  })}
+                </Tag>
+                <Tag>
+                  {t('groupIntel:preciseModal.stats.filtered', {
+                    count:
+                      (preciseBatch.source_stats.rejected ?? 0) +
+                      (preciseBatch.source_stats.dropped_members ?? 0),
+                  })}
+                </Tag>
+                <Tag>
+                  {t('groupIntel:preciseModal.stats.rpcUsed', {
+                    count: preciseBatch.source_stats.rpc_used ?? 0,
+                  })}
+                </Tag>
                 {((preciseBatch.source_stats.flood_stopped ?? 0) > 0 ||
                   (preciseBatch.source_stats.budget_stopped ?? 0) > 0) ? (
                   <Tag color="red">
-                    限流/预算停机{' '}
-                    {(preciseBatch.source_stats.flood_stopped ?? 0) +
-                      (preciseBatch.source_stats.budget_stopped ?? 0)}
+                    {t('groupIntel:preciseModal.stats.limitStopped', {
+                      count:
+                        (preciseBatch.source_stats.flood_stopped ?? 0) +
+                        (preciseBatch.source_stats.budget_stopped ?? 0),
+                    })}
                   </Tag>
                 ) : null}
               </Space>
@@ -664,7 +712,7 @@ export default function GroupIntel() {
               items={[
                 {
                   key: 'verified',
-                  label: `检索结果 (${preciseRows.length})`,
+                  label: t('groupIntel:preciseModal.tabs.verified', { count: preciseRows.length }),
                   children: (
                     <Table<GroupSearchMatchOut>
                       size="small"
@@ -675,7 +723,7 @@ export default function GroupIntel() {
                       scroll={{ y: 360 }}
                       columns={[
                         {
-                          title: '群组',
+                          title: t('groupIntel:preciseModal.verifiedColumns.group'),
                           dataIndex: 'title',
                           ellipsis: true,
                           render: (value: string, row) =>
@@ -687,9 +735,13 @@ export default function GroupIntel() {
                               value
                             ),
                         },
-                        { title: '成员', dataIndex: 'member_count', width: 76 },
                         {
-                          title: '近3个月会话',
+                          title: t('groupIntel:preciseModal.verifiedColumns.members'),
+                          dataIndex: 'member_count',
+                          width: 76,
+                        },
+                        {
+                          title: t('groupIntel:preciseModal.verifiedColumns.activity90d'),
                           width: 120,
                           render: (_: unknown, row) => {
                             const label = activityLabel(row);
@@ -697,7 +749,7 @@ export default function GroupIntel() {
                           },
                         },
                         {
-                          title: '能否发言',
+                          title: t('groupIntel:preciseModal.verifiedColumns.speakable'),
                           width: 100,
                           render: (_: unknown, row) => {
                             const label = speakLabel(row);
@@ -705,16 +757,20 @@ export default function GroupIntel() {
                           },
                         },
                         {
-                          title: '入库',
+                          title: t('groupIntel:preciseModal.verifiedColumns.archived'),
                           dataIndex: 'status',
                           width: 90,
                           render: (value: string) =>
                             value === 'accepted' ? (
-                              <Tag color="green">已入库</Tag>
+                              <Tag color="green">
+                                {t('groupIntel:preciseModal.matchStatus.accepted')}
+                              </Tag>
                             ) : value === 'needs_review' ? (
-                              <Tag color="gold">未确认</Tag>
+                              <Tag color="gold">
+                                {t('groupIntel:preciseModal.matchStatus.needs_review')}
+                              </Tag>
                             ) : (
-                              <Tag>未达标</Tag>
+                              <Tag>{t('groupIntel:preciseModal.matchStatus.rejected')}</Tag>
                             ),
                         },
                       ]}
@@ -723,7 +779,9 @@ export default function GroupIntel() {
                 },
                 {
                   key: 'pending',
-                  label: `待核验候选 (${preciseBatch?.unverified_candidates?.length ?? 0})`,
+                  label: t('groupIntel:preciseModal.tabs.pending', {
+                    count: preciseBatch?.unverified_candidates?.length ?? 0,
+                  }),
                   children: (
                     <Table<UnverifiedCandidateOut>
                       size="small"
@@ -733,27 +791,31 @@ export default function GroupIntel() {
                       scroll={{ y: 360 }}
                       columns={[
                         {
-                          title: '公开候选链接',
+                          title: t('groupIntel:preciseModal.pendingColumns.url'),
                           dataIndex: 'url',
                           width: 250,
                           render: (value: string) => <CopyableText value={value} mono maxLength={38} />,
                         },
                         {
-                          title: '发现来源',
+                          title: t('groupIntel:preciseModal.pendingColumns.source'),
                           dataIndex: 'source',
                           width: 120,
-                          render: (value: string) => <Tag>{SOURCE_LABEL[value] ?? value}</Tag>,
+                          render: (value: string) => <Tag>{discoverySourceLabel(value)}</Tag>,
                         },
                         {
-                          title: '状态',
+                          title: t('groupIntel:preciseModal.pendingColumns.status'),
                           dataIndex: 'status_label',
                           width: 150,
                           render: (value: string | undefined) => (
-                            <Tag color="orange">{value || '外部发现，尚未验证'}</Tag>
+                            <Tag color="orange">
+                              {!value || (isEnglish() && value === '外部发现，尚未验证')
+                                ? t('groupIntel:preciseModal.unverifiedDefaultStatus')
+                                : value}
+                            </Tag>
                           ),
                         },
                         {
-                          title: '查询 / 适配器',
+                          title: t('groupIntel:preciseModal.pendingColumns.queryAdapter'),
                           dataIndex: 'query',
                           width: 160,
                           ellipsis: true,
@@ -761,7 +823,7 @@ export default function GroupIntel() {
                             [row.adapter, value].filter(Boolean).join(' · ') || '—',
                         },
                         {
-                          title: '未核验原因',
+                          title: t('groupIntel:preciseModal.pendingColumns.reason'),
                           dataIndex: 'reason',
                           ellipsis: true,
                         },

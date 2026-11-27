@@ -8,6 +8,7 @@
  */
 import { notifyError, notifyWarning } from '../utils/feedback';
 import { filenameFromDisposition } from '../utils/download';
+import i18n from '../i18n';
 import type { ExportResult } from './types';
 
 export const TOKEN_KEY = 'tgcc_token';
@@ -117,15 +118,15 @@ function extractDetail(body: unknown): string {
 
 function messageForStatus(status: number, detail: string, path: string): string {
   if (detail) return detail;
-  if (status === 400) return '请求参数不正确';
-  if (status === 401) return '登录已过期，请重新登录';
-  if (status === 403) return '没有权限执行该操作';
-  if (status === 404) return `接口不存在（404）：${path}`;
-  if (status === 409) return '当前状态不允许该操作，请刷新后重试';
-  if (status === 422) return '参数校验失败';
-  if (status === 429) return '操作太频繁，请稍后再试';
-  if (status >= 500) return `服务端错误（${status}），请稍后重试`;
-  return `请求失败（${status}）`;
+  if (status === 400) return i18n.t('api:badRequest');
+  if (status === 401) return i18n.t('api:unauthorized');
+  if (status === 403) return i18n.t('api:forbidden');
+  if (status === 404) return i18n.t('api:notFound', { path });
+  if (status === 409) return i18n.t('api:conflict');
+  if (status === 422) return i18n.t('api:unprocessable');
+  if (status === 429) return i18n.t('api:tooManyRequests');
+  if (status >= 500) return i18n.t('api:serverError', { status });
+  return i18n.t('api:requestFailed', { status });
 }
 
 type UnauthorizedHandler = () => void;
@@ -151,7 +152,7 @@ function emitUnauthorized(): void {
   });
   if (now - lastUnauthorizedAt > 3000) {
     lastUnauthorizedAt = now;
-    notifyWarning('登录已过期，请重新登录');
+    notifyWarning(i18n.t('api:unauthorized'));
   }
 }
 
@@ -240,8 +241,8 @@ export async function request<T>(path: string, options: RequestOptions = {}): Pr
     } catch (err) {
       const aborted = (err as Error)?.name === 'AbortError';
       // 调用方主动取消（切换筛选/离开页面）：不提示、不重试
-      if (aborted && signal?.aborted) throw new ApiError(0, '请求已取消', path);
-      lastNetworkError = new ApiError(0, aborted ? '请求超时，请稍后重试' : '无法连接后端服务，请确认 API 已启动', path);
+      if (aborted && signal?.aborted) throw new ApiError(0, i18n.t('api:cancelled'), path);
+      lastNetworkError = new ApiError(0, aborted ? i18n.t('api:timeout') : i18n.t('api:networkError'), path);
       if (attempt === retries) {
         if (!silent) notifyError(lastNetworkError.message);
         throw lastNetworkError;
@@ -250,7 +251,7 @@ export async function request<T>(path: string, options: RequestOptions = {}): Pr
   }
 
   if (!response) {
-    const error = lastNetworkError ?? new ApiError(0, '无法连接后端服务，请确认 API 已启动', path);
+    const error = lastNetworkError ?? new ApiError(0, i18n.t('api:networkError'), path);
     if (!silent) notifyError(error.message);
     throw error;
   }
@@ -291,9 +292,9 @@ export async function downloadFile(
     response = await fetchWithTimeout(url, { method: 'GET', headers: buildHeaders(undefined) }, timeoutMs, signal);
   } catch (err) {
     if ((err as Error)?.name === 'AbortError' && signal?.aborted) {
-      throw new ApiError(0, '导出已取消', path);
+      throw new ApiError(0, i18n.t('api:exportCancelled'), path);
     }
-    const error = new ApiError(0, '导出失败：无法连接后端服务', path);
+    const error = new ApiError(0, i18n.t('api:exportNetworkError'), path);
     if (!silent) notifyError(error.message);
     throw error;
   }
@@ -301,7 +302,7 @@ export async function downloadFile(
   if (!response.ok) {
     const payload = await parseBody(response);
     const detail = extractDetail(payload);
-    const message = detail || `导出失败（${response.status}）`;
+    const message = detail || i18n.t('api:exportFailed', { status: response.status });
     const error = new ApiError(response.status, message, path, detail, payload);
     if (!silent) notifyError(message);
     throw error;

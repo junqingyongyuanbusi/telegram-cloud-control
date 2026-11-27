@@ -13,6 +13,7 @@
 import { Avatar, Dropdown, Space, Tag, Typography } from 'antd';
 import type { MenuProps } from 'antd';
 import { LogoutOutlined, UserOutlined } from '@ant-design/icons';
+import { useTranslation } from 'react-i18next';
 
 export interface UserMenuProps {
   name: string;
@@ -22,6 +23,7 @@ export interface UserMenuProps {
 }
 
 export function UserMenu({ name, roleLabel, isAdmin = false, onLogout }: UserMenuProps) {
+  const { t } = useTranslation('shell');
   const items: MenuProps['items'] = [
     {
       key: 'profile',
@@ -31,7 +33,7 @@ export function UserMenu({ name, roleLabel, isAdmin = false, onLogout }: UserMen
           <Typography.Text strong>{name}</Typography.Text>
           <Typography.Text type="secondary" style={{ fontSize: 'var(--tg-font-size-sm)' }}>
             {roleLabel ?? '—'}
-            {isAdmin ? ' · 可管全部账号与员工' : ' · 只能操作分配到的账号'}
+            {isAdmin ? t('userMenu.adminScope') : t('userMenu.operatorScope')}
           </Typography.Text>
         </Space>
       ),
@@ -40,7 +42,7 @@ export function UserMenu({ name, roleLabel, isAdmin = false, onLogout }: UserMen
     {
       key: 'logout',
       icon: <LogoutOutlined />,
-      label: '退出登录',
+      label: t('userMenu.logout'),
       danger: true,
       onClick: onLogout,
     },
@@ -48,7 +50,7 @@ export function UserMenu({ name, roleLabel, isAdmin = false, onLogout }: UserMen
 
   return (
     <Dropdown menu={{ items }} trigger={['click']} placement="bottomRight">
-      <div className="app-user-trigger" role="button" tabIndex={0} aria-label="当前用户菜单">
+      <div className="app-user-trigger" role="button" tabIndex={0} aria-label={t('userMenu.ariaLabel')}>
         <Avatar
           size={28}
           style={{ background: 'var(--tg-color-primary-bg)', color: 'var(--tg-color-primary)' }}
@@ -67,7 +69,7 @@ export function UserMenu({ name, roleLabel, isAdmin = false, onLogout }: UserMen
               color: 'var(--tg-color-warning)',
             }}
           >
-            管理员
+            {t('userMenu.adminTag')}
           </Tag>
         ) : null}
       </div>

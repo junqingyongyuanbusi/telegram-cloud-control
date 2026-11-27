@@ -168,6 +168,11 @@ class JoinAndSendRequest(BulkScopeRequest):
         default_factory=list,
         description="群链接或 @公开群，一行一个；最多 100 个",
     )
+    dispatch: str = Field(
+        default="round_robin",
+        pattern=r"^(each|round_robin)$",
+        description="round_robin=轮训：一个群只由一个号发；each=每个号都把全部群发一遍",
+    )
     accounts_per_wave: int = Field(
         default=0, ge=0, le=1000, description="每轮账号数：0 = 全部账号一轮跑完；Worker 会等上一轮结束再开下一轮"
     )
@@ -491,6 +496,8 @@ class CampaignBatchItem(BaseModel):
     wave_total: int = 0
     chunk_index: int = 0
     chunk_total: int = 0
+    # 逐群结果：[{target, joined, sent, link, error}]，操作员可点开消息链接核对
+    results: List[Dict[str, Any]] = Field(default_factory=list)
     started_at: Optional[datetime] = None
     completed_at: Optional[datetime] = None
 

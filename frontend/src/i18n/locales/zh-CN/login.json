@@ -1,0 +1,18 @@
+{
+  "envDevelopment": "本地开发",
+  "envProduction": "生产环境",
+  "welcomeTitle": "欢迎回来",
+  "welcomeSubtitle": "使用管理员分配的账号进入控制台",
+  "usernameLabel": "用户名",
+  "usernameRequired": "请输入用户名",
+  "usernamePlaceholder": "输入用户名",
+  "passwordLabel": "密码",
+  "passwordRequired": "请输入密码",
+  "passwordPlaceholder": "输入密码",
+  "capsLockOn": "大写锁定已打开",
+  "rememberUsername": "记住用户名",
+  "forgotPassword": "忘记密码请联系管理员",
+  "signingIn": "正在登录…",
+  "signIn": "登录",
+  "loginFailed": "登录失败，请稍后重试"
+}

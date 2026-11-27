@@ -15,6 +15,7 @@
 import type { CSSProperties, ReactNode } from 'react';
 import { Button } from 'antd';
 import { ReloadOutlined } from '@ant-design/icons';
+import { useTranslation } from 'react-i18next';
 import EmptyState from './EmptyState';
 
 export interface ErrorStateProps {
@@ -30,34 +31,35 @@ export interface ErrorStateProps {
 }
 
 export function ErrorState({
-  title = '加载失败',
+  title,
   description,
   error,
   onRetry,
-  retryText = '重试',
+  retryText,
   extra,
   compact = false,
   className,
   style,
 }: ErrorStateProps) {
+  const { t } = useTranslation('common');
   return (
     <div className={['tg-error-state', className].filter(Boolean).join(' ')} style={style}>
       <EmptyState
         art="error"
         compact={compact}
-        title={title}
+        title={title ?? t('loadFailed')}
         description={
           description ?? (
             <span>
-              后端接口没有正常返回，请稍后再试。
-              {error ? <span className="tg-break">（{error}）</span> : null}
+              {t('loadFailedDesc')}
+              {error ? <span className="tg-break"> ({error})</span> : null}
             </span>
           )
         }
         action={
           onRetry ? (
             <Button icon={<ReloadOutlined />} onClick={onRetry}>
-              {retryText}
+              {retryText ?? t('retry')}
             </Button>
           ) : undefined
         }

@@ -1,4 +1,8 @@
-"""账号分组：自定义标签，用来把号分给同事。"""
+"""账号分组：自定义标签，用来把号分给同事。
+
+列表对全员开放（触达中心选号时要按分组筛选）；新建/改名/删除/加号/移号仅管理员，
+与前端 `/groups` 页面的可见性一致。
+"""
 
 from __future__ import annotations
 
@@ -14,6 +18,7 @@ from app.api.deps import (
     assert_accounts_access,
     get_current_user,
     get_session,
+    require_admin,
 )
 from app.api.routers import AccountIdsRequest, group_out
 from app.core.audit import write_audit
@@ -54,7 +59,7 @@ async def list_groups(
 async def create_group(
     payload: GroupCreate,
     session: AsyncSession = Depends(get_session),
-    user: User = Depends(get_current_user),
+    user: User = Depends(require_admin),
 ) -> GroupOut:
     """分组名唯一，重名直接 409，避免前端出现两个同名标签。"""
     exists = await session.scalar(select(AccountGroup.id).where(AccountGroup.name == payload.name))
@@ -80,7 +85,7 @@ async def update_group(
     group_id: uuid.UUID,
     payload: GroupUpdate,
     session: AsyncSession = Depends(get_session),
-    user: User = Depends(get_current_user),
+    user: User = Depends(require_admin),
 ) -> GroupOut:
     """改名 / 改备注。"""
     group = await _get_group(session, group_id)
@@ -108,7 +113,7 @@ async def update_group(
 async def delete_group(
     group_id: uuid.UUID,
     session: AsyncSession = Depends(get_session),
-    user: User = Depends(get_current_user),
+    user: User = Depends(require_admin),
 ) -> dict:
     """删分组不会删号：tg_accounts.group_id 外键是 ON DELETE SET NULL，号回到「未分组」。"""
     group = await _get_group(session, group_id)
@@ -132,9 +137,9 @@ async def add_accounts(
     group_id: uuid.UUID,
     payload: AccountIdsRequest,
     session: AsyncSession = Depends(get_session),
-    user: User = Depends(get_current_user),
+    user: User = Depends(require_admin),
 ) -> dict:
-    """只改 tg_accounts.group_id；operator 只能操作分配到的号。"""
+    """只改 tg_accounts.group_id；分组管理是管理员动作。"""
     group = await _get_group(session, group_id)
     accounts = await _resolve_accounts(session, user, payload.account_ids)
     for account in accounts:
@@ -156,7 +161,7 @@ async def remove_accounts(
     group_id: uuid.UUID,
     payload: AccountIdsRequest,
     session: AsyncSession = Depends(get_session),
-    user: User = Depends(get_current_user),
+    user: User = Depends(require_admin),
 ) -> dict:
     """移出分组 = group_id 置空，号本身不动。"""
     group = await _get_group(session, group_id)

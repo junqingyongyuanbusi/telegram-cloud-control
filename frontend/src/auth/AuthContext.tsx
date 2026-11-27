@@ -12,6 +12,7 @@ import { useNavigate } from 'react-router-dom';
 import { ApiError, getToken, onUnauthorized, setToken as persistToken } from '../api/client';
 import { authApi } from '../api/endpoints';
 import { notifyError } from '../utils/feedback';
+import i18n from '../i18n';
 import type { UserOut } from '../api/types';
 
 const USER_KEY = 'tgcc_user';
@@ -103,7 +104,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         clearSession();
       } else {
         // 后端 5xx / 网络抖动：不要把人踢下线，先用上次身份继续值班
-        notifyError(`无法校验登录状态（${(err as Error).message}），先用上次的身份继续`);
+        notifyError(i18n.t('common:authCheckFallback', { message: (err as Error).message }));
       }
     } finally {
       if (mountedRef.current) setReady(true);

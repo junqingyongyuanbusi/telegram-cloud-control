@@ -1,0 +1,18 @@
+{
+  "envDevelopment": "Local Dev",
+  "envProduction": "Production",
+  "welcomeTitle": "Welcome Back",
+  "welcomeSubtitle": "Sign in with the account assigned by your administrator",
+  "usernameLabel": "Username",
+  "usernameRequired": "Please enter your username",
+  "usernamePlaceholder": "Enter username",
+  "passwordLabel": "Password",
+  "passwordRequired": "Please enter your password",
+  "passwordPlaceholder": "Enter password",
+  "capsLockOn": "Caps Lock is on",
+  "rememberUsername": "Remember username",
+  "forgotPassword": "Contact your administrator to reset password",
+  "signingIn": "Signing in…",
+  "signIn": "Sign In",
+  "loginFailed": "Sign in failed. Please try again."
+}

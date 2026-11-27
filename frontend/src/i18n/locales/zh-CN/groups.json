@@ -1,0 +1,57 @@
+{
+  "title": "账号分组",
+  "description": "分组是自定义标签，用来把号分给同事；一个号同一时间只属于一个分组。",
+  "create": "新建分组",
+  "columns": {
+    "name": "分组名",
+    "description": "说明",
+    "accountCount": "账号数",
+    "distribution": "状态分布",
+    "createdAt": "创建时间",
+    "actions": "操作"
+  },
+  "status": {
+    "healthy": "正常",
+    "pending": "待登录",
+    "abnormal": "异常",
+    "tooltip": "{{label}} {{count}} 个",
+    "tooltipPartial": "{{label}} {{count}} 个（基于前 200 个账号）"
+  },
+  "actions": {
+    "manageAccounts": "管理账号",
+    "edit": "编辑",
+    "delete": "删除"
+  },
+  "empty": {
+    "title": "还没有分组",
+    "description": "新建分组后，把账号批量移入即可按组分配。"
+  },
+  "footnote": "状态分布按当前加载的账号统计；账号超过 200 个时显示前 200 个的口径，账号数仍以后端为准。",
+  "deleteConfirm": {
+    "title": "删除分组「{{name}}」？",
+    "content": "账号本身不会被删除，只是不再属于该分组（变为未分组）。",
+    "ok": "删除"
+  },
+  "membersModal": {
+    "title": "管理分组账号：{{name}}",
+    "hint": "勾选 = 加入该分组，取消勾选 = 移出该分组；保存时只提交变化的部分。"
+  },
+  "form": {
+    "editTitle": "编辑分组：{{name}}",
+    "createTitle": "新建分组",
+    "nameLabel": "分组名",
+    "nameRequired": "请输入分组名",
+    "nameMax": "最多 64 个字符",
+    "namePlaceholder": "例如：一组 / 值班号",
+    "descriptionLabel": "说明",
+    "descriptionPlaceholder": "说明（可选）"
+  },
+  "toast": {
+    "deleted": "分组已删除",
+    "addedMembers": "已加入 {{count}} 个账号",
+    "removedMembers": "已移出 {{count}} 个账号",
+    "noMemberChange": "分组没有变化",
+    "updated": "分组已更新",
+    "created": "分组已创建"
+  }
+}

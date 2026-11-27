@@ -7,6 +7,7 @@ import {
   type Dispatch,
   type SetStateAction,
 } from 'react';
+import i18n from '../i18n';
 
 export interface AsyncState<T> {
   data: T | null;
@@ -78,7 +79,7 @@ export function useAsyncData<T>(
       }
       return result;
     } catch (err) {
-      const message = (err as Error)?.message ?? '加载失败，请稍后重试';
+      const message = (err as Error)?.message ?? i18n.t('common:loadFailed');
       if (seq === seqRef.current && mountedRef.current) {
         if (!silentErrorRef.current) setError(message);
         setLoadedOnce(true);

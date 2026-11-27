@@ -159,6 +159,8 @@ def message_out(message: Message) -> MessageOut:
     out = MessageOut.model_validate(message)
     out.direction_label = MESSAGE_DIRECTION_LABELS.get(enum_value(message.direction), "")
     out.status_label = MESSAGE_STATUS_LABELS.get(enum_value(message.status), "")
+    raw = message.raw if isinstance(message.raw, dict) else {}
+    out.link = str(raw.get("link") or "")
     return out
 
 

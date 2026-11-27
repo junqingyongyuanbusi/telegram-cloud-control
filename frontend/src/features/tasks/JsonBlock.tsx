@@ -5,6 +5,7 @@
 import { useState, type CSSProperties, type ReactNode } from 'react';
 import { Button, Tooltip } from 'antd';
 import { CheckOutlined, CopyOutlined } from '@ant-design/icons';
+import { useTranslation } from 'react-i18next';
 import { copyText } from '../../utils/download';
 import { stringifyDetail } from '../../utils/format';
 import { toast } from '../../utils/feedback';
@@ -21,23 +22,25 @@ interface JsonBlockProps {
 export function JsonBlock({
   title,
   value,
-  emptyText = '（无）',
+  emptyText,
   maxHeight = 320,
   style,
   className,
 }: JsonBlockProps) {
+  const { t } = useTranslation(['tasks', 'common']);
   const [copied, setCopied] = useState(false);
   const text = stringifyDetail(value);
+  const resolvedEmptyText = emptyText ?? t('tasks:jsonBlock.empty');
 
   const handleCopy = async () => {
     if (!text) return;
     const ok = await copyText(text);
     if (ok) {
       setCopied(true);
-      toast.success('已复制');
+      toast.success(t('common:copied'));
       window.setTimeout(() => setCopied(false), 1600);
     } else {
-      toast.error('复制失败，请手动选中复制');
+      toast.error(t('common:copyFailed'));
     }
   };
 
@@ -46,19 +49,19 @@ export function JsonBlock({
       <div className="tg-json-block-head">
         {title ? <span className="tg-json-block-title">{title}</span> : null}
         {text ? (
-          <Tooltip title="复制完整内容">
+          <Tooltip title={t('tasks:jsonBlock.copyFull')}>
             <Button
               type="text"
               size="small"
               icon={copied ? <CheckOutlined style={{ color: 'var(--tg-color-success)' }} /> : <CopyOutlined />}
               onClick={() => void handleCopy()}
-              aria-label={title ? `复制${title}` : '复制'}
+              aria-label={title ? t('tasks:jsonBlock.copyNamed', { title: String(title) }) : t('common:copy')}
             />
           </Tooltip>
         ) : null}
       </div>
       <pre className="tg-json-block-body" style={{ maxHeight }}>
-        {text || emptyText}
+        {text || resolvedEmptyText}
       </pre>
     </div>
   );

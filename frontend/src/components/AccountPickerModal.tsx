@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Alert, Empty, Input, Modal, Select, Space, Table, Tag, Typography } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
+import { useTranslation } from 'react-i18next';
 import { accountApi, groupApi } from '../api/endpoints';
 import { useAsyncData } from '../hooks/useAsyncData';
 import { formatTime } from '../utils/format';
@@ -28,11 +29,12 @@ export function AccountPickerModal({
   hint,
   value,
   confirmLoading,
-  okText = '保存',
+  okText,
   onCancel,
   onSubmit,
   restrictTo = null,
 }: AccountPickerModalProps) {
+  const { t } = useTranslation('common');
   const [keyword, setKeyword] = useState('');
   const [groupId, setGroupId] = useState<string | undefined>(undefined);
   const [selectedIds, setSelectedIds] = useState<string[]>(value);
@@ -72,21 +74,21 @@ export function AccountPickerModal({
   }, [accounts.data, restrictTo]);
 
   const columns: ColumnsType<AccountOut> = [
-    { title: '手机号', dataIndex: 'phone_masked', width: 140 },
+    { title: t('accountPicker.phone'), dataIndex: 'phone_masked', width: 140 },
     {
-      title: '用户名',
+      title: t('accountPicker.username'),
       dataIndex: 'username',
       width: 140,
       render: (v: string | null) => v || '—',
     },
     {
-      title: '分组',
+      title: t('accountPicker.group'),
       dataIndex: 'group_name',
       width: 120,
-      render: (v: string | null) => v || <Tag>未分组</Tag>,
+      render: (v: string | null) => v || <Tag>{t('accountPicker.ungrouped')}</Tag>,
     },
     {
-      title: '状态',
+      title: t('accountPicker.status'),
       dataIndex: 'status',
       width: 110,
       render: (_: unknown, record: AccountOut) => (
@@ -94,7 +96,7 @@ export function AccountPickerModal({
       ),
     },
     {
-      title: '最后心跳',
+      title: t('accountPicker.lastHeartbeat'),
       dataIndex: 'last_heartbeat',
       width: 170,
       render: (v: string | null) => formatTime(v),
@@ -111,8 +113,8 @@ export function AccountPickerModal({
       title={title}
       onCancel={onCancel}
       onOk={handleOk}
-      okText={okText}
-      cancelText="取消"
+      okText={okText ?? t('save')}
+      cancelText={t('cancel')}
       confirmLoading={confirmLoading}
       width={860}
     >
@@ -121,19 +123,19 @@ export function AccountPickerModal({
         <Space wrap>
           <Select
             allowClear
-            placeholder="按分组筛选"
+            placeholder={t('accountPicker.filterByGroup')}
             style={{ width: 180 }}
             value={groupId}
             onChange={(v) => setGroupId(v)}
-            options={(groups.data ?? []).map((g) => ({ value: g.id, label: `${g.name}（${g.account_count}）` }))}
+            options={(groups.data ?? []).map((g) => ({ value: g.id, label: `${g.name} (${g.account_count})` }))}
           />
           <Input.Search
             allowClear
-            placeholder="手机号 / 用户名关键词"
+            placeholder={t('accountPicker.keywordPlaceholder')}
             style={{ width: 240 }}
             onSearch={(v) => setKeyword(v.trim())}
           />
-          <Typography.Text type="secondary">已选 {selectedIds.length} 个</Typography.Text>
+          <Typography.Text type="secondary">{t('selectedCount', { count: selectedIds.length })}</Typography.Text>
         </Space>
         <Table<AccountOut>
           size="small"
@@ -141,7 +143,7 @@ export function AccountPickerModal({
           loading={accounts.loading}
           dataSource={items}
           columns={columns}
-          locale={{ emptyText: <Empty description="没有符合条件的账号" /> }}
+          locale={{ emptyText: <Empty description={t('accountPicker.empty')} /> }}
           pagination={{ pageSize: 10, showSizeChanger: false, size: 'small' }}
           scroll={{ y: 320 }}
           rowSelection={{
@@ -151,7 +153,7 @@ export function AccountPickerModal({
           }}
         />
         <Typography.Text type="secondary">
-          共 {items.length} 个可选账号；勾选状态会被保留，切页/搜索不会丢。
+          {t('accountPicker.footerSummary', { count: items.length })}
         </Typography.Text>
       </Space>
     </Modal>

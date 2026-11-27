@@ -9,6 +9,7 @@
  */
 import { useCallback, useEffect, useMemo, useRef, useState, type RefObject } from 'react';
 import dayjs from 'dayjs';
+import { useTranslation } from 'react-i18next';
 import { api, ApiError } from '../../api/client';
 import { dialogApi, messageApi } from '../../api/endpoints';
 import type { DialogOut, MessageListResponse, MessageOut } from '../../api/types';
@@ -36,15 +37,18 @@ export interface UnreadMarker {
   count: number;
 }
 
-function dateLabel(iso: string | null | undefined): string {
+function dateLabel(
+  iso: string | null | undefined,
+  t: (key: string) => string,
+): string {
   if (!iso) return '';
   const d = dayjs(iso);
   if (!d.isValid()) return '';
   const now = dayjs();
-  if (d.isSame(now, 'day')) return '今天';
-  if (d.isSame(now.subtract(1, 'day'), 'day')) return '昨天';
-  if (d.isSame(now, 'year')) return d.format('M月D日');
-  return d.format('YYYY年M月D日');
+  if (d.isSame(now, 'day')) return t('messages.dateToday');
+  if (d.isSame(now.subtract(1, 'day'), 'day')) return t('messages.dateYesterday');
+  if (d.isSame(now, 'year')) return d.format(t('messages.dateMonthDay'));
+  return d.format(t('messages.dateFull'));
 }
 
 function mergeMessages(prev: MessageOut[], next: MessageOut[]): MessageOut[] {
@@ -102,6 +106,7 @@ export function useChatRoom(
   dialog: DialogOut | null,
   onListPatch: (patch: Partial<DialogOut>) => void,
 ): ChatRoomState {
+  const { t, i18n } = useTranslation('dialogs');
   const [messages, setMessages] = useState<MessageOut[]>([]);
   const [hasMore, setHasMore] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -165,12 +170,12 @@ export function useChatRoom(
         requestAnimationFrame(() => scrollToBottom());
       } catch (err) {
         if (seq !== seqRef.current) return;
-        setError((err as Error)?.message || '消息加载失败');
+        setError((err as Error)?.message || t('messages.loadError'));
       } finally {
         if (seq === seqRef.current) setLoading(false);
       }
     },
-    [dialog, scrollToBottom],
+    [dialog, scrollToBottom, t],
   );
 
   // ---------- 切换会话 / 进入搜索 ----------
@@ -237,12 +242,12 @@ export function useChatRoom(
       onListPatchRef.current({
         unread_count: 0,
         last_message_at: incoming.created_at ?? undefined,
-        last_message_preview: incoming.body || (incoming.has_media ? '[媒体]' : undefined),
+        last_message_preview: incoming.body || (incoming.has_media ? t('messages.mediaPreviewTag') : undefined),
       });
       requestAnimationFrame(() => scrollToBottom(true));
     });
     return off;
-  }, [dialog, onEvent, scrollToBottom]);
+  }, [dialog, onEvent, scrollToBottom, t]);
 
   // 断线重连成功后静默补拉一次，避免漏掉断开期间的消息
   useEffect(() => {
@@ -308,11 +313,11 @@ export function useChatRoom(
     if (!dialog) return;
     try {
       const res = await dialogApi.sync(dialog.id, 50);
-      toast.success(res.message || '已提交同步历史消息任务');
+      toast.success(res.message || t('messages.syncQueued'));
     } catch {
       /* client 已统一提示（Bot 通道的中文原因也在这里弹） */
     }
-  }, [dialog]);
+  }, [dialog, t]);
 
   // ---------- 发送（用户号排队 / Bot 直发，409/400 中文原因内联展示） ----------
 
@@ -333,18 +338,18 @@ export function useChatRoom(
       });
       requestAnimationFrame(() => scrollToBottom(true));
       if (res.status === 'pending') {
-        toast.info(res.detail || '已排队，等待 Worker 发出');
+        toast.info(res.detail || t('messages.sendQueued'));
       } else {
-        toast.success(res.detail || '已发送');
+        toast.success(res.detail || t('messages.sentSuccess'));
       }
     } catch (err) {
       const apiError = err as ApiError;
       // 二分支提示：用户号非 healthy → 409；Bot 直发失败 → 409/400，detail 都是中文原因
-      setSendError(apiError.friendlyMessage || '发送失败，请稍后重试');
+      setSendError(apiError.friendlyMessage || t('messages.sendErrorFallback'));
     } finally {
       setSending(false);
     }
-  }, [dialog, text, draftId, scrollToBottom]);
+  }, [dialog, text, draftId, scrollToBottom, t]);
 
   /** 失败消息重发：重新走一次发送接口（生成一条新的 outgoing 消息） */
   const resend = useCallback(
@@ -352,13 +357,13 @@ export function useChatRoom(
       if (!dialog || !message.body.trim()) return;
       try {
         await messageApi.send(dialog.id, message.body.trim());
-        toast.success('已重新提交发送');
+        toast.success(t('messages.resendSubmitted'));
       } catch (err) {
         const apiError = err as ApiError;
-        setSendError(apiError.friendlyMessage || '重发失败，请稍后重试');
+        setSendError(apiError.friendlyMessage || t('messages.resendErrorFallback'));
       }
     },
-    [dialog],
+    [dialog, t],
   );
 
   // ---------- AI 草稿（503 → 中文引导文案，不是报错弹窗） ----------
@@ -371,21 +376,18 @@ export function useChatRoom(
       const draft = await dialogApi.draft(dialog.id, instruction.trim(), { silent: true });
       setText(draft.body);
       setDraftId(draft.id);
-      toast.info('AI 草稿已生成，点「发送」才会发出');
+      toast.info(t('messages.draftGenerated'));
     } catch (err) {
       const apiError = err as ApiError;
       if (apiError.status === 503) {
-        setAiGuide(
-          'AI 草稿未启用：请在 backend/.env 中配置 AI_ENABLED=true、AI_API_KEY、AI_BASE_URL、AI_MODEL 后重启后端服务。'
-          + `（后端返回：${apiError.detail || apiError.message}）`,
-        );
+        setAiGuide(t('messages.aiDisabledGuide', { detail: apiError.detail || apiError.message }));
       } else {
-        setAiGuide(`AI 草稿生成失败：${apiError.friendlyMessage}`);
+        setAiGuide(t('messages.aiDraftError', { detail: apiError.friendlyMessage }));
       }
     } finally {
       setDrafting(false);
     }
-  }, [dialog, instruction]);
+  }, [dialog, instruction, t]);
 
   const discardDraft = useCallback(async () => {
     const id = draftId;
@@ -394,11 +396,11 @@ export function useChatRoom(
     if (!id) return;
     try {
       await dialogApi.discardDraft(id);
-      toast.success('已丢弃草稿');
+      toast.success(t('messages.draftDiscarded'));
     } catch {
       /* client 已统一提示 */
     }
-  }, [draftId]);
+  }, [draftId, t]);
 
   // ---------- 渲染分组（日期分隔 + 未读分隔 + 气泡） ----------
 
@@ -409,7 +411,7 @@ export function useChatRoom(
       if (unreadMarker && message.id === unreadMarker.firstId) {
         list.push({ key: `unread-${message.id}`, kind: 'unread', count: unreadMarker.count });
       }
-      const day = dateLabel(message.created_at);
+      const day = dateLabel(message.created_at, t);
       if (day && day !== lastDay) {
         lastDay = day;
         list.push({ key: `date-${day}-${message.id}`, kind: 'date', text: day });
@@ -417,7 +419,7 @@ export function useChatRoom(
       list.push({ key: message.id, kind: 'message', message });
     });
     return list;
-  }, [messages, unreadMarker]);
+  }, [messages, unreadMarker, t, i18n.language]);
 
   return {
     dialog,

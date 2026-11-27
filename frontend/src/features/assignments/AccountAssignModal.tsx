@@ -8,6 +8,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Alert, Input, Modal, Select, Segmented, Space, Table, Typography } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
+import { useTranslation } from 'react-i18next';
 import { StatusBadge, SoftTag } from '../../components';
 import { assignmentApi, groupApi } from '../../api/endpoints';
 import { useAsyncData } from '../../hooks/useAsyncData';
@@ -35,6 +36,7 @@ export function AccountAssignModal({
   onCancel: () => void;
   onSaved: () => void;
 }) {
+  const { t } = useTranslation(['assignments', 'common']);
   const [keyword, setKeyword] = useState('');
   const [groupId, setGroupId] = useState<string | undefined>(undefined);
   const [view, setView] = useState<AssignView>('all');
@@ -99,21 +101,21 @@ export function AccountAssignModal({
   const removed = currentIds.filter((id) => !selectedSet.has(id));
 
   const columns: ColumnsType<AccountOut> = [
-    { title: '手机号', dataIndex: 'phone_masked', width: 140 },
+    { title: t('assignments:assignModal.columns.phone'), dataIndex: 'phone_masked', width: 140 },
     {
-      title: '用户名',
+      title: t('assignments:assignModal.columns.username'),
       dataIndex: 'username',
       width: 140,
       render: (v: string | null) => v || '—',
     },
     {
-      title: '分组',
+      title: t('assignments:assignModal.columns.group'),
       dataIndex: 'group_name',
       width: 120,
-      render: (v: string | null) => v || <SoftTag tone="neutral">未分组</SoftTag>,
+      render: (v: string | null) => v || <SoftTag tone="neutral">{t('assignments:assignModal.columns.ungrouped')}</SoftTag>,
     },
     {
-      title: '状态',
+      title: t('assignments:assignModal.columns.status'),
       dataIndex: 'status',
       width: 110,
       render: (_: unknown, record: AccountOut) => (
@@ -121,20 +123,24 @@ export function AccountAssignModal({
       ),
     },
     {
-      title: '归属人',
+      title: t('assignments:assignModal.columns.owner'),
       key: 'owner',
       width: 130,
       render: (_: unknown, record: AccountOut) => {
         const owner = ownerOf.get(record.id);
         const mine = currentIds.includes(record.id);
         if (owner) {
-          return <SoftTag tone={mine ? 'primary' : 'neutral'}>{mine ? `${owner}（当前）` : owner}</SoftTag>;
+          return (
+            <SoftTag tone={mine ? 'primary' : 'neutral'}>
+              {mine ? t('assignments:assignModal.columns.ownerCurrent', { owner }) : owner}
+            </SoftTag>
+          );
         }
-        return <SoftTag tone="warning">未分配</SoftTag>;
+        return <SoftTag tone="warning">{t('assignments:assignModal.columns.unassigned')}</SoftTag>;
       },
     },
     {
-      title: '最后心跳',
+      title: t('assignments:assignModal.columns.lastHeartbeat'),
       dataIndex: 'last_heartbeat',
       width: 160,
       render: (v: string | null) => formatTime(v),
@@ -148,16 +154,16 @@ export function AccountAssignModal({
     try {
       if (added.length) {
         await assignmentApi.create(user.id, added);
-        notifySuccess(`已给 ${user.username} 分配 ${added.length} 个账号`);
+        notifySuccess(t('assignments:assignModal.toast.assigned', { username: user.username, count: added.length }));
       }
       if (removed.length) {
         await assignmentApi.remove(user.id, removed);
-        notifySuccess(`已取消 ${user.username} 名下 ${removed.length} 个账号的分配`);
+        notifySuccess(t('assignments:assignModal.toast.unassigned', { username: user.username, count: removed.length }));
       }
-      if (!added.length && !removed.length) notifySuccess('分配关系没有变化');
+      if (!added.length && !removed.length) notifySuccess(t('assignments:assignModal.toast.noChanges'));
       onSaved();
     } catch (err) {
-      setError(err instanceof ApiError ? err.friendlyMessage : '保存失败，请稍后重试');
+      setError(err instanceof ApiError ? err.friendlyMessage : t('assignments:assignModal.saveFailedFallback'));
     } finally {
       setSaving(false);
     }
@@ -166,11 +172,11 @@ export function AccountAssignModal({
   return (
     <Modal
       open={open}
-      title={`分配账号给：${user?.display_name || user?.username || ''}`}
+      title={t('assignments:assignModal.title', { name: user?.display_name || user?.username || '' })}
       onCancel={onCancel}
       width={860}
-      okText="保存变更"
-      cancelText="取消"
+      okText={t('assignments:assignModal.saveChanges')}
+      cancelText={t('common:cancel')}
       confirmLoading={saving}
       okButtonProps={{ disabled: !added.length && !removed.length }}
       onOk={() => void handleSave()}
@@ -185,8 +191,8 @@ export function AccountAssignModal({
         >
           <Typography.Text type="secondary">
             {added.length || removed.length
-              ? `将分配 ${added.length} 个、收回 ${removed.length} 个`
-              : '没有变化，可直接关闭'}
+              ? t('assignments:assignModal.diffSummary', { added: added.length, removed: removed.length })
+              : t('assignments:assignModal.noChangesClose')}
           </Typography.Text>
           <Space>
             <CancelBtn />
@@ -206,7 +212,7 @@ export function AccountAssignModal({
       >
         <Input.Search
           allowClear
-          placeholder="搜索手机号 / 用户名 / 备注"
+          placeholder={t('assignments:assignModal.searchPlaceholder')}
           style={{ width: 260 }}
           value={keyword}
           onChange={(e) => setKeyword(e.target.value)}
@@ -216,7 +222,7 @@ export function AccountAssignModal({
           allowClear
           showSearch
           optionFilterProp="label"
-          placeholder="全部账号分组"
+          placeholder={t('assignments:assignModal.allGroups')}
           style={{ width: 180 }}
           value={groupId}
           onChange={(v) => setGroupId(v)}
@@ -226,9 +232,9 @@ export function AccountAssignModal({
           value={view}
           onChange={(v) => setView(v)}
           options={[
-            { value: 'all', label: '全部' },
-            { value: 'assigned', label: '已分配给该员工' },
-            { value: 'unassigned', label: '未分配' },
+            { value: 'all', label: t('assignments:assignModal.view.all') },
+            { value: 'assigned', label: t('assignments:assignModal.view.assigned') },
+            { value: 'unassigned', label: t('assignments:assignModal.view.unassigned') },
           ]}
         />
       </div>
@@ -239,7 +245,7 @@ export function AccountAssignModal({
           showIcon
           closable
           onClose={() => setError(null)}
-          message="保存失败"
+          message={t('assignments:assignModal.saveFailedTitle')}
           description={error}
           style={{ marginBottom: 'var(--tg-space-lg)' }}
         />
@@ -257,7 +263,7 @@ export function AccountAssignModal({
           preserveSelectedRowKeys: true,
         }}
         pagination={false}
-        locale={{ emptyText: '没有符合条件的账号' }}
+        locale={{ emptyText: t('assignments:assignModal.empty') }}
       />
     </Modal>
   );

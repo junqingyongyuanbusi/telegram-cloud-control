@@ -1,0 +1,122 @@
+{
+  "accountStatus": {
+    "pending": "Pending Login",
+    "healthy": "Healthy",
+    "needs_code": "Needs Code",
+    "frozen": "Frozen",
+    "limited": "Limited",
+    "invalid": "Invalid",
+    "dead": "Dead",
+    "disabled": "Disabled"
+  },
+  "currentTask": {
+    "idle": "Idle",
+    "syncing": "Syncing Dialogs",
+    "awaiting_confirm": "Awaiting Confirm",
+    "relaying": "Relaying"
+  },
+  "taskStatus": {
+    "pending": "Pending",
+    "pending_confirmation": "Awaiting Confirm",
+    "running": "Running",
+    "completed": "Completed",
+    "failed": "Failed",
+    "cancelled": "Cancelled"
+  },
+  "taskType": {
+    "sync_dialogs": "Sync Dialogs",
+    "sync_messages": "Fetch History",
+    "send_message": "Send Message",
+    "account_check": "Account Check",
+    "update_profile": "Update Profile",
+    "login_start": "Login - Send Code",
+    "login_code": "Login - Submit Code",
+    "login_password": "Login - Submit 2FA",
+    "bulk_pm": "Bulk PM",
+    "group_broadcast": "Group Broadcast",
+    "material_send": "Material Send",
+    "join_group": "Join Group",
+    "leave_group": "Leave Group",
+    "force_add_member": "Force Add Member",
+    "storm_chat": "Storm Chat",
+    "persona_chat": "Persona Chat",
+    "relay_to_staff": "Relay to Staff",
+    "bot_reply": "Bot Auto-Reply",
+    "reply_to_origin": "Reply to Origin",
+    "join_and_send": "Join & Send"
+  },
+  "messageStatus": {
+    "received": "Received",
+    "pending": "Pending",
+    "sent": "Sent",
+    "failed": "Failed"
+  },
+  "messageDirection": {
+    "in": "Inbound",
+    "out": "Outbound"
+  },
+  "dialogChannel": {
+    "user_account": "Account",
+    "bot": "Bot"
+  },
+  "dialogKind": {
+    "private": "Private",
+    "group": "Group"
+  },
+  "relayTargetKind": {
+    "group": "Group",
+    "private": "Private"
+  },
+  "userRole": {
+    "admin": "Admin",
+    "operator": "Operator"
+  },
+  "notificationKind": {
+    "task_failed": "Task Failed",
+    "account_abnormal": "Account Anomaly",
+    "worker_lost": "Worker Heartbeat",
+    "task_overdue": "Task Overdue"
+  },
+  "auditAction": {
+    "login": "Console Sign-In",
+    "account.create": "Create Account",
+    "account.login_start": "Start Login",
+    "account.login_code": "Submit Code",
+    "account.login_password": "Submit 2FA Password",
+    "account.check": "Check Account",
+    "account.update": "Update Account",
+    "account.disable": "Disable Account",
+    "account.enable": "Enable Account",
+    "account.release_lease": "Release Lease",
+    "account.profile_update": "Update Account Profile",
+    "account.assign": "Assign Account",
+    "account.unassign": "Unassign Account",
+    "group.create": "Create Group",
+    "group.update": "Update Group",
+    "group.delete": "Delete Group",
+    "proxy.create": "Create Proxy",
+    "proxy.update": "Update Proxy",
+    "proxy.delete": "Delete Proxy",
+    "dialog.sync": "Sync Dialogs",
+    "message.send_request": "Request Send",
+    "message.send": "Confirm Send",
+    "message.receive": "Receive Message",
+    "draft.create": "Generate AI Draft",
+    "draft.discard": "Discard Draft",
+    "task.retry": "Retry Task",
+    "task.cancel": "Cancel Task",
+    "relay.create": "Create Relay Route",
+    "relay.update": "Update Relay Route",
+    "relay.delete": "Delete Relay Route",
+    "relay.forward": "Forward to Staff",
+    "relay.reply": "Deliver Staff Reply",
+    "bot.create": "Create Bot",
+    "bot.update": "Update Bot",
+    "bot.delete": "Delete Bot",
+    "bot.webhook_set": "Register Webhook",
+    "bot.auto_reply": "Bot Auto-Reply",
+    "user.create": "Create Staff",
+    "user.update": "Update Staff",
+    "user.delete": "Delete Staff"
+  }
+}

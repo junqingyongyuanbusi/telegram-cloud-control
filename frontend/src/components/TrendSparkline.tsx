@@ -19,6 +19,7 @@
  * 用法：<TrendSparkline data={points.map(p=>p.v)} color="var(--tg-color-chart-2)" />
  */
 import { useId, type CSSProperties } from 'react';
+import { useTranslation } from 'react-i18next';
 
 export interface SparkPoint {
   t?: string;
@@ -59,11 +60,13 @@ export function TrendSparkline({
   showMinMax = false,
   baseline = 'auto',
   formatValue = (value: number) => String(value),
-  emptyText = '暂无趋势',
+  emptyText,
   label,
   className,
   style,
 }: TrendSparklineProps) {
+  const { t } = useTranslation('common');
+  const resolvedEmptyText = emptyText ?? t('noTrend');
   const gradientId = useId().replace(/[:]/g, '');
   const values = toValues(data);
 
@@ -73,9 +76,9 @@ export function TrendSparkline({
         className={['tg-sparkline-empty', className].filter(Boolean).join(' ')}
         style={{ width, height, ...style }}
         role="img"
-        aria-label={label ?? emptyText}
+        aria-label={label ?? resolvedEmptyText}
       >
-        {emptyText}
+        {resolvedEmptyText}
       </div>
     );
   }
@@ -108,7 +111,7 @@ export function TrendSparkline({
       height={height}
       preserveAspectRatio="none"
       role="img"
-      aria-label={label ?? `趋势：${formatValue(min)} → ${formatValue(values[values.length - 1])}`}
+      aria-label={label ?? t('trendRange', { min: formatValue(min), last: formatValue(values[values.length - 1]) })}
     >
       <defs>
         <linearGradient id={`spark-${gradientId}`} x1="0" y1="0" x2="0" y2="1">

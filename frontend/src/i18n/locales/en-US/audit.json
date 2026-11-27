@@ -1,0 +1,68 @@
+{
+  "page": {
+    "title": "Audit Logs",
+    "description": "Append-only log of who did what to which account and when; message sends also record whether triggered manually or from an AI draft."
+  },
+  "system": "System",
+  "columns": {
+    "time": "Time",
+    "actor": "Actor",
+    "action": "Action",
+    "account": "Account",
+    "bot": "Bot",
+    "target": "Target",
+    "detail": "Details",
+    "clientIp": "Source IP"
+  },
+  "table": {
+    "accountIdTooltip": "Account ID {{id}}"
+  },
+  "actions": {
+    "view": "View"
+  },
+  "filters": {
+    "action": "Action",
+    "staff": "Staff",
+    "account": "Account",
+    "timeRange": "Time Range",
+    "startTime": "Start time",
+    "endTime": "End time",
+    "staffOption": "{{name}} ({{username}})"
+  },
+  "toast": {
+    "invalidTimeRange": "Invalid time range: start time cannot be later than end time"
+  },
+  "empty": {
+    "title": "No matching audit logs",
+    "description": "Try adjusting your filters or clearing the time range."
+  },
+  "drawer": {
+    "title": "Audit Details",
+    "recordInfo": "Record Info",
+    "copyAll": "Copy All",
+    "copiedAll": "Copied full audit record",
+    "detailJsonTitle": "Detail JSON",
+    "noDetail": "(No details)",
+    "fields": {
+      "time": "Time",
+      "actionCode": "Action Code",
+      "actor": "Actor",
+      "account": "Account",
+      "bot": "Bot",
+      "targetType": "Target Type",
+      "targetId": "Target ID",
+      "clientIp": "Source IP"
+    },
+    "copyFields": {
+      "time": "Time",
+      "actor": "Actor",
+      "action": "Action",
+      "account": "Account",
+      "bot": "Bot",
+      "targetType": "Target Type",
+      "targetId": "Target ID",
+      "clientIp": "Source IP",
+      "detail": "Detail"
+    }
+  }
+}

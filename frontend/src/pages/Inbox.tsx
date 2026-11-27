@@ -9,22 +9,24 @@ import { Button, Card, Space, Switch, Table, Tag, Typography } from 'antd';
 import { ReloadOutlined } from '@ant-design/icons';
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { useTranslation } from 'react-i18next';
 import { useAsyncData } from '../hooks/useAsyncData';
 import { dialogApi } from '../api/endpoints';
 import { PageContainer, RelativeTime } from '../components';
 
 export default function Inbox() {
+  const { t } = useTranslation(['dialogs', 'common']);
   const navigate = useNavigate();
   const [onlyUnread, setOnlyUnread] = useState(false);
   const inbox = useAsyncData(() => dialogApi.inbox({ limit: 200, only_unread: onlyUnread }), [onlyUnread]);
 
   return (
     <PageContainer
-      title="客服收件箱"
-      description="跨账号汇总待处理的私信：未读优先，点一行去会话页直接回复。"
+      title={t('dialogs:inbox.pageTitle')}
+      description={t('dialogs:inbox.pageDescription')}
       actions={
         <Space>
-          <span className="tg-muted" style={{ fontSize: 'var(--tg-font-size-sm)' }}>只看未读</span>
+          <span className="tg-muted" style={{ fontSize: 'var(--tg-font-size-sm)' }}>{t('dialogs:inbox.onlyUnread')}</span>
           <Switch
             size="small"
             checked={onlyUnread}
@@ -33,16 +35,16 @@ export default function Inbox() {
             }}
           />
           <Button icon={<ReloadOutlined />} onClick={() => void inbox.reload()} loading={inbox.loading}>
-            刷新
+            {t('common:refresh')}
           </Button>
         </Space>
       }
     >
       <Card size="small">
         <Typography.Text type="secondary" style={{ fontSize: 'var(--tg-font-size-xs)' }}>
-          共 {inbox.data?.total ?? 0} 条待处理，未读合计{' '}
-          <b style={{ color: 'var(--tg-color-error)' }}>{inbox.data?.unread_total ?? 0}</b>{' '}
-          条。排序：有未读的优先，其次按最后消息时间。
+          {t('dialogs:inbox.summaryPrefix', { total: inbox.data?.total ?? 0 })}
+          <b style={{ color: 'var(--tg-color-error)' }}>{inbox.data?.unread_total ?? 0}</b>
+          {t('dialogs:inbox.summarySuffix')}
         </Typography.Text>
         <Table
           size="small"
@@ -55,32 +57,32 @@ export default function Inbox() {
             onClick: () => navigate(`/dialogs?dialog_id=${record.dialog_id}${record.account_id ? `&account_id=${record.account_id}` : ''}`),
             style: { cursor: 'pointer' },
           })}
-          locale={{ emptyText: onlyUnread ? '没有未读的私信 ✓' : '还没有待处理的私信' }}
+          locale={{ emptyText: onlyUnread ? t('dialogs:inbox.emptyUnread') : t('dialogs:inbox.emptyAll') }}
           columns={[
             {
-              title: '账号',
+              title: t('dialogs:inbox.colAccount'),
               dataIndex: 'account_label',
               width: 150,
               render: (value: string | null) => <span className="tg-mono">{value || '—'}</span>,
             },
             {
-              title: '未读',
+              title: t('dialogs:inbox.colUnread'),
               dataIndex: 'unread_count',
               width: 80,
               render: (value: number) => (value > 0 ? <Tag color="red">{value}</Tag> : <span className="tg-muted">—</span>),
             },
-            { title: '对方', dataIndex: 'title', width: 180 },
-            { title: '最后消息', dataIndex: 'last_message_preview', ellipsis: true },
+            { title: t('dialogs:inbox.colPeer'), dataIndex: 'title', width: 180 },
+            { title: t('dialogs:inbox.colLastMessage'), dataIndex: 'last_message_preview', ellipsis: true },
             {
-              title: '时间',
+              title: t('dialogs:inbox.colTime'),
               dataIndex: 'last_message_at',
               width: 110,
               render: (value: string | null) => (value ? <RelativeTime value={value} /> : '—'),
             },
             {
-              title: '操作',
+              title: t('dialogs:inbox.colAction'),
               width: 90,
-              render: () => <Button type="link" size="small">去回复</Button>,
+              render: () => <Button type="link" size="small">{t('dialogs:inbox.reply')}</Button>,
             },
           ]}
         />

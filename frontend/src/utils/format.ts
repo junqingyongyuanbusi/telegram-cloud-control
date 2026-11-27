@@ -1,5 +1,6 @@
 /** 时间 / 文本格式化。后端时间戳是带时区的 ISO8601（UTC），这里按浏览器本地时区展示。 */
 import dayjs from 'dayjs';
+import i18n, { isEnglish } from '../i18n';
 
 export const TIME_FORMAT = 'YYYY-MM-DD HH:mm:ss';
 export const MINUTE_FORMAT = 'MM-DD HH:mm';
@@ -29,10 +30,10 @@ export function isHeartbeatStale(value?: string | null, seconds = 60): boolean {
 export function formatAccountAge(days?: number | null): string {
   if (days === null || days === undefined) return '—';
   if (days < 0) return '—';
-  if (days < 30) return `${days} 天`;
-  if (days < 365) return `${Math.floor(days / 30)} 个月`;
+  if (days < 30) return i18n.t('common:format.ageDays', { count: days });
+  if (days < 365) return i18n.t('common:format.ageMonths', { count: Math.floor(days / 30) });
   const years = days / 365;
-  return `${years.toFixed(1)} 年`;
+  return i18n.t('common:format.ageYears', { count: Number(years.toFixed(1)) });
 }
 
 export function formatCount(value?: number | null): string {
@@ -74,13 +75,18 @@ export function formatBytes(bytes: number): string {
 /** 千分位数字：12345 → 12,345 */
 export function formatNumber(value?: number | null): string {
   if (value === null || value === undefined || Number.isNaN(value)) return '—';
-  return value.toLocaleString('zh-Hans');
+  return value.toLocaleString(isEnglish() ? 'en-US' : 'zh-Hans');
 }
 
-/** 紧凑数字：12345 → 1.2万（看板卡片用） */
+/** 紧凑数字：12345 → 1.2万 / 12.3K（看板卡片用） */
 export function formatCompact(value?: number | null): string {
   if (value === null || value === undefined || Number.isNaN(value)) return '—';
   const abs = Math.abs(value);
+  if (isEnglish()) {
+    if (abs < 1_000) return formatNumber(value);
+    if (abs < 1_000_000) return `${(value / 1_000).toFixed(abs < 10_000 ? 1 : 0)}K`;
+    return `${(value / 1_000_000).toFixed(1)}M`;
+  }
   if (abs < 10_000) return formatNumber(value);
   if (abs < 100_000_000) return `${(value / 10_000).toFixed(abs < 100_000 ? 1 : 0)}万`;
   return `${(value / 100_000_000).toFixed(1)}亿`;
@@ -102,20 +108,26 @@ export function formatDelta(value?: number | null, suffix = '%'): string {
 /** 秒 → 1 天 2 小时 / 3 分 20 秒 */
 export function formatDuration(seconds?: number | null): string {
   if (seconds === null || seconds === undefined || Number.isNaN(seconds) || seconds < 0) return '—';
-  if (seconds < 60) return `${Math.round(seconds)} 秒`;
+  if (seconds < 60) return i18n.t('common:format.durationSeconds', { seconds: Math.round(seconds) });
   const minutes = Math.floor(seconds / 60);
   if (minutes < 60) {
     const rest = Math.round(seconds % 60);
-    return rest ? `${minutes} 分 ${rest} 秒` : `${minutes} 分`;
+    return rest
+      ? i18n.t('common:format.durationMinutesSeconds', { minutes, seconds: rest })
+      : i18n.t('common:format.durationMinutes', { minutes });
   }
   const hours = Math.floor(minutes / 60);
   if (hours < 24) {
     const rest = minutes % 60;
-    return rest ? `${hours} 小时 ${rest} 分` : `${hours} 小时`;
+    return rest
+      ? i18n.t('common:format.durationHoursMinutes', { hours, minutes: rest })
+      : i18n.t('common:format.durationHours', { hours });
   }
   const days = Math.floor(hours / 24);
   const restHours = hours % 24;
-  return restHours ? `${days} 天 ${restHours} 小时` : `${days} 天`;
+  return restHours
+    ? i18n.t('common:format.durationDaysHours', { days, hours: restHours })
+    : i18n.t('common:format.durationDays', { days });
 }
 
 /** 智能时间：今天 14:03 / 昨天 14:03 / 09-28 14:03 / 2025-09-28 14:03 */
@@ -124,8 +136,8 @@ export function formatSmartTime(value?: string | null): string {
   const d = dayjs(value);
   if (!d.isValid()) return String(value);
   const now = dayjs();
-  if (d.isSame(now, 'day')) return `今天 ${d.format('HH:mm')}`;
-  if (d.isSame(now.subtract(1, 'day'), 'day')) return `昨天 ${d.format('HH:mm')}`;
+  if (d.isSame(now, 'day')) return i18n.t('common:format.today', { time: d.format('HH:mm') });
+  if (d.isSame(now.subtract(1, 'day'), 'day')) return i18n.t('common:format.yesterday', { time: d.format('HH:mm') });
   if (d.isSame(now, 'year')) return d.format('MM-DD HH:mm');
   return d.format('YYYY-MM-DD HH:mm');
 }

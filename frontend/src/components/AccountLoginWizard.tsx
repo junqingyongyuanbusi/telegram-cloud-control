@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Alert, Button, Form, Input, Modal, Select, Steps, Typography } from 'antd';
+import { useTranslation } from 'react-i18next';
 import { accountLoginApi } from '../api/endpoints';
 import { ApiError } from '../api/client';
 import type { AccountOut, GroupOut, LoginStep, LoginStepResponse, ProxyOut } from '../api/types';
@@ -33,6 +34,7 @@ const STEP_INDEX: Record<LoginStep, number> = {
  * 三步都由 Worker 执行 Telethon 登录，这里只按 LoginStepResponse.step 推进。
  */
 export function AccountLoginWizard({ open, account, groups, proxies, onCancel, onDone }: Props) {
+  const { t } = useTranslation(['accounts', 'common']);
   const [form] = Form.useForm();
   const [step, setStep] = useState(0);
   const [accountId, setAccountId] = useState<string | null>(account?.id ?? null);
@@ -95,7 +97,7 @@ export function AccountLoginWizard({ open, account, groups, proxies, onCancel, o
   };
 
   const fail = (err: unknown) => {
-    setError(err instanceof ApiError ? err.message : '操作失败，请稍后重试');
+    setError(err instanceof ApiError ? err.message : t('accounts:loginWizard.operationFailed'));
   };
 
   const handleStart = async (values: StartForm) => {
@@ -173,7 +175,11 @@ export function AccountLoginWizard({ open, account, groups, proxies, onCancel, o
   return (
     <Modal
       open={open}
-      title={account ? `重新登录：${account.phone_masked}` : '新建账号并登录'}
+      title={
+        account
+          ? t('accounts:loginWizard.titleRelogin', { phone: account.phone_masked })
+          : t('accounts:loginWizard.titleNew')
+      }
       onCancel={onCancel}
       onOk={() => {
         if (step === 3) {
@@ -182,8 +188,16 @@ export function AccountLoginWizard({ open, account, groups, proxies, onCancel, o
         }
         form.submit();
       }}
-      okText={step === 3 ? '完成' : step === 1 ? '提交验证码' : step === 2 ? '提交两步密码' : '发送验证码'}
-      cancelText={step === 3 ? '关闭' : '取消'}
+      okText={
+        step === 3
+          ? t('accounts:loginWizard.okDone')
+          : step === 1
+            ? t('accounts:loginWizard.okSubmitCode')
+            : step === 2
+              ? t('accounts:loginWizard.okSubmitPassword')
+              : t('accounts:loginWizard.okSendCode')
+      }
+      cancelText={step === 3 ? t('common:close') : t('common:cancel')}
       confirmLoading={submitting}
       maskClosable={false}
       width={520}
@@ -192,7 +206,11 @@ export function AccountLoginWizard({ open, account, groups, proxies, onCancel, o
         size="small"
         current={Math.min(step, 2)}
         status={step === 3 ? 'finish' : 'process'}
-        items={[{ title: '手机号' }, { title: '验证码' }, { title: '两步密码' }]}
+        items={[
+          { title: t('accounts:loginWizard.steps.phone') },
+          { title: t('accounts:loginWizard.steps.code') },
+          { title: t('accounts:loginWizard.steps.password') },
+        ]}
         style={{ marginBottom: 20 }}
       />
 
@@ -204,7 +222,13 @@ export function AccountLoginWizard({ open, account, groups, proxies, onCancel, o
           showIcon
           style={{ marginBottom: 12 }}
           message={message}
-          description={taskId ? <Typography.Text type="secondary">关联任务 {taskId}</Typography.Text> : null}
+          description={
+            taskId ? (
+              <Typography.Text type="secondary">
+                {t('accounts:loginWizard.relatedTask', { taskId })}
+              </Typography.Text>
+            ) : null
+          }
         />
       ) : null}
 
@@ -215,15 +239,15 @@ export function AccountLoginWizard({ open, account, groups, proxies, onCancel, o
           style={{ marginBottom: 12 }}
           message={
             appDelivery
-              ? '验证码发到了 Telegram 客户端，不是短信'
-              : `验证码已通过「${delivery}」发送`
+              ? t('accounts:loginWizard.deliveryAppTitle')
+              : t('accounts:loginWizard.deliveryOtherTitle', { delivery })
           }
           description={
             appDelivery
               ? nextType
-                ? `请打开这个号已登录的 Telegram 客户端，进官方「Telegram」聊天（777000）查看；Telegram 还提供「${nextType}」作为备选。`
-                : '请打开这个号已登录的 Telegram 客户端，进官方「Telegram」聊天（777000）查看。Telegram 没有给这个号提供短信备选，重发也只会再发到客户端；如果找不到任何已登录设备，请改用扫码登录。'
-              : '请留意对应渠道；没收到可以等倒计时结束后重发。'
+                ? t('accounts:loginWizard.deliveryAppWithNext', { nextType })
+                : t('accounts:loginWizard.deliveryAppNoNext')
+              : t('accounts:loginWizard.deliveryOtherDesc')
           }
         />
       ) : null}
@@ -232,30 +256,33 @@ export function AccountLoginWizard({ open, account, groups, proxies, onCancel, o
         {step === 0 ? (
           <>
             <Form.Item
-              label="完整手机号（带国家码）"
+              label={t('accounts:loginWizard.phoneLabel')}
               name="phone"
               initialValue=""
-              rules={[{ required: !account, message: '请输入完整手机号' }]}
+              rules={[{ required: !account, message: t('accounts:loginWizard.phoneRequired') }]}
               extra={
                 account
-                  ? '可以留空：后端会用库里加密保存的号码发起登录；填了则以填的为准。发送方式是短信还是 Telegram 客户端，由 Telegram 决定。'
-                  : '只登录这个号自己，不导入别人的会话文件。发送方式是短信还是 Telegram 客户端，由 Telegram 决定。'
+                  ? t('accounts:loginWizard.phoneExtraExisting')
+                  : t('accounts:loginWizard.phoneExtraNew')
               }
             >
-              <Input placeholder={account ? '留空则用库里保存的号码' : '+12025550143'} allowClear />
+              <Input
+                placeholder={account ? t('accounts:loginWizard.phonePlaceholderExisting') : '+12025550143'}
+                allowClear
+              />
             </Form.Item>
-            <Form.Item label="分组（可选）" name="group_id">
+            <Form.Item label={t('accounts:loginWizard.groupLabel')} name="group_id">
               <Select
                 allowClear
-                placeholder="不选则不分组"
+                placeholder={t('accounts:loginWizard.groupPlaceholder')}
                 options={groups.map((g) => ({ value: g.id, label: g.name }))}
               />
             </Form.Item>
-            <Form.Item label="代理（可选）" name="proxy_id">
+            <Form.Item label={t('accounts:loginWizard.proxyLabel')} name="proxy_id">
               <Select
                 allowClear
-                placeholder="不选则直连"
-                options={proxies.map((p) => ({ value: p.id, label: `${p.name}（${p.endpoint}）` }))}
+                placeholder={t('accounts:loginWizard.proxyPlaceholder')}
+                options={proxies.map((p) => ({ value: p.id, label: `${p.name} (${p.endpoint})` }))}
               />
             </Form.Item>
           </>
@@ -263,10 +290,10 @@ export function AccountLoginWizard({ open, account, groups, proxies, onCancel, o
 
         {step === 1 ? (
           <Form.Item
-            label="Telegram 发来的验证码"
+            label={t('accounts:loginWizard.codeLabel')}
             name="code"
-            rules={[{ required: true, message: '请输入验证码' }]}
-            extra="只填这个号收到的码；没收到先看该号已登录客户端的官方「Telegram」聊天（777000）。"
+            rules={[{ required: true, message: t('accounts:loginWizard.codeRequired') }]}
+            extra={t('accounts:loginWizard.codeExtra')}
           >
             <Input placeholder="12345" allowClear autoFocus />
           </Form.Item>
@@ -274,24 +301,24 @@ export function AccountLoginWizard({ open, account, groups, proxies, onCancel, o
 
         {step === 1 ? (
           <Button type="link" size="small" onClick={handleResend} loading={submitting} style={{ padding: 0 }}>
-            没收到？重新发送验证码
+            {t('accounts:loginWizard.resendCode')}
           </Button>
         ) : null}
 
         {step === 2 ? (
           <Form.Item
-            label="两步验证密码"
+            label={t('accounts:loginWizard.passwordLabel')}
             name="password"
-            rules={[{ required: true, message: '请输入两步验证密码' }]}
-            extra="这个号开了两步验证，需要补一次密码才能拿到会话。"
+            rules={[{ required: true, message: t('accounts:loginWizard.passwordRequired') }]}
+            extra={t('accounts:loginWizard.passwordExtra')}
           >
-            <Input.Password placeholder="两步验证密码" autoFocus />
+            <Input.Password placeholder={t('accounts:loginWizard.passwordPlaceholder')} autoFocus />
           </Form.Item>
         ) : null}
 
         {step === 3 ? (
           <Typography.Paragraph type="secondary" style={{ marginBottom: 0 }}>
-            会话已加密写回 tg_accounts.session_enc。可以点「单号检测」确认它能连上。
+            {t('accounts:loginWizard.doneTip')}
           </Typography.Paragraph>
         ) : null}
       </Form>

@@ -1,0 +1,84 @@
+{
+  "title": "网络",
+  "description": "代理是这个号固定的出站地址，Worker 认领时读取；用户名/密码加密保存，接口只回是否已配置。",
+  "create": "新建代理",
+  "columns": {
+    "name": "名称",
+    "scheme": "协议",
+    "endpoint": "出口",
+    "auth": "账号口令",
+    "binding": "绑定账号",
+    "enabled": "启用",
+    "remark": "备注",
+    "createdAt": "创建时间",
+    "actions": "操作"
+  },
+  "auth": {
+    "configured": "已配置",
+    "none": "无"
+  },
+  "binding": {
+    "count": "{{count}} 个",
+    "abnormalTooltip": "绑定账号里有异常状态（要验证码 / 冻结 / 失效 / 永久双向 / 停用），建议排查账号或换代理",
+    "abnormalCount": "{{count}} 个异常",
+    "allHealthy": "全部正常",
+    "unbound": "未绑定"
+  },
+  "actions": {
+    "bindAccounts": "绑定账号",
+    "edit": "编辑",
+    "delete": "删除"
+  },
+  "empty": {
+    "title": "还没有代理",
+    "description": "新建代理后，把账号批量绑定过来即可走固定出口。"
+  },
+  "footnote": "健康提示按绑定账号的状态统计；有异常号时建议先修号，必要时换更稳的出口。",
+  "deleteConfirm": {
+    "title": "删除代理「{{name}}」？",
+    "content": "已绑定的账号不会删除，但会失去出站地址（页面会引导重新绑定）。",
+    "ok": "删除"
+  },
+  "bindModal": {
+    "title": "把账号绑定到代理：{{name}}",
+    "hint": "勾选 = 走这个代理，取消勾选 = 解绑改为直连。"
+  },
+  "form": {
+    "editTitle": "编辑代理：{{name}}",
+    "createTitle": "新建代理",
+    "parseHint": "粘贴完整出口可一键解析（socks5://user:pass@1.2.3.4:1080），也可以直接填下面的字段。",
+    "parsePlaceholder": "粘贴出口：socks5://user:pass@1.2.3.4:1080",
+    "parseButton": "解析出口",
+    "parseError": "解析不出主机，请检查出口写法（如 socks5://user:pass@1.2.3.4:1080）",
+    "parseSuccess": "已解析出口并填入下方字段，核对后保存",
+    "nameLabel": "名称",
+    "nameRequired": "请输入名称",
+    "nameMax": "最多 64 个字符",
+    "namePlaceholder": "例如：HK-01",
+    "schemeLabel": "协议",
+    "schemeRequired": "请选择协议",
+    "hostLabel": "主机",
+    "hostPlaceholder": "1.2.3.4 或 host.example.com",
+    "hostErrRequired": "请输入主机",
+    "hostErrWhitespace": "主机里不能有空格",
+    "hostErrScheme": "不要带协议头（scheme://），协议请用下拉选择",
+    "hostErrPath": "不要带路径或查询参数",
+    "portLabel": "端口",
+    "portRequired": "请输入端口",
+    "usernameLabel": "用户名（留空表示不修改）",
+    "passwordLabel": "密码（留空表示不修改）",
+    "optionalPlaceholder": "可选",
+    "enabledLabel": "启用",
+    "remarkLabel": "备注"
+  },
+  "toast": {
+    "deleted": "代理已删除",
+    "bound": "已绑定 {{count}} 个账号",
+    "unbound": "已解绑 {{count}} 个账号（改为直连）",
+    "noBindChange": "绑定关系没有变化",
+    "enabled": "代理已启用",
+    "disabled": "代理已停用",
+    "updated": "代理已更新",
+    "created": "代理已创建"
+  }
+}

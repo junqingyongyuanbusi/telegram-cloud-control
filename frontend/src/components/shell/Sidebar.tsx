@@ -5,6 +5,7 @@
  * ┌──────────────────┬──────────────────────────────────────────────────────────┐
  * │ collapsed        │ boolean  折叠态（只显示图标 + Tooltip，子菜单不展开）        │
  * │ counts           │ ShellCounts  角标数据（useShellData 提供）                 │
+ * │ isAdmin          │ boolean  按角色裁剪菜单（operator 只看到消息/运营）        │
  * │ activePath       │ string  当前路径（决定高亮与自动展开）                      │
  * │ onNavigate       │ () => void  点击导航后回调（窄屏抽屉里用来关闭自己）        │
  * │ onToggleCollapse │ () => void  底部折叠按钮（不传则不显示）                    │
@@ -22,13 +23,16 @@ import type { CSSProperties } from 'react';
 import { Link } from 'react-router-dom';
 import { Tooltip } from 'antd';
 import { DownOutlined, MenuFoldOutlined, MenuUnfoldOutlined } from '@ant-design/icons';
-import { NAV_GROUPS, parentsOf, type NavGroup, type NavItem } from './nav';
+import { useTranslation } from 'react-i18next';
+import { parentsOf, visibleNavGroups, type NavGroup, type NavItem } from './nav';
 import { useLocalStorage } from '../../hooks/useLocalStorage';
 import type { ShellCounts } from './useShellData';
 
 export interface SidebarProps {
   collapsed?: boolean;
   counts: ShellCounts;
+  /** 是否管理员：决定侧栏是否出现管理员专属菜单（默认按最小权限，只显示 operator 菜单） */
+  isAdmin?: boolean;
   activePath: string;
   onNavigate?: () => void;
   onToggleCollapse?: () => void;
@@ -80,6 +84,7 @@ function itemActive(item: NavItem, activePath: string): boolean {
 export function Sidebar({
   collapsed = false,
   counts,
+  isAdmin = false,
   activePath,
   onNavigate,
   onToggleCollapse,
@@ -87,6 +92,7 @@ export function Sidebar({
   className,
   style,
 }: SidebarProps) {
+  const { t } = useTranslation(['shell', 'common']);
   const [openState, setOpenState] = useLocalStorage<NavOpenState>(NAV_STATE_KEY, {
     closedGroups: [],
     closedItems: [],
@@ -111,6 +117,7 @@ export function Sidebar({
     };
   }, []);
 
+  const groups = useMemo(() => visibleNavGroups(isAdmin), [isAdmin]);
   const autoParents = useMemo(() => parentsOf(activePath), [activePath]);
   // 用户本次会话里手动展开过的父项（点击后立即生效，不受历史收起记录影响）
   const [justOpened, setJustOpened] = useState<string[]>([]);
@@ -119,9 +126,9 @@ export function Sidebar({
   useEffect(() => {
     if (!autoParents.length) return;
     setOpenState((prev) => {
-      const groupKeys = NAV_GROUPS.filter((group) => group.items.some((item) => item.path === autoParents[0])).map(
-        (group) => group.key,
-      );
+      const groupKeys = groups
+        .filter((group) => group.items.some((item) => item.path === autoParents[0]))
+        .map((group) => group.key);
       const closedItems = prev.closedItems.filter((path) => !autoParents.includes(path));
       const closedGroups = (prev.closedGroups ?? []).filter((key) => !groupKeys.includes(key));
       if (closedItems.length === prev.closedItems.length && closedGroups.length === prev.closedGroups.length) {
@@ -129,7 +136,7 @@ export function Sidebar({
       }
       return { closedGroups, closedItems };
     });
-  }, [autoParents, setOpenState]);
+  }, [autoParents, groups, setOpenState]);
 
   // 双保险：即便存储里是残缺结构，也不至于让整个侧栏崩掉
   const closedGroups = openState?.closedGroups ?? [];
@@ -163,6 +170,7 @@ export function Sidebar({
   const renderLeaf = (item: NavItem, depth: 1 | 2) => {
     const badge = badgeFor(item, counts);
     const active = isActive(item.path, activePath);
+    const label = t(`shell:${item.labelKey}`, { defaultValue: item.label });
     const link = (
       <Link
         to={item.path}
@@ -175,7 +183,7 @@ export function Sidebar({
         {item.icon ? <span className="app-nav-icon">{item.icon}</span> : null}
         {!collapsed ? (
           <>
-            <span className="app-nav-label">{item.label}</span>
+            <span className="app-nav-label">{label}</span>
             {badge ? <span className={`app-nav-badge ${badge.tone}`}>{badge.text}</span> : null}
           </>
         ) : null}
@@ -184,7 +192,7 @@ export function Sidebar({
     return (
       <div key={item.path}>
         {collapsed ? (
-          <Tooltip title={badge ? `${item.label}（${badge.text}）` : item.label} placement="right">
+          <Tooltip title={badge ? `${label} (${badge.text})` : label} placement="right">
             {link}
           </Tooltip>
         ) : (
@@ -199,11 +207,13 @@ export function Sidebar({
 
     const active = itemActive(item, activePath);
     const first = item.children[0];
+    const label = t(`shell:${item.labelKey}`, { defaultValue: item.label });
+    const firstLabel = t(`shell:${first.labelKey}`, { defaultValue: first.label });
     // 整栏折叠：只给一个入口，直接进第一个子页面
     if (collapsed) {
       return (
         <div key={item.path}>
-          <Tooltip title={`${item.label}（进入「${first.label}」）`} placement="right">
+          <Tooltip title={t('shell:nav.enterSubpage', { label, sub: firstLabel })} placement="right">
             <Link
               to={first.path}
               className={['app-nav-item', active ? 'is-active' : ''].filter(Boolean).join(' ')}
@@ -224,10 +234,13 @@ export function Sidebar({
           className={['app-nav-item', 'is-parent', active ? 'is-active' : ''].filter(Boolean).join(' ')}
           onClick={() => toggleItem(item)}
           aria-expanded={open}
-          aria-label={`${item.label}（${open ? '收起' : '展开'}子菜单）`}
+          aria-label={t('shell:nav.submenuAria', {
+            label,
+            action: open ? t('shell:nav.collapse') : t('shell:nav.expand'),
+          })}
         >
           <span className="app-nav-icon">{item.icon}</span>
-          <span className="app-nav-label">{item.label}</span>
+          <span className="app-nav-label">{label}</span>
           <DownOutlined className={['app-nav-chevron', open ? 'is-open' : ''].filter(Boolean).join(' ')} />
         </button>
         {open ? <div className="app-nav-sub">{item.children.map((child) => renderLeaf(child, 2))}</div> : null}
@@ -239,21 +252,22 @@ export function Sidebar({
     <aside
       className={['app-sider', collapsed ? 'is-collapsed' : '', className].filter(Boolean).join(' ')}
       style={style}
-      aria-label="主导航"
+      aria-label={t('shell:nav.ariaLabel')}
     >
       <div className="app-logo">
         <span className="app-logo-mark">TG</span>
         {!collapsed ? (
           <span className="app-logo-text">
-            wikifxtg云控
-            <span className="app-logo-sub">Telegram 运营控制台</span>
+            {t('common:appTitle')}
+            <span className="app-logo-sub">{t('common:appSubtitle')}</span>
           </span>
         ) : null}
       </div>
 
       <nav className="app-nav">
-        {NAV_GROUPS.map((group) => {
+        {groups.map((group) => {
           const open = groupOpen(group);
+          const groupTitle = t(`shell:${group.titleKey}`, { defaultValue: group.title });
           return (
             <div className={['app-nav-group', open ? '' : 'is-collapsed'].filter(Boolean).join(' ')} key={group.key}>
               {!collapsed ? (
@@ -263,7 +277,7 @@ export function Sidebar({
                   onClick={() => toggleGroup(group)}
                   aria-expanded={open}
                 >
-                  <span>{group.title}</span>
+                  <span>{groupTitle}</span>
                   <DownOutlined className={['app-nav-chevron', open ? 'is-open' : ''].filter(Boolean).join(' ')} />
                 </button>
               ) : (
@@ -281,7 +295,7 @@ export function Sidebar({
             type="button"
             className="app-icon-button"
             onClick={onToggleCollapse}
-            aria-label={collapsed ? '展开侧栏' : '收起侧栏'}
+            aria-label={collapsed ? t('shell:nav.expandSidebar') : t('shell:nav.collapseSidebar')}
           >
             {collapsed ? <MenuUnfoldOutlined /> : <MenuFoldOutlined />}
           </button>

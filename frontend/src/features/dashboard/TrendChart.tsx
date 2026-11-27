@@ -5,8 +5,10 @@
  * 交互：图例点击开关序列、悬浮十字线与数值提示、序列聚合。
  */
 import { useMemo, useRef, useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import type { MetricsTrendSeries } from '../../api/types';
 import { formatTime } from '../../utils/format';
+import { isEnglish } from '../../i18n';
 
 interface Props {
   series: MetricsTrendSeries[];
@@ -36,9 +38,18 @@ function mergeTimeline(series: MetricsTrendSeries[]): string[] {
 }
 
 export default function TrendChart({ series, height = 300, emptyText }: Props) {
+  const { t, i18n } = useTranslation('dashboard');
   const [hidden, setHidden] = useState<Set<string>>(new Set());
   const [hover, setHover] = useState<number | null>(null);
   const wrapRef = useRef<HTMLDivElement | null>(null);
+
+  const labelOf = (item: MetricsTrendSeries): string => {
+    const key = `trends.series.${item.key}`;
+    if (isEnglish(i18n.language)) {
+      return i18n.exists(`dashboard:${key}`) ? t(key) : item.label;
+    }
+    return item.label || (i18n.exists(`dashboard:${key}`) ? t(key) : item.key);
+  };
 
   const visible = useMemo(() => series.filter((item) => !hidden.has(item.key)), [series, hidden]);
   const timeline = useMemo(() => mergeTimeline(visible), [visible]);
@@ -134,7 +145,7 @@ export default function TrendChart({ series, height = 300, emptyText }: Props) {
         className="tg-empty is-compact"
         style={{ minHeight: height - 40, display: 'flex', alignItems: 'center', justifyContent: 'center' }}
       >
-        <span className="tg-empty-desc">{emptyText ?? '后端还没有开始采样，稍后自动出现趋势点'}</span>
+        <span className="tg-empty-desc">{emptyText ?? t('trends.chartEmpty')}</span>
       </div>
     );
   }
@@ -174,7 +185,7 @@ export default function TrendChart({ series, height = 300, emptyText }: Props) {
                   opacity: isHidden ? 0.4 : 1,
                 }}
               />
-              {item.label}
+              {labelOf(item)}
               <span className="tg-num" style={{ fontWeight: 'var(--tg-font-weight-semibold)' }}>
                 {item.points.length ? item.points[item.points.length - 1].v : 0}
               </span>
@@ -188,7 +199,7 @@ export default function TrendChart({ series, height = 300, emptyText }: Props) {
           viewBox={`0 0 ${chartWidth} ${chartHeight}`}
           style={{ width: '100%', height: 'auto', minWidth: 560, display: 'block' }}
           role="img"
-          aria-label="在线趋势折线图"
+          aria-label={t('trends.chartAriaLabel')}
           onMouseMove={onMove}
           onMouseLeave={() => setHover(null)}
         >
@@ -294,7 +305,8 @@ export default function TrendChart({ series, height = 300, emptyText }: Props) {
             const value = byKey.get(item.key)?.get(hoverBucket);
             return value === undefined ? null : (
               <span key={item.key}>
-                {item.label}：<span className="tg-num">{value}</span>
+                {t('trends.hoverItem', { label: labelOf(item) })}
+                <span className="tg-num">{value}</span>
               </span>
             );
           })}

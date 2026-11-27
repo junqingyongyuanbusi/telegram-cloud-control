@@ -7,6 +7,7 @@
  * 全部 silent：后端没起时不弹错误提示、不白屏，只是角标为 0。
  */
 import { useCallback, useMemo, useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import { readJson, writeJson } from '../../utils/storage';
 
 /** 已读通知的本地记忆（通知是按状态实时派生的，没有后端表可记） */
@@ -71,6 +72,7 @@ const EMPTY_COUNTS: ShellCounts = {
 };
 
 export function useShellData(): ShellData {
+  const { t, i18n } = useTranslation('shell');
   const dashboard = useAsyncData<DashboardOut>(() => dashboardApi.get(), [], { silentError: true });
 
   useInterval(() => {
@@ -118,7 +120,7 @@ export function useShellData(): ShellData {
   const staleWorkers = workers.filter((worker) => worker.stale).length;
 
   const notificationsError = notificationsQuery.error;
-  const apiMissing = notificationsError ? /404|不存在/.test(notificationsError) : false;
+  const apiMissing = notificationsError ? /404|不存在|not found/i.test(notificationsError) : false;
 
   /** 后端通知接口还没上时：用 dashboard 的事实派生提醒（不编造数据） */
   const derived = useMemo<NotificationOut[]>(() => {
@@ -128,10 +130,10 @@ export function useShellData(): ShellData {
       items.push({
         id: `derived-failed:${counts.failed}`,
         kind: 'task_failed',
-        kind_label: '任务失败',
+        kind_label: t('notifications.derived.taskFailedKind'),
         level: 'error',
-        title: `${counts.failed} 个任务失败`,
-        body: '到任务中心看失败原因，可单条重试。',
+        title: t('notifications.derived.taskFailedTitle', { count: counts.failed }),
+        body: t('notifications.derived.taskFailedBody'),
         link: '/tasks?status=failed',
         read: false,
         created_at: stamp,
@@ -141,10 +143,10 @@ export function useShellData(): ShellData {
       items.push({
         id: `derived-abnormal:${counts.abnormal}`,
         kind: 'account_abnormal',
-        kind_label: '账号异常',
+        kind_label: t('notifications.derived.accountAbnormalKind'),
         level: 'warning',
-        title: `${counts.abnormal} 个账号异常`,
-        body: '要验证码 / 冻结 / 失效的号不再替它执行发送。',
+        title: t('notifications.derived.accountAbnormalTitle', { count: counts.abnormal }),
+        body: t('notifications.derived.accountAbnormalBody'),
         link: '/accounts',
         read: false,
         created_at: stamp,
@@ -154,10 +156,10 @@ export function useShellData(): ShellData {
       items.push({
         id: `derived-worker:${staleWorkers}`,
         kind: 'worker_lost',
-        kind_label: 'Worker 心跳',
+        kind_label: t('notifications.derived.workerStaleKind'),
         level: 'warning',
-        title: `${staleWorkers} 个 Worker 超过 60 秒没有心跳`,
-        body: '先看 Worker 进程是否还在；单个号异常只清它的租约，不要重启全部连接。',
+        title: t('notifications.derived.workerStaleTitle', { count: staleWorkers }),
+        body: t('notifications.derived.workerStaleBody'),
         link: '/',
         read: false,
         created_at: stamp,
@@ -167,17 +169,17 @@ export function useShellData(): ShellData {
       items.push({
         id: `derived-overdue:${counts.overdue}`,
         kind: 'task_overdue',
-        kind_label: '任务逾期',
+        kind_label: t('notifications.derived.taskOverdueKind'),
         level: 'warning',
-        title: `${counts.overdue} 个任务到期未执行`,
-        body: '检查 Worker 是否在认领任务。',
+        title: t('notifications.derived.taskOverdueTitle', { count: counts.overdue }),
+        body: t('notifications.derived.taskOverdueBody'),
         link: '/tasks',
         read: false,
         created_at: stamp,
       });
     }
     return items;
-  }, [counts.abnormal, counts.failed, counts.overdue, data?.generated_at, staleWorkers]);
+  }, [counts.abnormal, counts.failed, counts.overdue, data?.generated_at, staleWorkers, t, i18n.language]);
 
   const allNotifications = notificationsError || !notificationsQuery.data ? derived : notificationsQuery.data;
   // 已读记忆：通知点掉之后不能再冒出来（刷新、轮询都算）。

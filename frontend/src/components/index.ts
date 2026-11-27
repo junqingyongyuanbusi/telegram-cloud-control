@@ -46,3 +46,4 @@ export { default as RelativeTime, type RelativeTimeProps } from './RelativeTime'
 export { default as TrendSparkline, type TrendSparklineProps, type SparkPoint } from './TrendSparkline';
 export { default as PageContainer, PageHeader, StatGrid, type PageContainerProps, type PageHeaderProps, type Crumb } from './PageContainer';
 export { default as NotFound, type NotFoundProps } from './NotFound';
+export { default as Forbidden, type ForbiddenProps } from './Forbidden';

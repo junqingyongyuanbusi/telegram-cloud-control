@@ -4,7 +4,9 @@
  */
 import { Button, Space } from 'antd';
 import { CopyOutlined } from '@ant-design/icons';
+import { useTranslation } from 'react-i18next';
 import { CopyableText, DetailDrawer, RelativeTime } from '../../components';
+import { resolveEnumLabel } from '../../i18n';
 import { copyText } from '../../utils/download';
 import { formatTime, stringifyDetail } from '../../utils/format';
 import { toast } from '../../utils/feedback';
@@ -18,34 +20,39 @@ interface AuditDetailDrawerProps {
 }
 
 export function AuditDetailDrawer({ record, onClose }: AuditDetailDrawerProps) {
+  const { t } = useTranslation(['audit', 'common', 'enums']);
+
+  const actionDisplay = record
+    ? resolveEnumLabel(`auditAction.${record.action}`, record.action_label, record.action)
+    : '';
 
   const handleCopyAll = async () => {
     if (!record) return;
     const payload = stringifyDetail({
-      时间: record.created_at,
-      操作人: record.user_name ?? '系统',
-      动作: record.action_label || record.action,
-      账号: record.account_label ?? null,
-      Bot: record.bot_id ?? null,
-      目标类型: record.target_type,
-      目标ID: record.target_id,
-      来源IP: record.client_ip,
-      详情: record.detail ?? null,
+      [t('audit:drawer.copyFields.time')]: record.created_at,
+      [t('audit:drawer.copyFields.actor')]: record.user_name ?? t('audit:system'),
+      [t('audit:drawer.copyFields.action')]: actionDisplay,
+      [t('audit:drawer.copyFields.account')]: record.account_label ?? null,
+      [t('audit:drawer.copyFields.bot')]: record.bot_id ?? null,
+      [t('audit:drawer.copyFields.targetType')]: record.target_type,
+      [t('audit:drawer.copyFields.targetId')]: record.target_id,
+      [t('audit:drawer.copyFields.clientIp')]: record.client_ip,
+      [t('audit:drawer.copyFields.detail')]: record.detail ?? null,
     });
     const ok = await copyText(payload);
-    if (ok) toast.success('已复制完整审计记录');
-    else toast.error('复制失败，请手动选中复制');
+    if (ok) toast.success(t('audit:drawer.copiedAll'));
+    else toast.error(t('common:copyFailed'));
   };
 
   return (
     <DetailDrawer
       open={Boolean(record)}
       onClose={onClose}
-      title={record ? (record.action_label || record.action) : '审计详情'}
+      title={record ? actionDisplay : t('audit:drawer.title')}
       subtitle={
         record ? (
           <Space size={8}>
-            <span>{record.user_name ?? '系统'}</span>
+            <span>{record.user_name ?? t('audit:system')}</span>
             {record.created_at ? <RelativeTime value={record.created_at} refreshMs={0} /> : null}
           </Space>
         ) : undefined
@@ -55,22 +62,22 @@ export function AuditDetailDrawer({ record, onClose }: AuditDetailDrawerProps) {
         record
           ? [
               {
-                title: '记录信息',
+                title: t('audit:drawer.recordInfo'),
                 items: [
-                  { label: '时间', value: formatTime(record.created_at) },
-                  { label: '动作名', value: <CopyableText value={record.action} mono /> },
-                  { label: '操作人', value: record.user_name || '系统' },
-                  { label: '账号', value: record.account_label || undefined },
+                  { label: t('audit:drawer.fields.time'), value: formatTime(record.created_at) },
+                  { label: t('audit:drawer.fields.actionCode'), value: <CopyableText value={record.action} mono /> },
+                  { label: t('audit:drawer.fields.actor'), value: record.user_name || t('audit:system') },
+                  { label: t('audit:drawer.fields.account'), value: record.account_label || undefined },
                   {
-                    label: 'Bot',
+                    label: t('audit:drawer.fields.bot'),
                     value: record.bot_id ? <CopyableText value={record.bot_id} mono maxLength={20} /> : undefined,
                   },
-                  { label: '目标类型', value: record.target_type || undefined },
+                  { label: t('audit:drawer.fields.targetType'), value: record.target_type || undefined },
                   {
-                    label: '目标 ID',
+                    label: t('audit:drawer.fields.targetId'),
                     value: record.target_id ? <CopyableText value={record.target_id} mono /> : undefined,
                   },
-                  { label: '来源 IP', value: record.client_ip || undefined },
+                  { label: t('audit:drawer.fields.clientIp'), value: record.client_ip || undefined },
                 ],
               },
             ]
@@ -79,13 +86,17 @@ export function AuditDetailDrawer({ record, onClose }: AuditDetailDrawerProps) {
       extra={
         record ? (
           <Button size="small" icon={<CopyOutlined />} onClick={() => void handleCopyAll()}>
-            复制全部
+            {t('audit:drawer.copyAll')}
           </Button>
         ) : null
       }
     >
       {record ? (
-        <JsonBlock title="详情 JSON（detail）" value={record.detail ?? null} emptyText="（无详情）" />
+        <JsonBlock
+          title={t('audit:drawer.detailJsonTitle')}
+          value={record.detail ?? null}
+          emptyText={t('audit:drawer.noDetail')}
+        />
       ) : null}
     </DetailDrawer>
   );

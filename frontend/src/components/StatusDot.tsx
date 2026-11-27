@@ -16,6 +16,7 @@
  */
 import type { CSSProperties, ReactNode } from 'react';
 import { Tooltip } from 'antd';
+import { useTranslation } from 'react-i18next';
 import type { AccountStatus, TaskStatus } from '../api/types';
 import { ACCOUNT_STATUS_LABELS, TASK_STATUS_LABELS, type Tone } from '../constants';
 
@@ -50,13 +51,14 @@ export function StatusDot({
   className,
   style,
 }: StatusDotProps) {
+  const { t } = useTranslation('enums');
   const color = resolveColor(kind, status as string | null | undefined, tone);
   const text =
     label ??
     (status
       ? kind === 'account'
-        ? ACCOUNT_STATUS_LABELS[status as AccountStatus]
-        : TASK_STATUS_LABELS[status as TaskStatus]
+        ? t(`accountStatus.${status}`, { defaultValue: ACCOUNT_STATUS_LABELS[status as AccountStatus] ?? status })
+        : t(`taskStatus.${status}`, { defaultValue: TASK_STATUS_LABELS[status as TaskStatus] ?? status })
       : undefined);
 
   const dot = (

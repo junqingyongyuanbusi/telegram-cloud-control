@@ -12,11 +12,14 @@
 import { lazy, Suspense, useEffect } from 'react';
 import { App as AntdApp, ConfigProvider } from 'antd';
 import zhCN from 'antd/locale/zh_CN';
+import enUS from 'antd/locale/en_US';
+import { useTranslation } from 'react-i18next';
 import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom';
 import { ThemeProvider, useTheme } from './theme';
+import { normalizeLocale } from './i18n';
 import { AuthProvider } from './auth/AuthContext';
 import { bindMessageApi, bindNotificationApi } from './utils/feedback';
-import { AppShell, RequireAuth } from './components/shell/AppShell';
+import { AdminHome, AppShell, RequireAdmin, RequireAuth } from './components/shell/AppShell';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { NotFound } from './components/NotFound';
 import { PageSkeleton } from './components/LoadingSkeleton';
@@ -63,8 +66,10 @@ function FeedbackBridge() {
  */
 function ThemedApp() {
   const { antdTheme } = useTheme();
+  const { i18n } = useTranslation();
+  const antdLocale = normalizeLocale(i18n.language) === 'en-US' ? enUS : zhCN;
   return (
-    <ConfigProvider locale={zhCN} theme={antdTheme}>
+    <ConfigProvider locale={antdLocale} theme={antdTheme}>
       <AntdApp>
         <FeedbackBridge />
         {/* future 标志：提前采用 v7 行为，消掉两个弃用警告
@@ -88,21 +93,79 @@ function ThemedApp() {
                     </RequireAuth>
                   }
                 >
-                  <Route path="/" element={<Dashboard />} />
+                  {/* operator 只保留：任务中心 / 触达中心 / 会话 / 群情报；
+                      其余管理员页面由 RequireAdmin 给 403，工作台直接把 operator 送到任务中心 */}
+                  <Route
+                    path="/"
+                    element={
+                      <AdminHome>
+                        <Dashboard />
+                      </AdminHome>
+                    }
+                  />
                   <Route path="/tasks" element={<Tasks />} />
                   <Route path="/campaigns" element={<Navigate to="/campaigns/materials" replace />} />
                   <Route path="/campaigns/:section" element={<Campaigns />} />
                   <Route path="/group-intel" element={<GroupIntel />} />
-                  <Route path="/accounts" element={<Accounts />} />
-                  <Route path="/groups" element={<Groups />} />
-                  <Route path="/network" element={<Network />} />
+                  <Route
+                    path="/accounts"
+                    element={
+                      <RequireAdmin>
+                        <Accounts />
+                      </RequireAdmin>
+                    }
+                  />
+                  <Route
+                    path="/groups"
+                    element={
+                      <RequireAdmin>
+                        <Groups />
+                      </RequireAdmin>
+                    }
+                  />
+                  <Route
+                    path="/network"
+                    element={
+                      <RequireAdmin>
+                        <Network />
+                      </RequireAdmin>
+                    }
+                  />
                   <Route path="/dialogs" element={<Dialogs />} />
-                  <Route path="/inbox" element={<Inbox />} />
-                  <Route path="/assignments" element={<Assignments />} />
-                  <Route path="/audit" element={<Audit />} />
+                  <Route
+                    path="/inbox"
+                    element={
+                      <RequireAdmin>
+                        <Inbox />
+                      </RequireAdmin>
+                    }
+                  />
+                  <Route
+                    path="/assignments"
+                    element={
+                      <RequireAdmin>
+                        <Assignments />
+                      </RequireAdmin>
+                    }
+                  />
+                  <Route
+                    path="/audit"
+                    element={
+                      <RequireAdmin>
+                        <Audit />
+                      </RequireAdmin>
+                    }
+                  />
                   {/* 开发环境专属：共享组件库预览（生产构建不注册） */}
                   {DevComponentPreview ? (
-                    <Route path="/__components" element={<DevComponentPreview />} />
+                    <Route
+                      path="/__components"
+                      element={
+                        <RequireAdmin>
+                          <DevComponentPreview />
+                        </RequireAdmin>
+                      }
+                    />
                   ) : null}
                   {/* 登录后的未知地址：给一个可读的 404，而不是静默跳回工作台 */}
                   <Route path="*" element={<NotFound />} />

@@ -12,6 +12,7 @@
  */
 import type { CSSProperties } from 'react';
 import { Tooltip } from 'antd';
+import { useTranslation } from 'react-i18next';
 import {
   CURRENT_TASK_LABELS,
   MESSAGE_STATUS_LABELS,
@@ -20,6 +21,7 @@ import {
   TASK_TYPE_LABELS,
   type Tone,
 } from '../constants';
+import { resolveEnumLabel } from '../i18n';
 import type { CurrentTask, MessageStatus, TaskStatus, TaskType } from '../api/types';
 
 interface TagBaseProps {
@@ -74,9 +76,10 @@ export function TaskStatusTag({
   className,
   style,
 }: TagBaseProps & { status?: TaskStatus | null; label?: string | null }) {
-  if (!status) return <SoftTag tone="neutral" size={size}>{label || '未知'}</SoftTag>;
+  const { t } = useTranslation(['common', 'enums']);
+  if (!status) return <SoftTag tone="neutral" size={size}>{label || t('common:unknown')}</SoftTag>;
   const key = status;
-  const text = label || TASK_STATUS_LABELS[status] || '未知状态';
+  const text = resolveEnumLabel(`taskStatus.${status}`, label, TASK_STATUS_LABELS[status] || t('common:unknownStatus'));
   const tag = (
     <span
       className={['tg-status-badge', className].filter(Boolean).join(' ')}
@@ -115,8 +118,9 @@ export function TaskTypeTag({
   className,
   style,
 }: TagBaseProps & { type?: TaskType | string | null; label?: string | null }) {
+  const { t } = useTranslation(['common', 'enums']);
   if (!type) return <span className="tg-muted">—</span>;
-  const text = label || TASK_TYPE_LABELS[type as TaskType] || '未知类型';
+  const text = resolveEnumLabel(`taskType.${type}`, label, TASK_TYPE_LABELS[type as TaskType] || t('common:unknownType'));
   return (
     <SoftTag
       tone="info"
@@ -137,8 +141,9 @@ export function CurrentTaskTag({
   className,
   style,
 }: TagBaseProps & { task?: CurrentTask | null; label?: string | null }) {
+  const { t } = useTranslation(['common', 'enums']);
   if (!task) return <span className="tg-muted">—</span>;
-  const text = label || CURRENT_TASK_LABELS[task] || '未知任务';
+  const text = resolveEnumLabel(`currentTask.${task}`, label, CURRENT_TASK_LABELS[task] || t('common:unknownTask'));
   if (task === 'idle') {
     return (
       <SoftTag tone="neutral" size={size} className={className} style={style}>
@@ -161,8 +166,9 @@ export function MessageStatusTag({
   className,
   style,
 }: TagBaseProps & { status?: MessageStatus | null; label?: string | null }) {
+  const { t } = useTranslation(['common', 'enums']);
   if (!status) return null;
-  const text = label || MESSAGE_STATUS_LABELS[status] || '未知状态';
+  const text = resolveEnumLabel(`messageStatus.${status}`, label, MESSAGE_STATUS_LABELS[status] || t('common:unknownStatus'));
   return (
     <SoftTag tone={MESSAGE_STATUS_TONE[status]} size={size} showDot className={className} style={style}>
       {text}

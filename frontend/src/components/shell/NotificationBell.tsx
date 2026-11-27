@@ -16,9 +16,11 @@
  */
 import { Badge, Button, Empty, Popover, Spin, Tooltip, Typography } from 'antd';
 import { BellOutlined, CheckOutlined, ReloadOutlined } from '@ant-design/icons';
+import { useTranslation } from 'react-i18next';
 import RelativeTime from '../RelativeTime';
 import type { NotificationOut } from '../../api/types';
 import { NOTIFICATION_LEVEL_TONE } from '../../constants';
+import { resolveEnumLabel } from '../../i18n';
 
 export interface NotificationBellProps {
   items: NotificationOut[];
@@ -41,19 +43,20 @@ export function NotificationBell({
   onMarkAllRead,
   onNavigate,
 }: NotificationBellProps) {
+  const { t } = useTranslation(['shell', 'common']);
   const content = (
     <div className="tg-notif-panel">
       <div className="tg-notif-head">
-        <Typography.Text strong>通知</Typography.Text>
+        <Typography.Text strong>{t('shell:notifications.title')}</Typography.Text>
         <span className="tg-flex" style={{ gap: 'var(--tg-space-xs)' }}>
           {unread > 0 && onMarkAllRead ? (
             <Button type="link" size="small" icon={<CheckOutlined />} onClick={onMarkAllRead}>
-              全部已读
+              {t('shell:notifications.markAllRead')}
             </Button>
           ) : null}
           {onRefresh ? (
-            <Tooltip title="刷新">
-              <Button type="text" size="small" icon={<ReloadOutlined />} onClick={onRefresh} aria-label="刷新通知" />
+            <Tooltip title={t('common:refresh')}>
+              <Button type="text" size="small" icon={<ReloadOutlined />} onClick={onRefresh} aria-label={t('shell:notifications.refreshAria')} />
             </Tooltip>
           ) : null}
         </span>
@@ -62,7 +65,7 @@ export function NotificationBell({
       {derived ? (
         <div className="tg-notif-item" style={{ cursor: 'default', background: 'transparent' }}>
           <Typography.Text type="secondary" style={{ fontSize: 'var(--tg-font-size-xs)' }}>
-            通知接口未就绪，下面按工作台实时数据派生，字段与真实通知一致。
+            {t('shell:notifications.derivedBanner')}
           </Typography.Text>
         </div>
       ) : null}
@@ -72,11 +75,12 @@ export function NotificationBell({
           <Spin size="small" />
         </div>
       ) : items.length === 0 ? (
-        <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="没有需要处理的通知" style={{ padding: 'var(--tg-space-xl) 0' }} />
+        <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t('shell:notifications.empty')} style={{ padding: 'var(--tg-space-xl) 0' }} />
       ) : (
         <div className="tg-notif-list">
           {items.map((item) => {
             const tone = NOTIFICATION_LEVEL_TONE[item.level] ?? 'info';
+            const kindText = resolveEnumLabel(`notificationKind.${item.kind}`, item.kind_label);
             return (
               <div
                 key={item.id}
@@ -108,7 +112,7 @@ export function NotificationBell({
                   <div className="tg-notif-title">{item.title}</div>
                   {item.body ? <div className="tg-notif-body">{item.body}</div> : null}
                   <div className="tg-notif-time" style={{ marginTop: 4 }}>
-                    {item.kind_label ? <span style={{ marginRight: 8 }}>{item.kind_label}</span> : null}
+                    {kindText ? <span style={{ marginRight: 8 }}>{kindText}</span> : null}
                     <RelativeTime value={item.created_at} refreshMs={60_000} />
                   </div>
                 </div>
@@ -122,8 +126,12 @@ export function NotificationBell({
 
   return (
     <Popover content={content} trigger="click" placement="bottomRight" arrow={false} styles={{ body: { padding: 'var(--tg-space-lg)' } }}>
-      <Tooltip title="通知">
-        <button type="button" className="app-icon-button" aria-label={`通知${unread ? `（${unread} 条未读）` : ''}`}>
+      <Tooltip title={t('shell:notifications.title')}>
+        <button
+          type="button"
+          className="app-icon-button"
+          aria-label={unread ? t('shell:notifications.unreadAria', { count: unread }) : t('shell:notifications.title')}
+        >
           <Badge count={unread} size="small" offset={[2, -2]}>
             <BellOutlined style={{ fontSize: 16 }} />
           </Badge>

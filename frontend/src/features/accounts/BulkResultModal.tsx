@@ -7,6 +7,8 @@
 import { Modal, Alert, Table, Tag, Tooltip } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
 import { Link } from 'react-router-dom';
+import { useTranslation } from 'react-i18next';
+import { resolveEnumLabel } from '../../i18n';
 import type { BulkItemResult, BulkResultOut } from '../../api/types';
 
 interface Props {
@@ -16,25 +18,26 @@ interface Props {
 }
 
 export default function BulkResultModal({ open, result, onClose }: Props) {
+  const { t } = useTranslation(['accounts', 'common']);
   const items = result?.items ?? [];
 
   const columns: ColumnsType<BulkItemResult> = [
-    { title: '账号', dataIndex: 'account_label', width: 140 },
+    { title: t('accounts:bulkResult.columns.account'), dataIndex: 'account_label', width: 140 },
     {
-      title: '结果',
+      title: t('accounts:bulkResult.columns.result'),
       dataIndex: 'ok',
       width: 90,
       render: (value: boolean, record) =>
         value ? (
-          <span style={{ color: 'var(--tg-color-success)' }}>成功</span>
+          <span style={{ color: 'var(--tg-color-success)' }}>{t('accounts:bulkResult.statusOk')}</span>
         ) : record.message && record.status === 'disabled' ? (
-          <span className="tg-muted">跳过</span>
+          <span className="tg-muted">{t('accounts:bulkResult.statusSkipped')}</span>
         ) : (
-          <span style={{ color: 'var(--tg-color-danger)' }}>失败</span>
+          <span style={{ color: 'var(--tg-color-danger)' }}>{t('accounts:bulkResult.statusFailed')}</span>
         ),
     },
     {
-      title: '说明',
+      title: t('accounts:bulkResult.columns.message'),
       dataIndex: 'message',
       width: 340,
       ellipsis: { showTitle: false },
@@ -45,13 +48,13 @@ export default function BulkResultModal({ open, result, onClose }: Props) {
       ),
     },
     {
-      title: '关联任务',
+      title: t('accounts:bulkResult.columns.task'),
       dataIndex: 'task_id',
       width: 160,
       render: (value: string | null) =>
         value ? (
           <Link className="tg-mono" to={`/tasks?account_id=${value}`} style={{ fontSize: 'var(--tg-font-size-xs)' }}>
-            任务 {value.slice(0, 6)}
+            {t('accounts:bulkResult.taskLink', { id: value.slice(0, 6) })}
           </Link>
         ) : (
           <span className="tg-muted">—</span>
@@ -64,42 +67,55 @@ export default function BulkResultModal({ open, result, onClose }: Props) {
     ? [
         ...columns.slice(0, 3),
         {
-          title: '检测状态',
+          title: t('accounts:bulkResult.columns.checkStatus'),
           dataIndex: 'status_label',
           width: 110,
-          render: (value?: string) => (value ? <Tag>{value}</Tag> : <span className="tg-muted">—</span>),
+          render: (value: string | undefined, record: BulkItemResult) => {
+            const label = record.status
+              ? resolveEnumLabel(`accountStatus.${record.status}`, value, value ?? '')
+              : value;
+            return label ? <Tag>{label}</Tag> : <span className="tg-muted">—</span>;
+          },
         },
         ...columns.slice(3),
       ]
     : columns;
 
   return (
-    <Modal open={open} title="批量操作结果" onCancel={onClose} onOk={onClose} okText="知道了" cancelText="关闭" width={760}>
+    <Modal
+      open={open}
+      title={t('accounts:bulkResult.title')}
+      onCancel={onClose}
+      onOk={onClose}
+      okText={t('accounts:bulkResult.okText')}
+      cancelText={t('common:close')}
+      width={760}
+    >
       {result ? (
         <div className="tg-stack" style={{ gap: 'var(--tg-space-lg)' }}>
           {/* 统计块：每个数字独立成块，配色区分「成了几个 / 挂了几个 / 跳了几个」 */}
           <div className="tg-flex" style={{ gap: 'var(--tg-space-sm)', flexWrap: 'wrap' }}>
             <span className="tg-result-stat is-total">
-              命中 <b>{result.requested}</b>
+              {t('accounts:bulkResult.stats.requested')} <b>{result.requested}</b>
             </span>
             {result.succeeded ? (
               <span className="tg-result-stat is-ok">
-                成功 <b>{result.succeeded}</b>
+                {t('accounts:bulkResult.stats.succeeded')} <b>{result.succeeded}</b>
               </span>
             ) : null}
             {result.failed ? (
               <span className="tg-result-stat is-fail">
-                失败 <b>{result.failed}</b>
+                {t('accounts:bulkResult.stats.failed')} <b>{result.failed}</b>
               </span>
             ) : null}
             {result.skipped ? (
               <span className="tg-result-stat is-skip">
-                跳过 <b>{result.skipped}</b>
+                {t('accounts:bulkResult.stats.skipped')} <b>{result.skipped}</b>
               </span>
             ) : null}
             {result.task_ids.length ? (
               <span className="tg-result-stat is-task">
-                入队任务 <b>{result.task_ids.length}</b>
+                {t('accounts:bulkResult.stats.tasks')} <b>{result.task_ids.length}</b>
               </span>
             ) : null}
           </div>
@@ -107,8 +123,8 @@ export default function BulkResultModal({ open, result, onClose }: Props) {
             <Alert
               type="warning"
               showIcon
-              message="命中数量超过单次上限，只处理了前一部分"
-              description="请缩小范围（按分组 / 状态筛选或多选点名）后分批执行。"
+              message={t('accounts:bulkResult.truncatedTitle')}
+              description={t('accounts:bulkResult.truncatedDesc')}
             />
           ) : null}
           <Table<BulkItemResult>
@@ -116,7 +132,12 @@ export default function BulkResultModal({ open, result, onClose }: Props) {
             rowKey={(record) => record.account_id}
             columns={columnsWithCheck}
             dataSource={items}
-            pagination={{ pageSize: 10, showSizeChanger: false, size: 'small', showTotal: (total) => `共 ${total} 条` }}
+            pagination={{
+              pageSize: 10,
+              showSizeChanger: false,
+              size: 'small',
+              showTotal: (total) => t('common:totalItems', { count: total }),
+            }}
           />
         </div>
       ) : null}

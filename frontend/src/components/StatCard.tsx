@@ -26,6 +26,7 @@
  *             trend={[3,5,4,7,6,9]} onClick={()=>nav('/accounts?status=needs_code')} />
  */
 import type { CSSProperties, ReactNode } from 'react';
+import { useTranslation } from 'react-i18next';
 import { formatDelta } from '../utils/format';
 import TrendSparkline from './TrendSparkline';
 import type { Tone } from '../constants';
@@ -88,6 +89,7 @@ export function StatCard({
   className,
   style,
 }: StatCardProps) {
+  const { t } = useTranslation('common');
   if (loading) {
     return (
       <div className={['tg-stat-card', className].filter(Boolean).join(' ')} style={style} aria-busy="true">
@@ -139,7 +141,7 @@ export function StatCard({
 
       {trend && trend.length > 1 ? (
         <div className="tg-stat-spark">
-          <TrendSparkline data={trend} color={trendColor ?? TONE_COLOR[tone]} height={40} label={`${String(title)} 趋势`} />
+          <TrendSparkline data={trend} color={trendColor ?? TONE_COLOR[tone]} height={40} label={t('trendLabel', { title: String(title) })} />
         </div>
       ) : null}
 

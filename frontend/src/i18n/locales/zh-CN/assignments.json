@@ -1,0 +1,129 @@
+{
+  "page": {
+    "title": "员工分配",
+    "description": "分组是标签，分配才是权限：操作员只能看到并操作自己被分配到的账号；管理员可见全部。"
+  },
+  "forbidden": {
+    "pageDesc": "员工账号、口令与账号分配关系的管理入口。",
+    "title": "403 需要管理员权限",
+    "description": "员工分配是管理员专属页面：员工账号、口令与分配关系都属于管理动作。当前登录账号是操作员，后端接口同样会拒绝（403）。如有需要，请联系管理员。",
+    "error": "需要管理员权限"
+  },
+  "stats": {
+    "totalStaff": "员工总数",
+    "operators": "操作员",
+    "assignedAccounts": "已分配账号",
+    "unassignedAccounts": "未分配账号"
+  },
+  "columns": {
+    "username": "用户名",
+    "role": "角色",
+    "status": "状态",
+    "assignedCount": "已分配账号数",
+    "lastLogin": "最后登录",
+    "actions": "操作"
+  },
+  "status": {
+    "active": "启用",
+    "inactive": "停用"
+  },
+  "table": {
+    "adminSeesAll": "管理员看全部"
+  },
+  "actions": {
+    "createStaff": "新建员工",
+    "assignAccounts": "分配账号",
+    "adminNoAssignHint": "管理员可见全部账号，无需分配",
+    "changePassword": "改口令",
+    "disable": "停用",
+    "enable": "启用",
+    "delete": "删除",
+    "cannotDeleteSelf": "不能删除自己"
+  },
+  "matrix": {
+    "title": "分配矩阵",
+    "subtitle": "每个员工名下的账号一览；在员工行点「分配账号」可批量调整，账号选择器里也能按归属人反查。",
+    "staff": "员工",
+    "accountCount": "账号数",
+    "accounts": "名下账号",
+    "noAccounts": "还没有分配账号"
+  },
+  "empty": {
+    "usersTitle": "还没有员工账号",
+    "usersDesc": "新建员工并分配账号后，对方就可以用自己的账号登录控制台值班了。",
+    "matrixTitle": "还没有分配记录",
+    "matrixDesc": "在员工列表里点「分配账号」，把账号批量交给操作员。"
+  },
+  "deleteConfirm": {
+    "title": "删除员工「{{username}}」？",
+    "content": "删除后该员工无法再登录控制台；他名下的账号会变成未分配，不影响账号本身。"
+  },
+  "toast": {
+    "userDisabled": "员工已停用",
+    "userEnabled": "员工已启用",
+    "userDeleted": "员工已删除"
+  },
+  "assignModal": {
+    "title": "分配账号给：{{name}}",
+    "saveChanges": "保存变更",
+    "diffSummary": "将分配 {{added}} 个、收回 {{removed}} 个",
+    "noChangesClose": "没有变化，可直接关闭",
+    "searchPlaceholder": "搜索手机号 / 用户名 / 备注",
+    "allGroups": "全部账号分组",
+    "view": {
+      "all": "全部",
+      "assigned": "已分配给该员工",
+      "unassigned": "未分配"
+    },
+    "columns": {
+      "phone": "手机号",
+      "username": "用户名",
+      "group": "分组",
+      "ungrouped": "未分组",
+      "status": "状态",
+      "owner": "归属人",
+      "ownerCurrent": "{{owner}}（当前）",
+      "unassigned": "未分配",
+      "lastHeartbeat": "最后心跳"
+    },
+    "saveFailedTitle": "保存失败",
+    "saveFailedFallback": "保存失败，请稍后重试",
+    "empty": "没有符合条件的账号",
+    "toast": {
+      "assigned": "已给 {{username}} 分配 {{count}} 个账号",
+      "unassigned": "已取消 {{username}} 名下 {{count}} 个账号的分配",
+      "noChanges": "分配关系没有变化"
+    }
+  },
+  "userModal": {
+    "title": "新建员工",
+    "createBtn": "创建",
+    "created": "员工已创建",
+    "createFailedTitle": "创建失败",
+    "createFailedFallback": "创建失败，请稍后重试",
+    "username": "用户名",
+    "usernameRequired": "请输入用户名",
+    "usernameMin": "至少 2 个字符",
+    "usernamePlaceholder": "登录用户名",
+    "password": "口令",
+    "passwordRequired": "请输入口令",
+    "passwordMin": "至少 6 位",
+    "passwordExtra": "只存 bcrypt 哈希，任何人（包括管理员）都看不到明文。",
+    "passwordPlaceholder": "至少 6 位",
+    "displayName": "显示名",
+    "displayNamePlaceholder": "例如：值班-小王",
+    "role": "角色",
+    "roleRequired": "请选择角色"
+  },
+  "passwordModal": {
+    "title": "修改口令：{{username}}",
+    "updated": "口令已更新",
+    "updateFailedTitle": "修改失败",
+    "updateFailedFallback": "修改失败，请稍后重试",
+    "newPassword": "新口令",
+    "newPasswordRequired": "请输入新口令",
+    "newPasswordMin": "至少 6 位",
+    "newPasswordExtra": "改完口令后，该员工现有的登录令牌不会自动失效；如怀疑泄漏请先停用账号。",
+    "newPasswordPlaceholder": "至少 6 位"
+  }
+}

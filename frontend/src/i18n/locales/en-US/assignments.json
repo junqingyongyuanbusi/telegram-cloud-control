@@ -1,0 +1,129 @@
+{
+  "page": {
+    "title": "Staff Assignments",
+    "description": "Groups are labels; assignments control access. Operators can only view and operate accounts assigned to them, while admins see all."
+  },
+  "forbidden": {
+    "pageDesc": "Manage staff accounts, passwords, and account assignments.",
+    "title": "403 Admin Access Required",
+    "description": "Staff Assignments is restricted to administrators: managing staff accounts, passwords, and assignments requires admin privileges. Your current role is operator and the API will also return 403. Contact an administrator if needed.",
+    "error": "Admin privileges required"
+  },
+  "stats": {
+    "totalStaff": "Total Staff",
+    "operators": "Operators",
+    "assignedAccounts": "Assigned Accounts",
+    "unassignedAccounts": "Unassigned Accounts"
+  },
+  "columns": {
+    "username": "Username",
+    "role": "Role",
+    "status": "Status",
+    "assignedCount": "Assigned Accounts",
+    "lastLogin": "Last Login",
+    "actions": "Actions"
+  },
+  "status": {
+    "active": "Active",
+    "inactive": "Disabled"
+  },
+  "table": {
+    "adminSeesAll": "Sees all"
+  },
+  "actions": {
+    "createStaff": "New Staff",
+    "assignAccounts": "Assign Accounts",
+    "adminNoAssignHint": "Admins can access all accounts; no assignment needed",
+    "changePassword": "Password",
+    "disable": "Disable",
+    "enable": "Enable",
+    "delete": "Delete",
+    "cannotDeleteSelf": "You cannot delete your own account"
+  },
+  "matrix": {
+    "title": "Assignment Matrix",
+    "subtitle": "Overview of accounts assigned to each staff member. Click Assign Accounts on a row to adjust in bulk, or check ownership inside the picker.",
+    "staff": "Staff",
+    "accountCount": "Count",
+    "accounts": "Assigned Accounts",
+    "noAccounts": "No accounts assigned yet"
+  },
+  "empty": {
+    "usersTitle": "No staff accounts yet",
+    "usersDesc": "Create a staff member and assign accounts so they can sign in and operate on duty.",
+    "matrixTitle": "No assignments yet",
+    "matrixDesc": "Click Assign Accounts in the staff table to allocate accounts to operators."
+  },
+  "deleteConfirm": {
+    "title": "Delete staff \"{{username}}\"?",
+    "content": "This staff member will no longer be able to sign in. Their accounts will become unassigned without affecting the accounts themselves."
+  },
+  "toast": {
+    "userDisabled": "Staff disabled",
+    "userEnabled": "Staff enabled",
+    "userDeleted": "Staff deleted"
+  },
+  "assignModal": {
+    "title": "Assign Accounts: {{name}}",
+    "saveChanges": "Save Changes",
+    "diffSummary": "Assigning {{added}}, unassigning {{removed}}",
+    "noChangesClose": "No changes; safe to close",
+    "searchPlaceholder": "Search phone / username / remark",
+    "allGroups": "All account groups",
+    "view": {
+      "all": "All",
+      "assigned": "Assigned to Staff",
+      "unassigned": "Unassigned"
+    },
+    "columns": {
+      "phone": "Phone",
+      "username": "Username",
+      "group": "Group",
+      "ungrouped": "Ungrouped",
+      "status": "Status",
+      "owner": "Owner",
+      "ownerCurrent": "{{owner}} (Current)",
+      "unassigned": "Unassigned",
+      "lastHeartbeat": "Last Heartbeat"
+    },
+    "saveFailedTitle": "Save failed",
+    "saveFailedFallback": "Failed to save. Please try again later.",
+    "empty": "No matching accounts",
+    "toast": {
+      "assigned": "Assigned {{count}} accounts to {{username}}",
+      "unassigned": "Unassigned {{count}} accounts from {{username}}",
+      "noChanges": "No changes to assignments"
+    }
+  },
+  "userModal": {
+    "title": "New Staff",
+    "createBtn": "Create",
+    "created": "Staff account created",
+    "createFailedTitle": "Creation failed",
+    "createFailedFallback": "Failed to create staff. Please try again later.",
+    "username": "Username",
+    "usernameRequired": "Please enter a username",
+    "usernameMin": "At least 2 characters",
+    "usernamePlaceholder": "Login username",
+    "password": "Password",
+    "passwordRequired": "Please enter a password",
+    "passwordMin": "At least 6 characters",
+    "passwordExtra": "Stored as a bcrypt hash only; no one (including admins) can view the plaintext password.",
+    "passwordPlaceholder": "At least 6 characters",
+    "displayName": "Display Name",
+    "displayNamePlaceholder": "e.g. Shift - Alex",
+    "role": "Role",
+    "roleRequired": "Please select a role"
+  },
+  "passwordModal": {
+    "title": "Change Password: {{username}}",
+    "updated": "Password updated",
+    "updateFailedTitle": "Update failed",
+    "updateFailedFallback": "Failed to update password. Please try again later.",
+    "newPassword": "New Password",
+    "newPasswordRequired": "Please enter a new password",
+    "newPasswordMin": "At least 6 characters",
+    "newPasswordExtra": "Existing login tokens remain valid after changing the password. Disable the account first if you suspect a compromise.",
+    "newPasswordPlaceholder": "At least 6 characters"
+  }
+}

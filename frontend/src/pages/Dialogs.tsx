@@ -7,6 +7,7 @@
  *  按规划「不做批量群发 / 批量私信」——本页不提供任何批量发送入口。
  */
 import { useEffect, useRef, useState, type MouseEvent as ReactMouseEvent } from 'react';
+import { useTranslation } from 'react-i18next';
 import { PageHeader } from '../components';
 import { accountApi, botApi } from '../api/endpoints';
 import { useAsyncData } from '../hooks/useAsyncData';
@@ -26,6 +27,7 @@ import '../features/dialogs/dialogs.css';
 import type { DialogOut } from '../api/types';
 
 export default function Dialogs() {
+  const { t } = useTranslation('dialogs');
   const list = useDialogList();
   const { isNarrow } = useBreakpoint();
 
@@ -83,8 +85,8 @@ export default function Dialogs() {
   return (
     <div className="tg-page">
       <PageHeader
-        title="会话"
-        description="群聊与私信的统一收件箱：左侧选会话，右侧回消息；新消息实时推送，发送走用户号任务队列或 Bot 直发。"
+        title={t('pageTitle')}
+        description={t('pageDescription')}
       />
 
       <div
@@ -109,7 +111,9 @@ export default function Dialogs() {
           onOpen={openDialog}
           accountOptions={(accounts.data?.items ?? []).map((item) => ({
             value: item.id,
-            label: `${item.phone_masked}${item.remark ? `（${item.remark}）` : ''}`,
+            label: item.remark
+              ? t('accountOptionWithRemark', { phone: item.phone_masked, remark: item.remark })
+              : item.phone_masked,
           }))}
           botOptions={(bots.data ?? []).map((bot) => ({
             value: bot.id,
@@ -123,7 +127,7 @@ export default function Dialogs() {
           onMouseDown={handleGripDown}
           role="separator"
           aria-orientation="vertical"
-          aria-label="拖动调整列表宽度"
+          aria-label={t('resizeHandleAria')}
         />
 
         <ChatPane room={room} />

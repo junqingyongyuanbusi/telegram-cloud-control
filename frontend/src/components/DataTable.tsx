@@ -51,6 +51,7 @@ import {
   SettingOutlined,
   SyncOutlined,
 } from '@ant-design/icons';
+import { useTranslation } from 'react-i18next';
 import EmptyState, { type EmptyStateProps } from './EmptyState';
 import ErrorState from './ErrorState';
 import { TableSkeleton } from './LoadingSkeleton';
@@ -139,7 +140,7 @@ export function DataTable<T extends object>({
   extra,
   exportAction,
   onExport,
-  exportText = '导出 CSV',
+  exportText,
   columnSettingsKey,
   densityKey,
   defaultDensity = 'middle',
@@ -157,6 +158,7 @@ export function DataTable<T extends object>({
   className,
   style,
 }: DataTableProps<T>) {
+  const { t } = useTranslation('common');
   const [hidden, setHidden] = useLocalStorage<string[]>(
     `${columnSettingsKey ?? 'default'}:hidden_columns`,
     [],
@@ -280,8 +282,8 @@ export function DataTable<T extends object>({
             <EmptyState
               compact
               art="search"
-              title="没有符合条件的数据"
-              description="换个筛选条件，或先清空筛选看看全部数据。"
+              title={t('noMatchingData')}
+              description={t('noMatchingDataDesc')}
               {...empty}
             />
           ),
@@ -295,7 +297,7 @@ export function DataTable<T extends object>({
                 total: total ?? dataSource.length,
                 showSizeChanger: true,
                 pageSizeOptions: pageSizeOptions.map(String),
-                showTotal: showTotal ? (value) => `共 ${value} 条` : undefined,
+                showTotal: showTotal ? (value) => t('totalItems', { count: value }) : undefined,
                 size: density === 'compact' ? 'small' : 'default',
               }
         }
@@ -312,26 +314,26 @@ export function DataTable<T extends object>({
           <div className="tg-table-toolbar-right">
             {loading && hasRows ? (
               <span className="tg-table-meta" style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
-                <SyncOutlined spin /> 刷新中…
+                <SyncOutlined spin /> {t('refreshing')}
               </span>
             ) : null}
             {extra}
             {exportAction}
             {onExport ? (
               <Button icon={<DownloadOutlined />} loading={exporting} onClick={handleExport}>
-                {exportText}
+                {exportText ?? t('exportCsv')}
               </Button>
             ) : null}
             {showDensity ? (
-              <Tooltip title="行高">
+              <Tooltip title={t('rowHeight')}>
                 <Segmented
                   size="small"
                   value={density}
                   onChange={(value) => setDensity(value as TableDensity)}
                   options={[
-                    { value: 'compact', label: '紧凑' },
-                    { value: 'middle', label: '默认' },
-                    { value: 'comfortable', label: '宽松' },
+                    { value: 'compact', label: t('densityCompact') },
+                    { value: 'middle', label: t('densityMiddle') },
+                    { value: 'comfortable', label: t('densityComfortable') },
                   ]}
                 />
               </Tooltip>
@@ -353,10 +355,10 @@ export function DataTable<T extends object>({
                   >
                     <div className="tg-flex-between" style={{ marginBottom: 'var(--tg-space-md)' }}>
                       <Typography.Text strong style={{ fontSize: 'var(--tg-font-size-sm)' }}>
-                        列设置
+                        {t('columnSettings')}
                       </Typography.Text>
                       <Button type="link" size="small" onClick={() => setHidden([])}>
-                        全选
+                        {t('selectAll')}
                       </Button>
                     </div>
                     <Checkbox.Group
@@ -376,14 +378,14 @@ export function DataTable<T extends object>({
                   </div>
                 )}
               >
-                <Tooltip title="列设置">
-                  <Button type="text" icon={<SettingOutlined />} aria-label="列设置" />
+                <Tooltip title={t('columnSettings')}>
+                  <Button type="text" icon={<SettingOutlined />} aria-label={t('columnSettings')} />
                 </Tooltip>
               </Dropdown>
             ) : null}
             {onRetry ? (
-              <Tooltip title="刷新">
-                <Button type="text" icon={<ReloadOutlined />} loading={loading} onClick={onRetry} aria-label="刷新" />
+              <Tooltip title={t('refresh')}>
+                <Button type="text" icon={<ReloadOutlined />} loading={loading} onClick={onRetry} aria-label={t('refresh')} />
               </Tooltip>
             ) : null}
           </div>

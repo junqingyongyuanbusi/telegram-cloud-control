@@ -5,6 +5,7 @@
 import { useEffect, useMemo } from 'react';
 import { Button, Space, Typography } from 'antd';
 import { RedoOutlined, StopOutlined } from '@ant-design/icons';
+import { useTranslation } from 'react-i18next';
 import {
   CopyableText,
   DetailDrawer,
@@ -16,6 +17,7 @@ import {
 import { taskApi } from '../../api/endpoints';
 import { useAsyncData, useInterval } from '../../hooks/useAsyncData';
 import { useWsEvent } from '../../hooks/useWebSocket';
+import { resolveEnumLabel } from '../../i18n';
 import { formatTime } from '../../utils/format';
 import type { TaskOut } from '../../api/types';
 import { JsonBlock } from './JsonBlock';
@@ -27,17 +29,29 @@ interface TaskDetailDrawerProps {
   onCancel: (task: TaskOut) => void;
 }
 
-/** 没有日志时按状态给一句人话——留白会让人以为功能坏了 */
-const EMPTY_LOG_HINT: Record<string, string> = {
-  pending: '排队中：等 Worker 认领这个号之后开始执行，日志会写在这里',
-  running: '执行中：正在跑，日志马上出来（抽屉开着会自动刷新）',
-  failed: '已失败，但没有留下执行日志——可以点下面的「重试」重新排队',
-  completed: '已完成，但没有产生日志条目（该任务类型可能不上报步骤）',
-  cancelled: '已取消',
-  pending_confirmation: '等待确认后才开始执行，日志会在执行时写入',
-};
+const KNOWN_EMPTY_LOG_STATUSES = new Set([
+  'pending',
+  'running',
+  'failed',
+  'completed',
+  'cancelled',
+  'pending_confirmation',
+]);
+
+const KNOWN_STAGES = new Set([
+  'start',
+  'scanning',
+  'searching',
+  'sending',
+  'progress',
+  'online',
+  'done',
+  'error',
+  'failed',
+]);
 
 export function TaskDetailDrawer({ taskId, onClose, onRetry, onCancel }: TaskDetailDrawerProps) {
+  const { t } = useTranslation(['tasks', 'common', 'enums']);
   const detail = useAsyncData<TaskOut>(() => taskApi.get(taskId as string), [taskId], {
     immediate: false,
     silentError: true,
@@ -80,10 +94,30 @@ export function TaskDetailDrawer({ taskId, onClose, onRetry, onCancel }: TaskDet
     task?.status === 'running' ||
     task?.status === 'pending_confirmation';
 
+  /** 没有日志时按状态给一句人话——留白会让人以为功能坏了 */
+  const emptyLogHint = (status: string) =>
+    KNOWN_EMPTY_LOG_STATUSES.has(status)
+      ? t(`tasks:detail.emptyLogHint.${status}`)
+      : t('tasks:detail.noLogsFallback');
+
+  /** 日志分级：把 stage 翻成短标签 + 配色，一眼看出「在干嘛 / 卡哪了」 */
+  const stageTone = (stage: string): { label: string; color: string } => {
+    const key = (stage || '').toLowerCase();
+    const label = KNOWN_STAGES.has(key)
+      ? t(`tasks:stages.${key}`)
+      : stage || t('tasks:stages.progress');
+    if (key.includes('error') || key.includes('fail')) return { label, color: 'var(--tg-color-danger)' };
+    if (key.includes('done') || key.includes('complete') || key === 'ok') {
+      return { label, color: 'var(--tg-color-success)' };
+    }
+    if (key.includes('start')) return { label, color: 'var(--tg-color-primary)' };
+    return { label, color: 'var(--tg-color-text-secondary)' };
+  };
+
   const sections: DetailSection[] = task
     ? [
         {
-          title: '执行日志',
+          title: t('tasks:detail.logsTitle'),
           content: logs.length ? (
             <div className="tg-stack" style={{ gap: 2, maxHeight: 340, overflowY: 'auto' }}>
               {logs.map((entry, index) => {
@@ -140,43 +174,43 @@ export function TaskDetailDrawer({ taskId, onClose, onRetry, onCancel }: TaskDet
             </div>
           ) : (
             <Typography.Text type="secondary">
-              {EMPTY_LOG_HINT[task.status] ?? '这个任务还没有日志。'}
+              {emptyLogHint(task.status)}
             </Typography.Text>
           ),
         },
         {
-          title: '基本信息',
+          title: t('tasks:detail.basicInfo'),
           items: [
             {
-              label: '任务类型',
+              label: t('tasks:detail.taskType'),
               value: <TaskTypeTag type={task.type} label={task.type_label} />,
             },
             {
-              label: '状态',
+              label: t('tasks:detail.status'),
               value: <TaskStatusTag status={task.status} label={task.status_label} />,
             },
             {
-              label: '任务 ID',
+              label: t('tasks:detail.taskId'),
               value: <CopyableText value={task.id} mono />,
             },
-            { label: '尝试次数', value: `${task.attempts} / ${task.max_attempts}` },
-            { label: '优先级', value: task.priority },
+            { label: t('tasks:detail.attempts'), value: `${task.attempts} / ${task.max_attempts}` },
+            { label: t('tasks:detail.priority'), value: task.priority },
             {
-              label: 'Worker',
+              label: t('tasks:detail.worker'),
               value: task.worker_id ? <CopyableText value={task.worker_id} mono /> : undefined,
             },
-            { label: '发起人', value: task.created_by_name || undefined },
-            { label: '下次执行', value: formatTime(task.next_run_at) },
+            { label: t('tasks:detail.createdBy'), value: task.created_by_name || undefined },
+            { label: t('tasks:detail.nextRunAt'), value: formatTime(task.next_run_at) },
           ],
         },
         {
-          title: '时间线',
+          title: t('tasks:detail.timeline'),
           content: (
             <div className="tg-stack" style={{ gap: 'var(--tg-space-md)' }}>
-              <TimelineRow label="创建" value={task.created_at} />
-              <TimelineRow label="开始执行" value={task.started_at} />
-              <TimelineRow label="完成" value={task.completed_at} />
-              <TimelineRow label="下次执行" value={task.next_run_at} />
+              <TimelineRow label={t('tasks:detail.timelineCreated')} value={task.created_at} />
+              <TimelineRow label={t('tasks:detail.timelineStarted')} value={task.started_at} />
+              <TimelineRow label={t('tasks:detail.timelineCompleted')} value={task.completed_at} />
+              <TimelineRow label={t('tasks:detail.timelineNextRun')} value={task.next_run_at} />
             </div>
           ),
         },
@@ -187,12 +221,12 @@ export function TaskDetailDrawer({ taskId, onClose, onRetry, onCancel }: TaskDet
     <DetailDrawer
       open={Boolean(taskId)}
       onClose={onClose}
-      title={task ? (task.type_label || task.type) : '任务详情'}
+      title={task ? resolveEnumLabel(`taskType.${task.type}`, task.type_label, task.type) : t('tasks:detail.title')}
       subtitle={
         task ? (
           <Space size={8}>
             <span>
-              {task.account_label || task.bot_label || '系统任务'}
+              {task.account_label || task.bot_label || t('tasks:detail.systemTask')}
             </span>
             {task.created_at ? <RelativeTime value={task.created_at} refreshMs={0} /> : null}
           </Space>
@@ -209,19 +243,19 @@ export function TaskDetailDrawer({ taskId, onClose, onRetry, onCancel }: TaskDet
             <Button
               icon={<RedoOutlined />}
               disabled={!canRetry}
-              title={canRetry ? undefined : '只允许失败或等待确认的任务重试'}
+              title={canRetry ? undefined : t('tasks:actions.retryDisabledHint')}
               onClick={() => onRetry(task)}
             >
-              重试
+              {t('common:retry')}
             </Button>
             <Button
               danger
               icon={<StopOutlined />}
               disabled={!canCancel}
-              title={canCancel ? undefined : '只有待执行 / 等待确认 / 执行中的任务可以取消'}
+              title={canCancel ? undefined : t('tasks:actions.cancelDisabledHint')}
               onClick={() => onCancel(task)}
             >
-              取消
+              {t('common:cancel')}
             </Button>
           </Space>
         ) : null
@@ -231,17 +265,17 @@ export function TaskDetailDrawer({ taskId, onClose, onRetry, onCancel }: TaskDet
         <div className="tg-stack" style={{ gap: 'var(--tg-space-xl)' }}>
           {task.error ? (
             <div>
-              <Typography.Text strong>错误原因</Typography.Text>
+              <Typography.Text strong>{t('tasks:detail.errorReason')}</Typography.Text>
               <div style={{ marginTop: 'var(--tg-space-md)' }}>
-                <JsonBlock value={task.error} emptyText="（无）" />
+                <JsonBlock value={task.error} emptyText={t('tasks:jsonBlock.empty')} />
               </div>
             </div>
           ) : null}
-          <JsonBlock title="入队参数（payload）" value={task.payload} />
+          <JsonBlock title={t('tasks:detail.payloadTitle')} value={task.payload} />
           {task.result !== null && task.result !== undefined ? (
-            <JsonBlock title="执行结果（result）" value={task.result} />
+            <JsonBlock title={t('tasks:detail.resultTitle')} value={task.result} />
           ) : (
-            <JsonBlock title="执行结果（result）" value={null} emptyText="（还没有结果：任务未完成或未写入）" />
+            <JsonBlock title={t('tasks:detail.resultTitle')} value={null} emptyText={t('tasks:detail.noResult')} />
           )}
         </div>
       ) : null}
@@ -249,31 +283,8 @@ export function TaskDetailDrawer({ taskId, onClose, onRetry, onCancel }: TaskDet
   );
 }
 
-/** 日志分级：把 stage 翻成中文短标签 + 配色，一眼看出「在干嘛 / 卡哪了」 */
-const STAGE_LABELS: Record<string, string> = {
-  start: '开始',
-  scanning: '扫描中',
-  searching: '搜索中',
-  sending: '发送中',
-  progress: '进行中',
-  online: '上线',
-  done: '完成',
-  error: '出错',
-  failed: '失败',
-};
-
-function stageTone(stage: string): { label: string; color: string } {
-  const key = (stage || '').toLowerCase();
-  const label = STAGE_LABELS[key] ?? stage ?? '进行中';
-  if (key.includes('error') || key.includes('fail')) return { label, color: 'var(--tg-color-danger)' };
-  if (key.includes('done') || key.includes('complete') || key === 'ok') {
-    return { label, color: 'var(--tg-color-success)' };
-  }
-  if (key.includes('start')) return { label, color: 'var(--tg-color-primary)' };
-  return { label, color: 'var(--tg-color-text-secondary)' };
-}
-
-function TimelineRow({ label, value }: { label: string; value?: string | null }) {  return (
+function TimelineRow({ label, value }: { label: string; value?: string | null }) {
+  return (
     <div
       style={{
         display: 'flex',
@@ -282,7 +293,7 @@ function TimelineRow({ label, value }: { label: string; value?: string | null })
         fontSize: 'var(--tg-font-size-sm)',
       }}
     >
-      <span style={{ color: 'var(--tg-color-text-tertiary)', width: 64, flex: 'none' }}>{label}</span>
+      <span style={{ color: 'var(--tg-color-text-tertiary)', minWidth: 64, flex: 'none' }}>{label}</span>
       <span style={{ color: 'var(--tg-color-text-primary)' }}>{formatTime(value)}</span>
     </div>
   );

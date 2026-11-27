@@ -1,0 +1,121 @@
+{
+  "nav": {
+    "ariaLabel": "Main navigation",
+    "groups": {
+      "overview": "Overview",
+      "accounts": "Accounts",
+      "messages": "Messaging",
+      "ops": "Operations"
+    },
+    "items": {
+      "dashboard": "Dashboard",
+      "dashboardDesc": "Online accounts, anomalies, and failed tasks",
+      "accounts": "Accounts",
+      "accountsDesc": "Status, groups, heartbeats, active tasks, and single-account checks",
+      "groups": "Account Groups",
+      "groupsDesc": "Custom tags for organizing and assigning accounts to operators",
+      "network": "Network",
+      "networkDesc": "Outbound proxy addresses for accounts",
+      "inbox": "Support Inbox",
+      "inboxDesc": "Cross-account private messages, unread first, reply directly",
+      "dialogs": "Dialogs",
+      "dialogsDesc": "Group chats and private messages",
+      "groupIntel": "Group Intel",
+      "groupIntelDesc": "Auto-collected group profiles, members, and join/leave events",
+      "tasks": "Task Center",
+      "tasksDesc": "Sync, single sends, and relays with failure reasons and retry counts",
+      "campaigns": "Outreach Center",
+      "campaignsDesc": "Materials, join & send, and batch progress",
+      "campaignsMaterials": "Materials",
+      "campaignsMaterialsDesc": "Shared text and media materials for batch actions",
+      "campaignsJoinSend": "Join & Send",
+      "campaignsJoinSendDesc": "Join, verify, and post group-by-group; one task per account",
+      "campaignsBatches": "Batch Progress",
+      "campaignsBatchesDesc": "Track progress by batch and cancel unfinished tasks",
+      "assignments": "Assignments",
+      "assignmentsDesc": "Manage who can operate which accounts",
+      "audit": "Audit Logs",
+      "auditDesc": "Track who did what on which account and when"
+    },
+    "enterSubpage": "{{label}} (open \"{{sub}}\")",
+    "submenuAria": "{{label}} ({{action}} submenu)",
+    "expand": "expand",
+    "collapse": "collapse",
+    "expandSidebar": "Expand sidebar",
+    "collapseSidebar": "Collapse sidebar",
+    "openNav": "Open navigation"
+  },
+  "topbar": {
+    "breadcrumbAria": "Breadcrumb",
+    "globalSearch": "Global search",
+    "globalSearchShortcut": "Global search ({{shortcut}})",
+    "searchPlaceholder": "Search accounts, dialogs, messages…"
+  },
+  "theme": {
+    "light": "Light",
+    "dark": "Dark",
+    "system": "System",
+    "tooltip": "Theme: {{label}}"
+  },
+  "language": {
+    "zh-CN": "简体中文",
+    "en-US": "English",
+    "tooltip": "Language: {{label}}",
+    "ariaLabel": "Switch language: current {{label}}"
+  },
+  "ws": {
+    "open": "Live connected",
+    "connecting": "Connecting…",
+    "closed": "Disconnected",
+    "hintOpen": "New messages push in real time to open dialogs",
+    "hintConnecting": "Establishing WebSocket connection; will retry automatically",
+    "hintClosed": "Connection lost; reconnecting with backoff. Postgres remains source of truth."
+  },
+  "notifications": {
+    "title": "Notifications",
+    "markAllRead": "Mark all read",
+    "refreshAria": "Refresh notifications",
+    "derivedBanner": "Notifications API unavailable; showing alerts derived from live dashboard metrics.",
+    "empty": "No notifications require attention",
+    "unreadAria": "Notifications ({{count}} unread)",
+    "derived": {
+      "taskFailedKind": "Task Failed",
+      "taskFailedTitle": "{{count}} failed tasks",
+      "taskFailedBody": "Inspect failure reasons in Task Center and retry individually.",
+      "accountAbnormalKind": "Account Anomaly",
+      "accountAbnormalTitle": "{{count}} abnormal accounts",
+      "accountAbnormalBody": "Accounts needing code, frozen, or invalid will not execute sends.",
+      "workerStaleKind": "Worker Heartbeat",
+      "workerStaleTitle": "{{count}} workers have no heartbeat for >60s",
+      "workerStaleBody": "Check if the worker process is running; clear a single account lease rather than restarting all connections.",
+      "taskOverdueKind": "Task Overdue",
+      "taskOverdueTitle": "{{count}} overdue tasks not started",
+      "taskOverdueBody": "Verify that a worker is claiming queued tasks."
+    }
+  },
+  "userMenu": {
+    "ariaLabel": "Current user menu",
+    "adminScope": " · Manage all accounts & staff",
+    "operatorScope": " · Assigned accounts only",
+    "logout": "Sign out",
+    "adminTag": "Admin"
+  },
+  "search": {
+    "placeholder": "Search accounts, dialogs, messages, or jump to a page…",
+    "commonPages": "Pages",
+    "searching": "Searching…",
+    "noResult": "No results matching \"{{query}}\"",
+    "unreadCount": "{{count}} unread",
+    "unknownSender": "Unknown sender",
+    "kinds": {
+      "page": "Page",
+      "account": "Account",
+      "dialog": "Dialog",
+      "message": "Message"
+    },
+    "hintSelect": "Select",
+    "hintOpen": "Open",
+    "hintClose": "Close",
+    "hintMinChars": "Enter at least 2 characters to search message content"
+  }
+}

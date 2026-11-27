@@ -16,6 +16,7 @@ import {
   ReloadOutlined,
   TeamOutlined,
 } from '@ant-design/icons';
+import { useTranslation } from 'react-i18next';
 import {
   ConfirmModal,
   DataTable,
@@ -29,15 +30,16 @@ import {
 } from '../components';
 import { accountApi, assignmentApi, userApi } from '../api/endpoints';
 import { useAsyncData } from '../hooks/useAsyncData';
+import { resolveEnumLabel } from '../i18n';
 import { formatNumber, shortId } from '../utils/format';
 import { notifySuccess } from '../utils/feedback';
 import { useAuth } from '../auth/AuthContext';
-import { USER_ROLE_LABELS } from '../constants';
 import type { UserOut, UserRole } from '../api/types';
 import { AccountAssignModal } from '../features/assignments/AccountAssignModal';
 import { PasswordModal, UserFormModal } from '../features/assignments/UserFormModal';
 
 export default function Assignments() {
+  const { t } = useTranslation(['assignments', 'common', 'enums']);
   const { isAdmin, user: currentUser } = useAuth();
   const users = useAsyncData(() => userApi.list(), [], { immediate: isAdmin });
   const assignments = useAsyncData(() => assignmentApi.list(), [], { immediate: isAdmin });
@@ -83,12 +85,12 @@ export default function Assignments() {
   // operator 访问：管理端专属页，直接给中文 403 提示（接口同样拒绝，这里不再发起请求）
   if (!isAdmin) {
     return (
-      <PageContainer title="员工分配" description="员工账号、口令与账号分配关系的管理入口。">
+      <PageContainer title={t('assignments:page.title')} description={t('assignments:forbidden.pageDesc')}>
         <SectionCard>
           <ErrorState
-            title="403 需要管理员权限"
-            description="员工分配是管理员专属页面：员工账号、口令与分配关系都属于管理动作。当前登录账号是操作员，后端接口同样会拒绝（403）。如有需要，请联系管理员。"
-            error="需要管理员权限"
+            title={t('assignments:forbidden.title')}
+            description={t('assignments:forbidden.description')}
+            error={t('assignments:forbidden.error')}
             compact
           />
         </SectionCard>
@@ -100,7 +102,7 @@ export default function Assignments() {
     setBusyId(record.id);
     try {
       await userApi.update(record.id, { is_active: !record.is_active });
-      notifySuccess(record.is_active ? '员工已停用' : '员工已启用');
+      notifySuccess(record.is_active ? t('assignments:toast.userDisabled') : t('assignments:toast.userEnabled'));
       void users.reload();
     } catch {
       /* 最后一个管理员的保护等后端 400/409 中文原因已由 client 统一提示 */
@@ -114,7 +116,7 @@ export default function Assignments() {
     setDeleting(true);
     try {
       const res = await userApi.remove(deleteTarget.id);
-      notifySuccess(res.message || '员工已删除');
+      notifySuccess(res.message || t('assignments:toast.userDeleted'));
       setDeleteTarget(null);
       void users.reload();
       void assignments.reload();
@@ -127,7 +129,7 @@ export default function Assignments() {
 
   const columns: ColumnsType<UserOut> = [
     {
-      title: '用户名',
+      title: t('assignments:columns.username'),
       dataIndex: 'username',
       width: 170,
       render: (value: string, record) => (
@@ -140,25 +142,27 @@ export default function Assignments() {
       ),
     },
     {
-      title: '角色',
+      title: t('assignments:columns.role'),
       dataIndex: 'role',
       width: 100,
       render: (value: UserRole) => (
         <SoftTag tone={value === 'admin' ? 'primary' : 'neutral'}>
-          {USER_ROLE_LABELS[value] ?? value}
+          {resolveEnumLabel(`userRole.${value}`, undefined, value)}
         </SoftTag>
       ),
     },
     {
-      title: '状态',
+      title: t('assignments:columns.status'),
       dataIndex: 'is_active',
       width: 90,
       render: (value: boolean) => (
-        <SoftTag tone={value ? 'success' : 'neutral'}>{value ? '启用' : '停用'}</SoftTag>
+        <SoftTag tone={value ? 'success' : 'neutral'}>
+          {value ? t('assignments:status.active') : t('assignments:status.inactive')}
+        </SoftTag>
       ),
     },
     {
-      title: '已分配账号数',
+      title: t('assignments:columns.assignedCount'),
       dataIndex: 'account_count',
       width: 130,
       align: 'right',
@@ -167,20 +171,20 @@ export default function Assignments() {
           <span className="tg-num">{formatNumber(value)}</span>
           {record.role === 'admin' ? (
             <Typography.Text type="secondary" style={{ fontSize: 'var(--tg-font-size-sm)' }}>
-              管理员看全部
+              {t('assignments:table.adminSeesAll')}
             </Typography.Text>
           ) : null}
         </Space>
       ),
     },
     {
-      title: '最后登录',
+      title: t('assignments:columns.lastLogin'),
       dataIndex: 'last_login_at',
       width: 150,
       render: (value: string | null) => <RelativeTime value={value} />,
     },
     {
-      title: '操作',
+      title: t('assignments:columns.actions'),
       key: 'actions',
       width: 340,
       fixed: 'right',
@@ -188,18 +192,18 @@ export default function Assignments() {
         const isSelf = record.id === currentUser?.id;
         return (
           <Space size="small" wrap>
-            <Tooltip title={record.role === 'admin' ? '管理员可见全部账号，无需分配' : undefined}>
+            <Tooltip title={record.role === 'admin' ? t('assignments:actions.adminNoAssignHint') : undefined}>
               <Button
                 size="small"
                 icon={<TeamOutlined />}
                 disabled={record.role === 'admin'}
                 onClick={() => setAssignUser(record)}
               >
-                分配账号
+                {t('assignments:actions.assignAccounts')}
               </Button>
             </Tooltip>
             <Button size="small" icon={<KeyOutlined />} onClick={() => setPwdUser(record)}>
-              改口令
+              {t('assignments:actions.changePassword')}
             </Button>
             <Button
               size="small"
@@ -207,9 +211,9 @@ export default function Assignments() {
               disabled={isSelf}
               onClick={() => void handleToggleActive(record)}
             >
-              {record.is_active ? '停用' : '启用'}
+              {record.is_active ? t('assignments:actions.disable') : t('assignments:actions.enable')}
             </Button>
-            <Tooltip title={isSelf ? '不能删除自己' : undefined}>
+            <Tooltip title={isSelf ? t('assignments:actions.cannotDeleteSelf') : undefined}>
               <Button
                 size="small"
                 danger
@@ -217,7 +221,7 @@ export default function Assignments() {
                 disabled={isSelf}
                 onClick={() => setDeleteTarget(record)}
               >
-                删除
+                {t('assignments:actions.delete')}
               </Button>
             </Tooltip>
           </Space>
@@ -228,7 +232,7 @@ export default function Assignments() {
 
   const matrixColumns: ColumnsType<(typeof matrixRows)[number]> = [
     {
-      title: '员工',
+      title: t('assignments:matrix.staff'),
       dataIndex: 'username',
       width: 200,
       render: (value: string, record) => (
@@ -241,14 +245,14 @@ export default function Assignments() {
       ),
     },
     {
-      title: '账号数',
+      title: t('assignments:matrix.accountCount'),
       dataIndex: 'account_count',
       width: 90,
       align: 'right',
       render: (value: number) => <span className="tg-num">{formatNumber(value)}</span>,
     },
     {
-      title: '名下账号',
+      title: t('assignments:matrix.accounts'),
       key: 'labels',
       render: (_: unknown, record) =>
         record.labels.length ? (
@@ -260,15 +264,15 @@ export default function Assignments() {
             ))}
           </Space>
         ) : (
-          <Typography.Text type="secondary">还没有分配账号</Typography.Text>
+          <Typography.Text type="secondary">{t('assignments:matrix.noAccounts')}</Typography.Text>
         ),
     },
   ];
 
   return (
     <PageContainer
-      title="员工分配"
-      description="分组是标签，分配才是权限：操作员只能看到并操作自己被分配到的账号；管理员可见全部。"
+      title={t('assignments:page.title')}
+      description={t('assignments:page.description')}
       actions={
         <Space>
           <Button
@@ -280,19 +284,19 @@ export default function Assignments() {
               void accounts.reload();
             }}
           >
-            刷新
+            {t('common:refresh')}
           </Button>
           <Button type="primary" icon={<PlusOutlined />} onClick={() => setCreateOpen(true)}>
-            新建员工
+            {t('assignments:actions.createStaff')}
           </Button>
         </Space>
       }
     >
       <StatGrid>
-        <StatCard title="员工总数" value={userList.length} tone="neutral" />
-        <StatCard title="操作员" value={operatorCount} tone="primary" />
-        <StatCard title="已分配账号" value={assignedAccountCount} tone="success" />
-        <StatCard title="未分配账号" value={unassignedCount} tone="warning" />
+        <StatCard title={t('assignments:stats.totalStaff')} value={userList.length} tone="neutral" />
+        <StatCard title={t('assignments:stats.operators')} value={operatorCount} tone="primary" />
+        <StatCard title={t('assignments:stats.assignedAccounts')} value={assignedAccountCount} tone="success" />
+        <StatCard title={t('assignments:stats.unassignedAccounts')} value={unassignedCount} tone="warning" />
       </StatGrid>
 
       <DataTable<UserOut>
@@ -306,19 +310,19 @@ export default function Assignments() {
         scrollX={1100}
         empty={{
           art: 'accounts',
-          title: '还没有员工账号',
-          description: '新建员工并分配账号后，对方就可以用自己的账号登录控制台值班了。',
+          title: t('assignments:empty.usersTitle'),
+          description: t('assignments:empty.usersDesc'),
           action: (
             <Button type="primary" icon={<PlusOutlined />} onClick={() => setCreateOpen(true)}>
-              新建员工
+              {t('assignments:actions.createStaff')}
             </Button>
           ),
         }}
       />
 
       <SectionCard
-        title="分配矩阵"
-        subtitle="每个员工名下的账号一览；在员工行点「分配账号」可批量调整，账号选择器里也能按归属人反查。"
+        title={t('assignments:matrix.title')}
+        subtitle={t('assignments:matrix.subtitle')}
         bodyPadding="none"
       >
         <DataTable<(typeof matrixRows)[number]>
@@ -332,8 +336,8 @@ export default function Assignments() {
           scrollX={760}
           empty={{
             art: 'list',
-            title: '还没有分配记录',
-            description: '在员工列表里点「分配账号」，把账号批量交给操作员。',
+            title: t('assignments:empty.matrixTitle'),
+            description: t('assignments:empty.matrixDesc'),
           }}
         />
       </SectionCard>
@@ -366,9 +370,9 @@ export default function Assignments() {
         open={Boolean(deleteTarget)}
         danger
         loading={deleting}
-        title={`删除员工「${deleteTarget?.username ?? ''}」？`}
-        content="删除后该员工无法再登录控制台；他名下的账号会变成未分配，不影响账号本身。"
-        okText="删除"
+        title={t('assignments:deleteConfirm.title', { username: deleteTarget?.username ?? '' })}
+        content={t('assignments:deleteConfirm.content')}
+        okText={t('assignments:actions.delete')}
         onOk={handleDelete}
         onCancel={() => setDeleteTarget(null)}
       />

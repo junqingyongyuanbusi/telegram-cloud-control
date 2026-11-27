@@ -1,0 +1,167 @@
+{
+  "title": "群情报",
+  "description": "用关键词找群或精准找群，找到的群统一沉淀为群档案。",
+  "actions": {
+    "keywordSearch": "按关键词找群",
+    "preciseSearch": "精准找群",
+    "syncToJoin": "同步到加群",
+    "syncToJoinTooltip": "按当前关键词筛出可发言群，把邀请链接 / @用户名 带到「加群」页"
+  },
+  "profiles": {
+    "cardTitle": "群档案",
+    "searchPlaceholder": "按群名 / 用户名搜索",
+    "searchButton": "搜索",
+    "filterAll": "全部群",
+    "filterSpeakable": "只看能发言的",
+    "totalGroups": "共 {{count}} 个群",
+    "emptyText": "还没有群档案：用右上角「按关键词找群」或「精准找群」开始搜索",
+    "syncEmptyWarning": "没有可同步的群：这些群既没采到邀请链接，也没有公开用户名",
+    "unnamedGroup": "未命名群",
+    "unsynced": "未同步",
+    "columns": {
+      "group": "群",
+      "kind": "类型",
+      "speak": "发言",
+      "memberCount": "成员数",
+      "memberSampled": "已采成员",
+      "collectedAt": "采集时间",
+      "source": "来源"
+    },
+    "sources": {
+      "join_event": "入群事件",
+      "profile_sync": "资料同步"
+    }
+  },
+  "kind": {
+    "group": "普通群",
+    "megagroup": "超级群",
+    "channel": "频道",
+    "chat": "群聊"
+  },
+  "sendPermission": {
+    "open": "可发言",
+    "restricted": "禁言",
+    "unknown": "未校验"
+  },
+  "activity": {
+    "unconfirmed": "未确认",
+    "hasMessages": "有 {{count}} 条",
+    "noMessages": "无消息"
+  },
+  "discoverySource": {
+    "contacts_search": "原生搜索",
+    "global_message_search": "消息反查",
+    "short_query": "短词召回",
+    "linked_chat": "频道讨论群",
+    "channel_recommendation": "相似推荐",
+    "channel_message_link": "频道外链",
+    "joined_group_graph": "已入群图谱",
+    "candidate_link": "人工候选链接",
+    "tme_preview": "t.me公开页",
+    "external_web": "外部网页/目录",
+    "channel_posts": "频道帖子搜索",
+    "common_chat_graph": "共同群扩展",
+    "local_index": "本地历史群库",
+    "contacts": "原生搜索",
+    "short_core": "短词兜底",
+    "message_search": "消息反查",
+    "joined_dialog": "已入群",
+    "joined_link": "已入群内链",
+    "recommendation": "相似推荐",
+    "channel_link": "频道外链",
+    "web_candidate": "外部候选"
+  },
+  "findModal": {
+    "title": "按关键词找公开群",
+    "okText": "开始搜索",
+    "keywordRequired": "至少填一个关键词",
+    "alertTitle": "用 Telegram 原生搜索找群，不依赖第三方目录站",
+    "alertDescription": "输入关键词，系统直接调 Telegram 的公开搜索（可选按地区/语言扩展成多组查询），连成员数一起返回；找到的群会落进下面的群档案，之后可以接着用「筛群」判断值不值得投。全程只读：不加群、不发言。",
+    "keywordsLabel": "关键词（逗号或换行分隔，最多 20 个）",
+    "keywordsPlaceholder": "USDT\n开卡\ncrypto 中文",
+    "regionExpandLabel": "地区扩展（可选；不选则只搜原始关键词）",
+    "regionPlaceholder": "选择地区，例如马来西亚",
+    "languagePlaceholder": "群组后缀语言（默认按地区）",
+    "regions": {
+      "MY": "马来西亚 MY",
+      "SG": "新加坡 SG",
+      "ID": "印度尼西亚 ID",
+      "TH": "泰国 TH"
+    },
+    "languages": {
+      "ms": "马来语 ms",
+      "en": "英语 en",
+      "zh": "中文 zh",
+      "id": "印尼语 id",
+      "th": "泰语 th"
+    },
+    "expandLinked": "顺着公开频道的讨论群继续找（linked_chat，只读）",
+    "expandMessages": "读频道最近消息里的 t.me / @username，继续反查（图扩散 depth=1）",
+    "expandRecommendations": "取 Telegram 的相似频道推荐",
+    "enrichTme": "访问 t.me 公开页，补简介和成员数（不登录）",
+    "expandHint": "选了地区后，会把「主题词 × 地区 / 城市 / 本地语 / 中文 / 群组后缀」展开成多组查询（最多 120 条），比单词搜索覆盖更全；频道也会作为种子落档。本轮的查询产出会记进绩效表，跑满 5 次且连续 3 次 0 产出的扩展词会自动停用。",
+    "perKeywordPrefix": "每个词取",
+    "perKeywordSuffix": "个",
+    "minMembersLabel": "成员数 ≥",
+    "kindOptions": {
+      "group": "只要群",
+      "channel": "只要频道",
+      "any": "群和频道"
+    }
+  },
+  "preciseModal": {
+    "title": "精准找群",
+    "okStart": "开始检索",
+    "okRestart": "重新检索",
+    "keywordRequired": "至少填一个关键词",
+    "keywordsLabel": "关键词（逗号或换行分隔，最多 20 个）",
+    "keywordsPlaceholder": "Forex Thailand\nกลุ่มเทรด Forex\nCrypto MY",
+    "status": {
+      "batchFound": "检索到 {{count}} 个讨论组（已完成 {{completed}}/{{total}} 个账号任务）",
+      "batchRunning": "多号检索进行中（已完成 {{completed}}/{{total}}，运行中 {{active}}）；每 3 秒自动刷新",
+      "taskFound": "已产出 {{count}} 条匹配",
+      "taskQueued": "检索任务已排队，正在搜索/校验；结果每 3 秒刷新。",
+      "batchDesc": "批次 {{batchId}}{{failedPart}}；近 3 个月有消息且可发言的群写入群档案，其余只在这里显示；未核验公开链接见下方「待核验候选」。",
+      "failedTasksPart": "（{{count}} 个子任务失败）",
+      "taskDesc": "任务 {{taskId}}；近 3 个月有消息且可发言的群写入群档案。"
+    },
+    "aiNotesTitle": "渠道/预算/AI 降级提示",
+    "stats": {
+      "contactsSearch": "原生搜索 {{count}}",
+      "messageSearch": "消息反查 {{count}}",
+      "channelLinked": "频道关联 {{count}}",
+      "postSeeds": "帖子种子 {{count}}",
+      "externalLinks": "外部链接 {{count}}",
+      "relationGraph": "关系图谱 {{count}}",
+      "accepted": "核验保留 {{count}}",
+      "needsReview": "待确认 {{count}}",
+      "filtered": "被过滤 {{count}}",
+      "rpcUsed": "RPC消耗 {{count}}",
+      "limitStopped": "限流/预算停机 {{count}}"
+    },
+    "tabs": {
+      "verified": "检索结果 ({{count}})",
+      "pending": "待核验候选 ({{count}})"
+    },
+    "verifiedColumns": {
+      "group": "群组",
+      "members": "成员",
+      "activity90d": "近3个月会话",
+      "speakable": "能否发言",
+      "archived": "入库"
+    },
+    "matchStatus": {
+      "accepted": "已入库",
+      "needs_review": "未确认",
+      "rejected": "未达标"
+    },
+    "pendingColumns": {
+      "url": "公开候选链接",
+      "source": "发现来源",
+      "status": "状态",
+      "queryAdapter": "查询 / 适配器",
+      "reason": "未核验原因"
+    },
+    "unverifiedDefaultStatus": "外部发现，尚未验证"
+  }
+}

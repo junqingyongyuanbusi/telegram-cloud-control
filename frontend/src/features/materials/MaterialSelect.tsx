@@ -7,8 +7,10 @@
  */
 import { Select } from 'antd';
 import type { SelectProps } from 'antd';
+import { useTranslation } from 'react-i18next';
 import { materialApi } from '../../api/endpoints';
 import { useAsyncData } from '../../hooks/useAsyncData';
+import { isEnglish } from '../../i18n';
 import type { MaterialKind } from '../../api/types';
 
 export interface MaterialSelectProps extends Omit<SelectProps, 'options' | 'loading' | 'mode' | 'value' | 'onChange'> {
@@ -20,12 +22,13 @@ export interface MaterialSelectProps extends Omit<SelectProps, 'options' | 'load
 
 export default function MaterialSelect({
   kinds,
-  placeholder = '选择素材',
+  placeholder,
   allowClear = true,
   value,
   onChange,
   ...rest
 }: MaterialSelectProps) {
+  const { t, i18n } = useTranslation('campaigns');
   const singleKind = kinds?.length === 1 ? kinds[0] : undefined;
   const materials = useAsyncData(
     () => materialApi.list({ kind: singleKind, page: 1, page_size: 200 }),
@@ -34,10 +37,16 @@ export default function MaterialSelect({
 
   const items = materials.data?.items ?? [];
   const visible = singleKind || !kinds?.length ? items : items.filter((item) => kinds.includes(item.kind));
-  const options = visible.map((item) => ({
-    value: item.id,
-    label: `${item.name}（${item.kind_label}）`,
-  }));
+  const en = isEnglish(i18n.language);
+  const options = visible.map((item) => {
+    const kindLabel = en
+      ? t(`materialKind.${item.kind}`, { defaultValue: item.kind_label || item.kind })
+      : item.kind_label || t(`materialKind.${item.kind}`, { defaultValue: item.kind });
+    return {
+      value: item.id,
+      label: t('materialSelect.optionLabel', { name: item.name, kind: kindLabel }),
+    };
+  });
 
   return (
     <Select
@@ -45,12 +54,12 @@ export default function MaterialSelect({
       optionFilterProp="label"
       {...rest}
       allowClear={allowClear}
-      placeholder={placeholder}
+      placeholder={placeholder ?? t('materialSelect.placeholder')}
       loading={materials.loading}
       options={options}
       value={value ?? undefined}
       onChange={(next) => onChange?.(next ?? undefined)}
-      notFoundContent={materials.loading ? undefined : '素材库暂无可用素材'}
+      notFoundContent={materials.loading ? undefined : t('materialSelect.empty')}
     />
   );
 }

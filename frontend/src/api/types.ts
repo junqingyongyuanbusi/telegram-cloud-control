@@ -374,6 +374,8 @@ export interface MessageOut {
   sender_name: string;
   has_media: boolean;
   media_type?: string | null;
+  /** 消息直链（批量运营发出的消息才有） */
+  link?: string;
   created_by?: UUID | null;
   created_at?: ISODateTime | null;
 }
@@ -1133,6 +1135,17 @@ export interface MaterialListResponse {
   page_size: number;
 }
 
+export interface CampaignBatchResultItem {
+  target?: string;
+  joined?: boolean;
+  already?: boolean;
+  sent?: boolean;
+  link?: string;
+  error?: string;
+  pending_approval?: boolean;
+  verified?: boolean | 'pending';
+}
+
 export interface CampaignBatchItem {
   account_id?: UUID | null;
   account_label: string;
@@ -1154,6 +1167,8 @@ export interface CampaignBatchItem {
   wave_total?: number;
   chunk_index?: number;
   chunk_total?: number;
+  /** 逐群结果：target / joined / sent / link / error */
+  results?: CampaignBatchResultItem[];
   started_at?: ISODateTime | null;
   completed_at?: ISODateTime | null;
 }

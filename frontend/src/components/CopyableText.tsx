@@ -17,6 +17,7 @@
 import { useState, type CSSProperties, type ReactNode } from 'react';
 import { Tooltip } from 'antd';
 import { CheckOutlined, CopyOutlined } from '@ant-design/icons';
+import { useTranslation } from 'react-i18next';
 import { copyText } from '../utils/download';
 import { toast } from '../utils/feedback';
 import { truncateMiddle } from '../utils/format';
@@ -45,8 +46,9 @@ export function CopyableText({
   onCopied,
   className,
   style,
-  errorText = '复制失败，请手动选中复制',
+  errorText,
 }: CopyableTextProps) {
+  const { t } = useTranslation('common');
   const [copied, setCopied] = useState(false);
   const text = value === null || value === undefined ? '' : String(value);
 
@@ -67,9 +69,9 @@ export function CopyableText({
       setCopied(true);
       window.setTimeout(() => setCopied(false), 1500);
       onCopied?.();
-      toast.success('已复制');
+      toast.success(t('copied'));
     } else {
-      toast.error(errorText);
+      toast.error(errorText ?? t('copyFailed'));
     }
   };
 
@@ -82,7 +84,7 @@ export function CopyableText({
         type="button"
         className={['tg-copyable-button', copied ? 'is-copied' : ''].filter(Boolean).join(' ')}
         onClick={handleCopy}
-        aria-label="复制"
+        aria-label={t('copy')}
       >
         {copied ? <CheckOutlined /> : <CopyOutlined />}
       </button>

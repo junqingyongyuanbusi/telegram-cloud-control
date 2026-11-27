@@ -15,8 +15,10 @@ import {
   ThunderboltOutlined,
   UserSwitchOutlined,
 } from '@ant-design/icons';
+import { useTranslation } from 'react-i18next';
 import { accountApi } from '../../api/endpoints';
 import { useAsyncData } from '../../hooks/useAsyncData';
+import { resolveEnumLabel } from '../../i18n';
 import { formatAccountAge, formatTime, previewText } from '../../utils/format';
 import {
   CurrentTaskTag,
@@ -96,6 +98,7 @@ function StatCell({ label, value, tone }: { label: string; value: number; tone: 
 }
 
 export default function AccountDetailDrawer({ accountId, handlers, onClose }: Props) {
+  const { t } = useTranslation(['accounts', 'common', 'enums']);
   const { data, loading, error, reload } = useAsyncData(
     () => (accountId ? accountApi.overview(accountId) : Promise.resolve(null)),
     [accountId],
@@ -115,7 +118,7 @@ export default function AccountDetailDrawer({ accountId, handlers, onClose }: Pr
       open={Boolean(accountId)}
       onClose={onClose}
       width={680}
-      title={account?.phone_masked ?? '账号详情'}
+      title={account?.phone_masked ?? t('accounts:detail.titleFallback')}
       subtitle={
         account ? (
           <span className="tg-flex" style={{ gap: 'var(--tg-space-md)', alignItems: 'center' }}>
@@ -131,10 +134,10 @@ export default function AccountDetailDrawer({ accountId, handlers, onClose }: Pr
         account
           ? [
               {
-                title: '基本信息',
+                title: t('accounts:detail.sections.basic'),
                 items: [
                   {
-                    label: '手机号',
+                    label: t('accounts:detail.fields.phone'),
                     // 不脱敏：直接给完整号码；没有手机号的号（tdata / 会话导入）说明原因，
                     // 而不是丢一个导入标签（如 tdata#0）让人以为号码坏了
                     value:
@@ -142,42 +145,45 @@ export default function AccountDetailDrawer({ accountId, handlers, onClose }: Pr
                       (account.phone_masked && /^\+?\d/.test(account.phone_masked)
                         ? account.phone_masked
                         : account.tg_user_id
-                          ? `（导入未含手机号）Telegram ID ${account.tg_user_id}`
+                          ? t('accounts:detail.fields.importedWithoutPhone', { id: account.tg_user_id })
                           : account.phone_masked || '—'),
                     mono: true,
                   },
-                  { label: '用户名', value: account.username || '—' },
-                  { label: '用户 ID', value: account.tg_user_id ? String(account.tg_user_id) : '—', mono: true },
-                  { label: '资料名称', value: account.display_name || '—' },
-                  { label: '号龄', value: formatAccountAge(account.age_days) },
-                  { label: '群数量', value: account.group_count },
-                  { label: '分组', value: account.group_name || '未分组' },
-                  { label: '代理', value: account.proxy_endpoint || '直连', mono: true },
-                  { label: '备注', value: account.remark || '—', span: 'full' },
-                  { label: '建档时间', value: formatTime(account.created_at), span: 'full' },
+                  { label: t('accounts:detail.fields.username'), value: account.username || '—' },
+                  { label: t('accounts:detail.fields.userId'), value: account.tg_user_id ? String(account.tg_user_id) : '—', mono: true },
+                  { label: t('accounts:detail.fields.displayName'), value: account.display_name || '—' },
+                  { label: t('accounts:detail.fields.age'), value: formatAccountAge(account.age_days) },
+                  { label: t('accounts:detail.fields.groupCount'), value: account.group_count },
+                  { label: t('accounts:detail.fields.group'), value: account.group_name || t('accounts:columns.ungrouped') },
+                  { label: t('accounts:detail.fields.proxy'), value: account.proxy_endpoint || t('accounts:columns.direct'), mono: true },
+                  { label: t('accounts:detail.fields.remark'), value: account.remark || '—', span: 'full' },
+                  { label: t('accounts:detail.fields.createdAt'), value: formatTime(account.created_at), span: 'full' },
                 ],
               },
               {
-                title: '状态与租约',
+                title: t('accounts:detail.sections.statusLease'),
                 items: [
                   {
-                    label: '当前任务',
+                    label: t('accounts:detail.fields.currentTask'),
                     value: <CurrentTaskTag task={account.current_task} label={account.current_task_label} size="sm" />,
                   },
-                  { label: '最后心跳', value: <RelativeTime value={account.last_heartbeat} /> },
+                  { label: t('accounts:detail.fields.lastHeartbeat'), value: <RelativeTime value={account.last_heartbeat} /> },
                   {
-                    label: '租约 Worker',
+                    label: t('accounts:detail.fields.leaseWorker'),
                     value: overview?.lease?.worker_id ?? '—',
                     mono: true,
                   },
                   {
-                    label: '租约到期',
+                    label: t('accounts:detail.fields.leaseUntil'),
                     value: overview?.lease?.lease_until ? <RelativeTime value={overview.lease.lease_until} /> : '—',
                   },
-                  { label: '租约状态', value: overview?.lease?.active ? '持有中' : '未持有' },
-                  { label: '最近检测', value: formatTime(account.last_checked_at) },
                   {
-                    label: '最近错误',
+                    label: t('accounts:detail.fields.leaseStatus'),
+                    value: overview?.lease?.active ? t('accounts:detail.fields.leaseActive') : t('accounts:detail.fields.leaseInactive'),
+                  },
+                  { label: t('accounts:detail.fields.lastCheckedAt'), value: formatTime(account.last_checked_at) },
+                  {
+                    label: t('accounts:detail.fields.lastError'),
                     span: 'full',
                     value: account.last_error ? (
                       <Tooltip title={account.last_error} placement="topLeft">
@@ -196,19 +202,19 @@ export default function AccountDetailDrawer({ accountId, handlers, onClose }: Pr
         account ? (
           <Space wrap>
             <Button size="small" icon={<SafetyCertificateOutlined />} onClick={() => void run(handlers.onCheck)}>
-              检测
+              {t('accounts:actions.check')}
             </Button>
             <Button size="small" icon={<CloudSyncOutlined />} onClick={() => void run(handlers.onSync)}>
-              同步会话
+              {t('accounts:actions.syncDialogs')}
             </Button>
             <Button size="small" icon={<EditOutlined />} onClick={() => handlers.onEdit(account)}>
-              改分组 / 代理
+              {t('accounts:actions.editGroupProxy')}
             </Button>
             <Button size="small" icon={<UserSwitchOutlined />} onClick={() => handlers.onProfile(account)}>
-              改资料
+              {t('accounts:actions.editProfile')}
             </Button>
             <Button size="small" icon={<ThunderboltOutlined />} onClick={() => void run(handlers.onReleaseLease)}>
-              清除租约
+              {t('accounts:actions.releaseLease')}
             </Button>
             <Button
               size="small"
@@ -216,10 +222,10 @@ export default function AccountDetailDrawer({ accountId, handlers, onClose }: Pr
               danger={account.status !== 'disabled'}
               onClick={() => void run(handlers.onToggleEnabled)}
             >
-              {account.status === 'disabled' ? '启用' : '停用'}
+              {account.status === 'disabled' ? t('accounts:actions.enable') : t('accounts:actions.disable')}
             </Button>
             <Button size="small" danger icon={<DeleteOutlined />} onClick={() => void run(handlers.onRemove)}>
-              删除
+              {t('accounts:actions.delete')}
             </Button>
           </Space>
         ) : null
@@ -227,7 +233,7 @@ export default function AccountDetailDrawer({ accountId, handlers, onClose }: Pr
     >
       {overview ? (
         <div className="tg-stack" style={{ gap: 'var(--tg-space-xl)' }}>
-          <CollapsibleSection title="统计" defaultOpen={true}>
+          <CollapsibleSection title={t('accounts:detail.sections.stats')} defaultOpen={true}>
             <div
               style={{
                 display: 'grid',
@@ -235,10 +241,10 @@ export default function AccountDetailDrawer({ accountId, handlers, onClose }: Pr
                 gap: 'var(--tg-space-md)',
               }}
             >
-              <StatCell label="会话总数" value={overview.dialog_stats.total} tone="primary" />
-              <StatCell label="群聊 / 私信" value={overview.dialog_stats.group} tone="info" />
-              <StatCell label="未读会话" value={overview.dialog_stats.unread} tone="warning" />
-              <StatCell label="失败任务" value={overview.task_stats.failed} tone="danger" />
+              <StatCell label={t('accounts:detail.stats.totalDialogs')} value={overview.dialog_stats.total} tone="primary" />
+              <StatCell label={t('accounts:detail.stats.groupDialogs')} value={overview.dialog_stats.group} tone="info" />
+              <StatCell label={t('accounts:detail.stats.unreadDialogs')} value={overview.dialog_stats.unread} tone="warning" />
+              <StatCell label={t('accounts:detail.stats.failedTasks')} value={overview.task_stats.failed} tone="danger" />
             </div>
             <div
               className="tg-muted"
@@ -250,12 +256,23 @@ export default function AccountDetailDrawer({ accountId, handlers, onClose }: Pr
                 gap: 'var(--tg-space-lg)',
               }}
             >
-              <span>任务：待执行 {overview.task_stats.pending} · 执行中 {overview.task_stats.running} · 已完成 {overview.task_stats.completed}</span>
-              <span>等待确认 {overview.task_stats.pending_confirmation} · 已取消 {overview.task_stats.cancelled}</span>
+              <span>
+                {t('accounts:detail.stats.taskSummaryPrimary', {
+                  pending: overview.task_stats.pending,
+                  running: overview.task_stats.running,
+                  completed: overview.task_stats.completed,
+                })}
+              </span>
+              <span>
+                {t('accounts:detail.stats.taskSummarySecondary', {
+                  pendingConfirmation: overview.task_stats.pending_confirmation,
+                  cancelled: overview.task_stats.cancelled,
+                })}
+              </span>
             </div>
           </CollapsibleSection>
 
-          <CollapsibleSection title="最近会话" defaultOpen={true}>
+          <CollapsibleSection title={t('accounts:detail.sections.recentDialogs')} defaultOpen={true}>
             {overview.recent_dialogs.length ? (
               <div className="tg-stack" style={{ gap: 'var(--tg-space-sm)' }}>
                 {overview.recent_dialogs.map((dialog) => (
@@ -273,52 +290,56 @@ export default function AccountDetailDrawer({ accountId, handlers, onClose }: Pr
                   >
                     <span className="tg-ellipsis">{dialog.title || dialog.peer_display}</span>
                     <span className="tg-muted tg-nowrap" style={{ fontSize: 'var(--tg-font-size-xs)' }}>
-                      {dialog.kind_label} · 未读 {dialog.unread_count}
+                      {resolveEnumLabel(`dialogKind.${dialog.kind}`, dialog.kind_label, dialog.kind)} ·{' '}
+                      {t('accounts:detail.unreadCount', { count: dialog.unread_count })}
                     </span>
                   </div>
                 ))}
               </div>
             ) : (
-              <div className="tg-muted">还没有同步到会话。</div>
+              <div className="tg-muted">{t('accounts:detail.emptyDialogs')}</div>
             )}
           </CollapsibleSection>
 
-          <CollapsibleSection title="最近消息" defaultOpen={true}>
+          <CollapsibleSection title={t('accounts:detail.sections.recentMessages')} defaultOpen={true}>
             {overview.recent_messages.length ? (
               <div className="tg-stack" style={{ gap: 'var(--tg-space-sm)' }}>
-                {overview.recent_messages.map((message) => (
-                  <div
-                    key={message.id}
-                    style={{
-                      background: 'var(--tg-color-bg-sunken)',
-                      border: '1px solid var(--tg-color-border-subtle)',
-                      borderRadius: 'var(--tg-radius-md)',
-                      padding: 'var(--tg-space-md) var(--tg-space-lg)',
-                      display: 'flex',
-                      flexDirection: 'column',
-                      gap: 'var(--tg-space-xxs)',
-                    }}
-                  >
-                    <span className="tg-flex-between" style={{ gap: 'var(--tg-space-md)' }}>
-                      <span className="tg-muted" style={{ fontSize: 'var(--tg-font-size-xs)' }}>
-                        {message.direction_label} · {message.sender_name}
+                {overview.recent_messages.map((message) => {
+                  const dirKey = message.direction === 'incoming' ? 'in' : message.direction === 'outgoing' ? 'out' : message.direction;
+                  return (
+                    <div
+                      key={message.id}
+                      style={{
+                        background: 'var(--tg-color-bg-sunken)',
+                        border: '1px solid var(--tg-color-border-subtle)',
+                        borderRadius: 'var(--tg-radius-md)',
+                        padding: 'var(--tg-space-md) var(--tg-space-lg)',
+                        display: 'flex',
+                        flexDirection: 'column',
+                        gap: 'var(--tg-space-xxs)',
+                      }}
+                    >
+                      <span className="tg-flex-between" style={{ gap: 'var(--tg-space-md)' }}>
+                        <span className="tg-muted" style={{ fontSize: 'var(--tg-font-size-xs)' }}>
+                          {resolveEnumLabel(`messageDirection.${dirKey}`, message.direction_label, message.direction)} · {message.sender_name}
+                        </span>
+                        <span style={{ fontSize: 'var(--tg-font-size-xs)' }}>
+                          <MessageStatusTag status={message.status} label={message.status_label} size="sm" />
+                        </span>
                       </span>
-                      <span style={{ fontSize: 'var(--tg-font-size-xs)' }}>
-                        <MessageStatusTag status={message.status} label={message.status_label} size="sm" />
+                      <span className="tg-clamp-2" style={{ fontSize: 'var(--tg-font-size-sm)' }}>
+                        {previewText(message.body, 120)}
                       </span>
-                    </span>
-                    <span className="tg-clamp-2" style={{ fontSize: 'var(--tg-font-size-sm)' }}>
-                      {previewText(message.body, 120)}
-                    </span>
-                  </div>
-                ))}
+                    </div>
+                  );
+                })}
               </div>
             ) : (
-              <div className="tg-muted">最近没有消息。</div>
+              <div className="tg-muted">{t('accounts:detail.emptyMessages')}</div>
             )}
           </CollapsibleSection>
 
-          <CollapsibleSection title="最近任务" defaultOpen={true}>
+          <CollapsibleSection title={t('accounts:detail.sections.recentTasks')} defaultOpen={true}>
             {overview.recent_tasks.length ? (
               <div className="tg-stack" style={{ gap: 'var(--tg-space-sm)' }}>
                 {overview.recent_tasks.map((task) => (
@@ -344,11 +365,11 @@ export default function AccountDetailDrawer({ accountId, handlers, onClose }: Pr
                 ))}
               </div>
             ) : (
-              <div className="tg-muted">最近没有任务。</div>
+              <div className="tg-muted">{t('accounts:detail.emptyTasks')}</div>
             )}
           </CollapsibleSection>
 
-          <CollapsibleSection title="最近审计" defaultOpen={false}>
+          <CollapsibleSection title={t('accounts:detail.sections.recentAudit')} defaultOpen={false}>
             {overview.recent_audit.length ? (
               <div className="tg-stack" style={{ gap: 'var(--tg-space-sm)' }}>
                 {overview.recent_audit.map((entry) => (
@@ -365,7 +386,7 @@ export default function AccountDetailDrawer({ accountId, handlers, onClose }: Pr
                     }}
                   >
                     <span className="tg-ellipsis" style={{ fontSize: 'var(--tg-font-size-sm)' }}>
-                      {entry.action_label} · {entry.user_name ?? '—'}
+                      {resolveEnumLabel(`auditAction.${entry.action}`, entry.action_label, entry.action)} · {entry.user_name ?? '—'}
                     </span>
                     <span className="tg-muted tg-nowrap" style={{ fontSize: 'var(--tg-font-size-xs)' }}>
                       <RelativeTime value={entry.created_at} />
@@ -374,7 +395,7 @@ export default function AccountDetailDrawer({ accountId, handlers, onClose }: Pr
                 ))}
               </div>
             ) : (
-              <div className="tg-muted">最近没有操作记录。</div>
+              <div className="tg-muted">{t('accounts:detail.emptyAudit')}</div>
             )}
           </CollapsibleSection>
         </div>

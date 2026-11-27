@@ -104,6 +104,62 @@ def _split_round_robin(targets: list[str], index: int, count: int) -> list[str]:
     return [target for position, target in enumerate(targets) if position % step == index]
 
 
+def _plan_join_send_tasks(
+    accounts: List[TgAccount],
+    targets: List[str],
+    *,
+    groups_per_account: int,
+    accounts_per_wave: int,
+    dispatch: str,
+) -> List[dict]:
+    """把群链接切成任务，并决定每个任务交给哪个号、属于第几轮。
+
+    - `round_robin`（默认）：一个群只交给一个号。没填 `groups_per_account` 时按账号数
+      均分（1000 群 / 100 号 = 每号 10 个），所以「只填账号不填每号群数」也会轮训；
+    - `each`：每个号都把全部群跑一遍（复制发送），群块仍按 `groups_per_account` 切。
+
+    旧实现在 `groups_per_account=0` 时只切出一个群块，于是整批只派给 `accounts[0]`
+    ——这就是「选了很多号却只有一个号在发」的原因。
+    """
+    if not accounts or not targets:
+        return []
+    if dispatch == "each":
+        per_task = groups_per_account or len(targets)
+        chunks = [targets[i : i + per_task] for i in range(0, len(targets), per_task)]
+        wave_size = max(1, accounts_per_wave or len(accounts))
+        wave_total = max(1, math.ceil(len(chunks) / wave_size))
+        plan: List[dict] = []
+        for chunk_index, chunk in enumerate(chunks):
+            for account_index in range(len(accounts)):
+                plan.append(
+                    {
+                        "account_index": account_index,
+                        "targets": chunk,
+                        "chunk_index": chunk_index,
+                        "chunk_total": len(chunks),
+                        "wave_index": chunk_index // wave_size,
+                        "wave_total": wave_total,
+                    }
+                )
+        return plan
+
+    per_task = groups_per_account or max(1, math.ceil(len(targets) / len(accounts)))
+    chunks = [targets[i : i + per_task] for i in range(0, len(targets), per_task)]
+    wave_size = max(1, accounts_per_wave or len(accounts))
+    wave_total = max(1, math.ceil(len(chunks) / wave_size))
+    return [
+        {
+            "account_index": chunk_index % len(accounts),
+            "targets": chunk,
+            "chunk_index": chunk_index,
+            "chunk_total": len(chunks),
+            "wave_index": chunk_index // wave_size,
+            "wave_total": wave_total,
+        }
+        for chunk_index, chunk in enumerate(chunks)
+    ]
+
+
 async def _ensure_material(session: AsyncSession, material_id) -> None:
     """带素材的批量动作：入队前就把「素材不存在」拦掉，别等 Worker 跑起来才报错。"""
     if not material_id:
@@ -587,11 +643,15 @@ async def join_and_send(
             ),
         )
 
-    # 每号每轮处理多少个群：0 = 该号一次拿全部群（旧行为）
-    per_task = payload.groups_per_account or len(targets)
-    chunks = [targets[i : i + per_task] for i in range(0, len(targets), per_task)]
+    plan = _plan_join_send_tasks(
+        accounts,
+        targets,
+        groups_per_account=payload.groups_per_account,
+        accounts_per_wave=payload.accounts_per_wave,
+        dispatch=payload.dispatch,
+    )
+    wave_total = plan[0]["wave_total"] if plan else 0
     wave_size = max(1, payload.accounts_per_wave or len(accounts))
-    wave_total = max(1, math.ceil(len(chunks) / wave_size))
     batch_id = uuid.uuid4()
 
     params = {
@@ -610,7 +670,7 @@ async def join_and_send(
         "auto_verify": payload.auto_verify,
         "verify_timeout": payload.verify_timeout,
         "ignore_active_hours": payload.ignore_active_hours,
-        "dispatch": "each",
+        "dispatch": payload.dispatch,
     }
     items: List[BulkAccountResult] = [
         _item(account, message=f"今日额度不足（这次动作需要 {quota_cost} 点），额度明天自动恢复")
@@ -618,19 +678,19 @@ async def join_and_send(
     ]
     task_ids: List[uuid.UUID] = []
     stagger = max(0.0, float(settings.campaign_stagger_seconds))
-    for chunk_index, chunk in enumerate(chunks):
-        account = accounts[chunk_index % len(accounts)]
-        wave_index = chunk_index // wave_size
+    for plan_index, step in enumerate(plan):
+        account = accounts[step["account_index"]]
+        wave_index = step["wave_index"]
         task_payload = {
             **params,
-            "targets": chunk,
+            "targets": step["targets"],
             "batch_id": str(batch_id),
-            "account_index": chunk_index,
+            "account_index": step["account_index"],
             "account_count": len(accounts),
             "wave_index": wave_index,
             "wave_total": wave_total,
-            "chunk_index": chunk_index,
-            "chunk_total": len(chunks),
+            "chunk_index": step["chunk_index"],
+            "chunk_total": step["chunk_total"],
         }
         try:
             task = await enqueue_task(
@@ -641,11 +701,15 @@ async def join_and_send(
                 created_by=user.id,
                 priority=80,
                 # 同轮内错峰；轮与轮之间由 Worker 的「等待上一轮」闸门保证
-                run_after=_now() + timedelta(seconds=stagger * (chunk_index % wave_size)),
+                run_after=_now() + timedelta(seconds=stagger * (plan_index % wave_size)),
             )
             task_ids.append(task.id)
             items.append(
-                _item(account, message=f"已排队（第 {wave_index + 1}/{wave_total} 轮）", task_id=task.id)
+                _item(
+                    account,
+                    message=f"已排队（第 {wave_index + 1}/{wave_total} 轮 · {len(step['targets'])} 个群）",
+                    task_id=task.id,
+                )
             )
         except Exception as exc:  # noqa: BLE001 - 单个任务入队失败不影响整批
             logger.warning("加群群发入队失败 account_id=%s: %s", account.id, exc)
@@ -662,7 +726,8 @@ async def join_and_send(
             "scope": scope,
             "task_type": TaskType.join_and_send.value,
             "targets": len(targets),
-            "chunks": len(chunks),
+            "tasks": len(plan),
+            "dispatch": payload.dispatch,
             "wave_total": wave_total,
             "accounts": len(accounts),
             "truncated": truncated,
@@ -687,8 +752,10 @@ async def join_and_send(
         ok=failed == 0,
         action="campaign.join_and_send",
         message=(
-            f"批次 {batch_id}：{len(targets)} 个群切成 {len(chunks)} 个任务，"
-            f"分 {wave_total} 轮执行（每轮最多 {wave_size} 个号）"
+            f"批次 {batch_id}：{len(targets)} 个群切成 {len(plan)} 个任务，"
+            f"分 {wave_total} 轮执行（每轮最多 {wave_size} 个号，"
+            f"{'轮训：一个群只发一次' if payload.dispatch == 'round_robin' else '重复：每个号都发全部群'}）"
+            + ("，仅 1 个可用账号，未发生轮训" if len(accounts) == 1 and len(plan) > 1 else "")
             + (f"，{len(out_of_quota)} 个号今日额度不足、已跳过" if out_of_quota else "")
             + (f"，失败 {failed} 个" if failed else "")
         ),
@@ -906,6 +973,7 @@ def _enrich_batch_item(task: Task, account: Optional[TgAccount]) -> CampaignBatc
         joined=int(progress.get("joined") or 0),
         sent=int(progress.get("sent") or 0),
         total=int(progress.get("total") or 0),
+        results=list(progress.get("results") or []),
         wave_index=int(payload.get("wave_index") or 0),
         wave_total=int(payload.get("wave_total") or 0),
         chunk_index=int(payload.get("chunk_index") or 0),

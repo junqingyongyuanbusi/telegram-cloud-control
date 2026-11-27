@@ -1,0 +1,153 @@
+{
+  "page": {
+    "title": "任务中心",
+    "description": "所有异步任务的队列视图：待执行、等待确认、执行中、失败都可在这里看到；失败任务可直接重试，执行中的可取消。"
+  },
+  "summary": {
+    "overdue": "超时",
+    "overdueTooltip": "来自工作台口径：已超过预计执行时间、仍待执行的任务数",
+    "stuck": "卡死",
+    "stuckTooltip": "来自工作台口径：长时间无进展、疑似卡死的执行中任务数",
+    "retryAllFailed": "重试全部失败（{{count}}）"
+  },
+  "chips": {
+    "clearFilter": "点击取消该状态筛选",
+    "filterByStatus": "只看「{{label}}」"
+  },
+  "filters": {
+    "status": "状态",
+    "type": "类型",
+    "account": "账号",
+    "bot": "Bot",
+    "onlyFailed": "只看失败",
+    "enabled": "开启",
+    "autoRefresh": "自动刷新（10 秒）",
+    "accountWithRemark": "{{phone}}（{{remark}}）"
+  },
+  "columns": {
+    "type": "类型",
+    "batch": "批次",
+    "status": "状态",
+    "owner": "账号 / Bot",
+    "error": "失败原因",
+    "attempts": "重试次数",
+    "createdAt": "创建时间",
+    "startedAt": "开始时间",
+    "completedAt": "完成时间",
+    "worker": "Worker",
+    "actions": "操作"
+  },
+  "table": {
+    "selectPageAll": "选择本页全部任务",
+    "selectTask": "选择任务 {{id}}",
+    "batchTooltip": "批次 {{batch}} —— 点击只看这一批",
+    "batchTooltipWithCount": "批次 {{batch}}（共 {{count}} 个号） —— 点击只看这一批",
+    "accountIdTooltip": "账号 ID {{id}}",
+    "lastAttemptFailed": "上次尝试失败：{{error}}",
+    "lastFailedPrefix": "上次失败：{{error}}"
+  },
+  "actions": {
+    "logs": "日志",
+    "logsWithCount": "日志 {{count}}",
+    "logsTooltipCount": "打开日志抽屉（{{count}} 条，执行中会实时追加）",
+    "logsTooltipEmpty": "打开任务抽屉——开始执行后日志会实时刷新",
+    "retryTooltip": "重新排队（attempts 归零）",
+    "retryDisabledHint": "只允许失败或等待确认的任务重试",
+    "cancelTooltip": "取消任务",
+    "cancelDisabledHint": "只有待执行 / 等待确认 / 执行中的任务可以取消",
+    "detail": "详情"
+  },
+  "toolbar": {
+    "batchRetry": "批量重试",
+    "batchRetryWithCount": "批量重试（{{count}}）",
+    "clearSelection": "清空选择"
+  },
+  "empty": {
+    "title": "没有符合条件的任务",
+    "description": "换个筛选条件，或点「重置」看全部任务。"
+  },
+  "expanded": {
+    "logsSummaryWrap": "（{{summary}}）",
+    "logsPendingStep": "（这一步还没产生日志；批量任务执行时这里会逐步刷新）",
+    "currentStatus": "当前状态：{{status}}",
+    "errorReason": "失败原因：{{error}}",
+    "noResult": "（还没有结果）",
+    "taskId": "任务 ID：{{id}}",
+    "createdBy": "发起人：{{name}}",
+    "nextRunAt": "下次执行：{{time}}",
+    "dialogId": "会话：{{id}}",
+    "emptyHint": {
+      "pending": "排队中：等 Worker 认领这个号之后就开始，执行过程会写入这里",
+      "running": "执行中：正在跑，日志马上就出来（本页会自动刷新）",
+      "failed": "已失败，但没有留下执行日志——可点「重试」重新排队",
+      "completed": "已完成，但没有产生日志条目（该任务类型可能不上报步骤）",
+      "cancelled": "已取消"
+    }
+  },
+  "countdown": {
+    "soon": "即将自动重试",
+    "hoursMinutes": "{{hours}} 小时 {{minutes}} 分后自动重试",
+    "minutesSeconds": "{{minutes}} 分 {{seconds}} 秒后自动重试",
+    "seconds": "{{seconds}} 秒后自动重试"
+  },
+  "toast": {
+    "requeued": "已重新排队",
+    "cancelled": "已取消该任务",
+    "noFailedTasks": "当前没有失败的任务",
+    "retryAllSuccess": "已重新排队 {{count}} 个失败任务",
+    "retryAllPartial": "重试完成：成功 {{succeeded}} 个，失败 {{failed}} 个",
+    "batchRetrySuccess": "批量重试成功：{{count}} 个任务已重新排队",
+    "batchRetryPartial": "批量重试完成：成功 {{succeeded}} 个，失败 {{failed}} 个",
+    "batchRetryPartialWithReason": "批量重试完成：成功 {{succeeded}} 个，失败 {{failed}} 个（{{reason}}{{etc}}）",
+    "etcSuffix": " 等",
+    "batchRetryFailed": "批量重试失败"
+  },
+  "detail": {
+    "title": "任务详情",
+    "systemTask": "系统任务",
+    "logsTitle": "执行日志",
+    "basicInfo": "基本信息",
+    "taskType": "任务类型",
+    "status": "状态",
+    "taskId": "任务 ID",
+    "attempts": "尝试次数",
+    "priority": "优先级",
+    "worker": "Worker",
+    "createdBy": "发起人",
+    "nextRunAt": "下次执行",
+    "timeline": "时间线",
+    "timelineCreated": "创建",
+    "timelineStarted": "开始执行",
+    "timelineCompleted": "完成",
+    "timelineNextRun": "下次执行",
+    "errorReason": "错误原因",
+    "payloadTitle": "入队参数（payload）",
+    "resultTitle": "执行结果（result）",
+    "noResult": "（还没有结果：任务未完成或未写入）",
+    "noLogsFallback": "这个任务还没有日志。",
+    "emptyLogHint": {
+      "pending": "排队中：等 Worker 认领这个号之后开始执行，日志会写在这里",
+      "running": "执行中：正在跑，日志马上出来（抽屉开着会自动刷新）",
+      "failed": "已失败，但没有留下执行日志——可以点下面的「重试」重新排队",
+      "completed": "已完成，但没有产生日志条目（该任务类型可能不上报步骤）",
+      "cancelled": "已取消",
+      "pending_confirmation": "等待确认后才开始执行，日志会在执行时写入"
+    }
+  },
+  "stages": {
+    "start": "开始",
+    "scanning": "扫描中",
+    "searching": "搜索中",
+    "sending": "发送中",
+    "progress": "进行中",
+    "online": "上线",
+    "done": "完成",
+    "error": "出错",
+    "failed": "失败"
+  },
+  "jsonBlock": {
+    "empty": "（无）",
+    "copyFull": "复制完整内容",
+    "copyNamed": "复制{{title}}"
+  }
+}

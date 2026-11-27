@@ -17,7 +17,9 @@
 import { Link } from 'react-router-dom';
 import { Tooltip } from 'antd';
 import { MenuFoldOutlined, MenuUnfoldOutlined, SearchOutlined } from '@ant-design/icons';
+import { useTranslation } from 'react-i18next';
 import ConnectionStatus from './ConnectionStatus';
+import LanguageToggle from './LanguageToggle';
 import NotificationBell, { type NotificationBellProps } from './NotificationBell';
 import ThemeToggle from './ThemeToggle';
 import UserMenu, { type UserMenuProps } from './UserMenu';
@@ -46,6 +48,7 @@ export function Topbar({
   notifications,
   user,
 }: TopbarProps) {
+  const { t } = useTranslation('shell');
   return (
     <header className="app-topbar">
       <div className="app-topbar-left">
@@ -53,12 +56,12 @@ export function Topbar({
           type="button"
           className="app-icon-button"
           onClick={onToggleSidebar}
-          aria-label={isNarrow ? '打开导航' : sidebarCollapsed ? '展开侧栏' : '收起侧栏'}
+          aria-label={isNarrow ? t('nav.openNav') : sidebarCollapsed ? t('nav.expandSidebar') : t('nav.collapseSidebar')}
         >
           {sidebarCollapsed || isNarrow ? <MenuUnfoldOutlined /> : <MenuFoldOutlined />}
         </button>
 
-        <nav className="app-breadcrumb" aria-label="当前位置">
+        <nav className="app-breadcrumb" aria-label={t('topbar.breadcrumbAria')}>
           {breadcrumb.map((crumb, index) => (
             <span key={`${crumb.title}-${index}`} style={{ display: 'inline-flex', alignItems: 'center', gap: 'var(--tg-space-sm)' }}>
               {index > 0 ? <span className="app-breadcrumb-sep">/</span> : null}
@@ -77,10 +80,10 @@ export function Topbar({
       </div>
 
       <div className="app-topbar-right">
-        <Tooltip title={`全局搜索（${searchShortcut}）`}>
-          <button type="button" className="app-search-trigger" onClick={onOpenSearch} aria-label="全局搜索">
+        <Tooltip title={t('topbar.globalSearchShortcut', { shortcut: searchShortcut })}>
+          <button type="button" className="app-search-trigger" onClick={onOpenSearch} aria-label={t('topbar.globalSearch')}>
             <SearchOutlined />
-            <span className="app-search-text">搜索账号、会话、消息…</span>
+            <span className="app-search-text">{t('topbar.searchPlaceholder')}</span>
             <span className="tg-kbd">{searchShortcut}</span>
           </button>
         </Tooltip>
@@ -89,6 +92,7 @@ export function Topbar({
 
         <span className="app-topbar-divider" />
 
+        <LanguageToggle />
         <ThemeToggle />
 
         {notifications ? <NotificationBell {...notifications} /> : null}

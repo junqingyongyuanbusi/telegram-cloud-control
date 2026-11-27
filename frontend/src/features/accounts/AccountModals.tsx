@@ -5,6 +5,7 @@
 import MaterialSelect from '../materials/MaterialSelect';
 import { useEffect, useState } from 'react';
 import { Alert, Form, Input, Modal, Radio, Select, Space, Typography } from 'antd';
+import { useTranslation } from 'react-i18next';
 import { accountBulkApi, accountApi } from '../../api/endpoints';
 import { toast } from '../../utils/feedback';
 import type {
@@ -39,6 +40,7 @@ export function CreateAccountModal({
   onCancel: () => void;
   onSuccess: () => void;
 }) {
+  const { t } = useTranslation(['accounts', 'common']);
   const [form] = Form.useForm<CreateForm>();
   const [submitting, setSubmitting] = useState(false);
 
@@ -51,7 +53,7 @@ export function CreateAccountModal({
         proxy_id: values.proxy_id || null,
         remark: values.remark ?? '',
       });
-      toast.success('账号已建档（状态为待登录）');
+      toast.success(t('accounts:toasts.accountCreated'));
       form.resetFields();
       onSuccess();
     } catch {
@@ -64,38 +66,38 @@ export function CreateAccountModal({
   return (
     <Modal
       open={open}
-      title="新建账号"
+      title={t('accounts:createModal.title')}
       onCancel={() => {
         form.resetFields();
         onCancel();
       }}
       onOk={() => form.submit()}
-      okText="建档"
-      cancelText="取消"
+      okText={t('accounts:createModal.okText')}
+      cancelText={t('common:cancel')}
       confirmLoading={submitting}
     >
       <Alert
         type="info"
         showIcon
         style={{ marginBottom: 12 }}
-        message="建档不自动登录；会话由该号自己的验证码拿到。"
+        message={t('accounts:createModal.alert')}
       />
       <Form form={form} layout="vertical" onFinish={handleFinish} autoComplete="off">
         <Form.Item
-          label="手机号（带国家码）"
+          label={t('accounts:createModal.phoneLabel')}
           name="phone"
-          rules={[{ required: true, message: '请输入手机号' }]}
+          rules={[{ required: true, message: t('accounts:createModal.phoneRequired') }]}
         >
           <Input placeholder="+12025550143" allowClear />
         </Form.Item>
-        <Form.Item label="分组（可选）" name="group_id">
-          <Select allowClear placeholder="不选则不分组" options={groups.map((g) => ({ value: g.id, label: g.name }))} />
+        <Form.Item label={t('accounts:createModal.groupLabel')} name="group_id">
+          <Select allowClear placeholder={t('accounts:createModal.groupPlaceholder')} options={groups.map((g) => ({ value: g.id, label: g.name }))} />
         </Form.Item>
-        <Form.Item label="代理（可选）" name="proxy_id">
-          <Select allowClear placeholder="不选则直连" options={proxies.map((p) => ({ value: p.id, label: `${p.name}（${p.endpoint}）` }))} />
+        <Form.Item label={t('accounts:createModal.proxyLabel')} name="proxy_id">
+          <Select allowClear placeholder={t('accounts:createModal.proxyPlaceholder')} options={proxies.map((p) => ({ value: p.id, label: `${p.name} (${p.endpoint})` }))} />
         </Form.Item>
-        <Form.Item label="备注" name="remark">
-          <Input.TextArea rows={2} placeholder="备注（可选）" />
+        <Form.Item label={t('accounts:createModal.remarkLabel')} name="remark">
+          <Input.TextArea rows={2} placeholder={t('accounts:createModal.remarkPlaceholder')} />
         </Form.Item>
       </Form>
     </Modal>
@@ -117,6 +119,7 @@ export function EditAccountModal({
   onCancel: () => void;
   onSuccess: () => void;
 }) {
+  const { t } = useTranslation(['accounts', 'common']);
   const [form] = Form.useForm<{ group_id?: string | null; proxy_id?: string | null; remark?: string }>();
   const [submitting, setSubmitting] = useState(false);
 
@@ -129,7 +132,7 @@ export function EditAccountModal({
         proxy_id: values.proxy_id ?? null,
         remark: values.remark ?? '',
       });
-      toast.success('已保存');
+      toast.success(t('accounts:toasts.saved'));
       onSuccess();
     } catch {
       /* client 已统一提示 */
@@ -141,11 +144,11 @@ export function EditAccountModal({
   return (
     <Modal
       open={Boolean(account)}
-      title={`修改分组 / 代理：${account?.display_label || account?.phone_masked || ''}`}
+      title={t('accounts:editModal.title', { label: account?.display_label || account?.phone_masked || '' })}
       onCancel={onCancel}
       onOk={() => form.submit()}
-      okText="保存"
-      cancelText="取消"
+      okText={t('common:save')}
+      cancelText={t('common:cancel')}
       confirmLoading={submitting}
     >
       <Form
@@ -159,17 +162,17 @@ export function EditAccountModal({
         }}
         key={account?.id}
       >
-        <Form.Item label="分组" name="group_id">
-          <Select allowClear placeholder="清空 = 移出分组" options={groups.map((g) => ({ value: g.id, label: g.name }))} />
+        <Form.Item label={t('accounts:editModal.groupLabel')} name="group_id">
+          <Select allowClear placeholder={t('accounts:editModal.groupPlaceholder')} options={groups.map((g) => ({ value: g.id, label: g.name }))} />
         </Form.Item>
-        <Form.Item label="代理" name="proxy_id">
-          <Select allowClear placeholder="清空 = 直连（不绑定代理）" options={proxies.map((p) => ({ value: p.id, label: `${p.name}（${p.endpoint}）` }))} />
+        <Form.Item label={t('accounts:editModal.proxyLabel')} name="proxy_id">
+          <Select allowClear placeholder={t('accounts:editModal.proxyPlaceholder')} options={proxies.map((p) => ({ value: p.id, label: `${p.name} (${p.endpoint})` }))} />
         </Form.Item>
-        <Form.Item label="备注" name="remark">
+        <Form.Item label={t('accounts:editModal.remarkLabel')} name="remark">
           <Input.TextArea rows={2} />
         </Form.Item>
         <Typography.Text type="secondary">
-          分组是自定义标签，代理是这个号固定的出站地址，Worker 认领时读取。
+          {t('accounts:editModal.hint')}
         </Typography.Text>
       </Form>
     </Modal>
@@ -187,6 +190,7 @@ export function ProfileModal({
   onCancel: () => void;
   onSuccess: () => void;
 }) {
+  const { t } = useTranslation(['accounts', 'common']);
   const [form] = Form.useForm<{
     first_name?: string;
     last_name?: string;
@@ -211,13 +215,13 @@ export function ProfileModal({
       if (value) payload[key] = value;
     });
     if (!Object.keys(payload).length) {
-      toast.error('请至少填一项要修改的资料');
+      toast.error(t('accounts:toasts.profileAtLeastOneField'));
       return;
     }
     setSubmitting(true);
     try {
       const res = await accountApi.profile(account.id, payload);
-      toast.success(res.message || '已提交改资料任务，等 Worker 执行');
+      toast.success(res.message || t('accounts:toasts.profileSubmitted'));
       onSuccess();
     } catch {
       /* client 已统一提示 */
@@ -229,18 +233,18 @@ export function ProfileModal({
   return (
     <Modal
       open={Boolean(account)}
-      title={`修改本号资料：${account?.display_label || account?.phone_masked || ''}`}
+      title={t('accounts:profileModal.title', { label: account?.display_label || account?.phone_masked || '' })}
       onCancel={onCancel}
       onOk={() => form.submit()}
-      okText="提交修改"
-      cancelText="取消"
+      okText={t('accounts:profileModal.okText')}
+      cancelText={t('common:cancel')}
       confirmLoading={submitting}
     >
       <Alert
         type="info"
         showIcon
         style={{ marginBottom: 12 }}
-        message="改的是这个号自己在 Telegram 上的名称和头像，由持有租约的 Worker 执行。"
+        message={t('accounts:profileModal.alert')}
       />
       <Form
         form={form}
@@ -249,27 +253,27 @@ export function ProfileModal({
         key={account?.id}
         initialValues={{ first_name: account?.display_name ?? '' }}
       >
-        <Form.Item label="名称（first_name）" name="first_name">
-          <Input placeholder="名称" allowClear />
+        <Form.Item label={t('accounts:profileModal.firstNameLabel')} name="first_name">
+          <Input placeholder={t('accounts:profileModal.firstNamePlaceholder')} allowClear />
         </Form.Item>
-        <Form.Item label="姓氏（last_name）" name="last_name">
-          <Input placeholder="姓氏（可选）" allowClear />
+        <Form.Item label={t('accounts:profileModal.lastNameLabel')} name="last_name">
+          <Input placeholder={t('accounts:profileModal.lastNamePlaceholder')} allowClear />
         </Form.Item>
-        <Form.Item label="简介（bio）" name="bio">
-          <Input.TextArea rows={2} placeholder="简介（可选）" />
+        <Form.Item label={t('accounts:profileModal.bioLabel')} name="bio">
+          <Input.TextArea rows={2} placeholder={t('accounts:profileModal.bioPlaceholder')} />
         </Form.Item>
-        <Form.Item label="用户名（username）" name="username">
-          <Input placeholder="不带 @ 的用户名（可选）" allowClear />
+        <Form.Item label={t('accounts:profileModal.usernameLabel')} name="username">
+          <Input placeholder={t('accounts:profileModal.usernamePlaceholder')} allowClear />
         </Form.Item>
         <Form.Item
-          label="头像"
+          label={t('accounts:profileModal.avatarLabel')}
           name="photo_material_id"
-          tooltip="直接从素材库选图片（推荐）；也可以填图片地址，两者二选一"
+          tooltip={t('accounts:profileModal.avatarTooltip')}
         >
-          <MaterialSelect kinds={['photo']} placeholder="从素材库选一张图片（可选）" />
+          <MaterialSelect kinds={['photo']} placeholder={t('accounts:profileModal.avatarPlaceholder')} />
         </Form.Item>
-        <Form.Item label="或填头像地址（photo_url）" name="photo_url">
-          <Input placeholder="https://…（可选）" allowClear />
+        <Form.Item label={t('accounts:profileModal.photoUrlLabel')} name="photo_url">
+          <Input placeholder={t('accounts:profileModal.photoUrlPlaceholder')} allowClear />
         </Form.Item>
       </Form>
     </Modal>
@@ -293,18 +297,6 @@ export interface BulkActionModalProps {
   onDone: (result: BulkResultOut | null) => void;
 }
 
-const ACTION_LABELS: Record<BulkAction, string> = {
-  check: '批量检测',
-  'sync-dialogs': '批量同步会话',
-  assign: '批量分配',
-  group: '批量改分组',
-  proxy: '批量改代理',
-  status: '批量启停',
-  disable: '批量停用',
-  enable: '批量启用',
-  'release-lease': '批量清除租约',
-};
-
 /** 需要额外参数的批量动作 */
 const PARAM_ACTIONS: BulkAction[] = ['assign', 'group', 'proxy'];
 
@@ -319,6 +311,7 @@ export function BulkActionModal({
   onCancel,
   onDone,
 }: BulkActionModalProps) {
+  const { t } = useTranslation(['accounts', 'common']);
   const [scope, setScope] = useState<'selected' | 'all'>('selected');
   const [groupId, setGroupId] = useState<string | null>(null);
   const [proxyId, setProxyId] = useState<string | null>(null);
@@ -367,70 +360,70 @@ export function BulkActionModal({
   return (
     <Modal
       open={open}
-      title={ACTION_LABELS[action]}
+      title={t(`accounts:bulkActionModal.actions.${action}`)}
       onCancel={onCancel}
       onOk={() => void handleOk()}
-      okText="执行"
-      cancelText="取消"
+      okText={t('accounts:bulkActionModal.okText')}
+      cancelText={t('common:cancel')}
       confirmLoading={submitting}
       okButtonProps={{ disabled: !ready }}
     >
       <div className="tg-stack" style={{ gap: 'var(--tg-space-lg)' }}>
         <Form layout="vertical">
-          <Form.Item label="作用范围">
+          <Form.Item label={t('accounts:bulkActionModal.scopeLabel')}>
             <Radio.Group value={scope} onChange={(event) => setScope(event.target.value)}>
               <Space direction="vertical">
                 <Radio value="selected" disabled={!selectedIds.length}>
-                  选中的 {selectedIds.length} 个账号
+                  {t('accounts:bulkActionModal.scopeSelected', { count: selectedIds.length })}
                 </Radio>
                 <Radio value="all" disabled={!filteredTotal}>
-                  当前筛选下的全部账号（约 {filteredTotal} 个）
+                  {t('accounts:bulkActionModal.scopeAll', { count: filteredTotal })}
                 </Radio>
               </Space>
             </Radio.Group>
           </Form.Item>
 
           {action === 'group' ? (
-            <Form.Item label="目标分组（清空 = 移出分组）">
+            <Form.Item label={t('accounts:bulkActionModal.targetGroupLabel')}>
               <Select
                 allowClear
-                placeholder="不选 = 移出分组"
+                placeholder={t('accounts:bulkActionModal.targetGroupPlaceholder')}
                 style={{ width: '100%' }}
                 value={groupId ?? undefined}
                 onChange={(value) => setGroupId(value ?? null)}
-                options={groups.map((g) => ({ value: g.id, label: `${g.name}（${g.account_count}）` }))}
+                options={groups.map((g) => ({ value: g.id, label: `${g.name} (${g.account_count})` }))}
               />
             </Form.Item>
           ) : null}
 
           {action === 'proxy' ? (
-            <Form.Item label="目标代理（清空 = 改为直连）">
+            <Form.Item label={t('accounts:bulkActionModal.targetProxyLabel')}>
               <Select
                 allowClear
-                placeholder="不选 = 解绑改为直连"
+                placeholder={t('accounts:bulkActionModal.targetProxyPlaceholder')}
                 style={{ width: '100%' }}
                 value={proxyId ?? undefined}
                 onChange={(value) => setProxyId(value ?? null)}
-                options={proxies.map((p) => ({ value: p.id, label: `${p.name}（${p.endpoint}）` }))}
+                options={proxies.map((p) => ({ value: p.id, label: `${p.name} (${p.endpoint})` }))}
               />
             </Form.Item>
           ) : null}
 
           {action === 'assign' ? (
             <>
-              <Form.Item label="员工" required>
+              <Form.Item label={t('accounts:bulkActionModal.staffLabel')} required>
                 <Select
-                  placeholder="选择要分配给的员工"
+                  placeholder={t('accounts:bulkActionModal.staffPlaceholder')}
                   style={{ width: '100%' }}
                   value={userId ?? undefined}
                   onChange={(value) => setUserId(value ?? null)}
-                  options={users.map((u) => ({ value: u.id, label: `${u.display_name || u.username}（${u.username}）` }))}
+                  options={users.map((u) => ({ value: u.id, label: `${u.display_name || u.username} (${u.username})` }))}
                 />
               </Form.Item>
-              <Form.Item label="模式">
+              <Form.Item label={t('accounts:bulkActionModal.modeLabel')}>
                 <Radio.Group value={mode} onChange={(event) => setMode(event.target.value)}>
-                  <Radio value="assign">分配</Radio>
-                  <Radio value="unassign">取消分配</Radio>
+                  <Radio value="assign">{t('accounts:bulkActionModal.modeAssign')}</Radio>
+                  <Radio value="unassign">{t('accounts:bulkActionModal.modeUnassign')}</Radio>
                 </Radio.Group>
               </Form.Item>
             </>
@@ -441,17 +434,21 @@ export function BulkActionModal({
           <Alert
             type="warning"
             showIcon
-            message={scope === 'selected' ? '请先在列表里勾选账号' : '当前筛选条件下没有账号'}
+            message={
+              scope === 'selected'
+                ? t('accounts:bulkActionModal.notReadySelected')
+                : t('accounts:bulkActionModal.notReadyAll')
+            }
           />
         ) : null}
         <Typography.Text type="secondary">
           {action === 'check' || action === 'sync-dialogs'
-            ? '会为每个账号写一条任务，Worker 认领后执行；单次上限 200，超出会截断。'
+            ? t('accounts:bulkActionModal.hintCheckOrSync')
             : action === 'disable'
-              ? '停用会清掉这些号的租约，Worker 会断开它们；可随时启用恢复。'
+              ? t('accounts:bulkActionModal.hintDisable')
               : action === 'release-lease'
-                ? '只清租约、不改状态，Worker 会在下轮重新认领。'
-                : '结果会逐条返回，执行完成后弹窗展示。'}
+                ? t('accounts:bulkActionModal.hintReleaseLease')
+                : t('accounts:bulkActionModal.hintDefault')}
         </Typography.Text>
       </div>
     </Modal>

@@ -11,20 +11,18 @@ import { useState } from 'react';
 import { Navigate, useLocation, useNavigate } from 'react-router-dom';
 import { Alert, Button, Checkbox, Form, Input } from 'antd';
 import { ExclamationCircleOutlined, LockOutlined, UserOutlined } from '@ant-design/icons';
+import { useTranslation } from 'react-i18next';
 import { useAuth } from '../auth/AuthContext';
 import { ApiError } from '../api/client';
 import { readRememberedUsername, writeRememberedUsername } from '../features/auth/rememberUsername';
+import LanguageToggle from '../components/shell/LanguageToggle';
+import ThemeToggle from '../components/shell/ThemeToggle';
 
 interface LoginForm {
   username: string;
   password: string;
   remember: boolean;
 }
-
-const ENV_LABEL: Record<string, string> = {
-  development: '本地开发',
-  production: '生产环境',
-};
 
 /** 品牌标记：纸飞机描边，跟随主色 */
 function BrandMark() {
@@ -41,6 +39,7 @@ function BrandMark() {
 }
 
 export default function Login() {
+  const { t } = useTranslation(['login', 'common']);
   const { login, user, ready } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
@@ -50,6 +49,12 @@ export default function Login() {
 
   const from = (location.state as { from?: string } | null)?.from ?? '/';
   const envMode = import.meta.env.MODE;
+  const envLabel =
+    envMode === 'development'
+      ? t('login:envDevelopment')
+      : envMode === 'production'
+        ? t('login:envProduction')
+        : envMode;
   const remembered = readRememberedUsername();
 
   if (ready && user) return <Navigate to={from} replace />;
@@ -63,10 +68,9 @@ export default function Login() {
       navigate(from, { replace: true });
     } catch (err) {
       if (err instanceof ApiError) {
-        // 401 账号或口令不对、403 员工被停用：后端 detail 已是中文
-        setError(err.detail || err.friendlyMessage || '登录失败，请稍后重试');
+        setError(err.detail || err.friendlyMessage || t('login:loginFailed'));
       } else {
-        setError('登录失败，请稍后重试');
+        setError(t('login:loginFailed'));
       }
     } finally {
       setSubmitting(false);
@@ -75,20 +79,32 @@ export default function Login() {
 
   return (
     <div className="login-shell">
+      <div
+        style={{
+          position: 'fixed',
+          top: 16,
+          right: 20,
+          display: 'inline-flex',
+          alignItems: 'center',
+          gap: 6,
+          zIndex: 10,
+        }}
+      >
+        <LanguageToggle />
+        <ThemeToggle />
+      </div>
       <main className="login-card">
         <div className="login-brandline">
           <span className="login-brand-mark">
             <BrandMark />
           </span>
-          <span className="login-wordmark">wikifxtg云控</span>
-          {envMode !== 'production' ? (
-            <span className="login-env">{ENV_LABEL[envMode] ?? envMode}</span>
-          ) : null}
+          <span className="login-wordmark">{t('common:appTitle')}</span>
+          {envMode !== 'production' ? <span className="login-env">{envLabel}</span> : null}
         </div>
 
         <header className="login-head">
-          <h1 className="login-title">欢迎回来</h1>
-          <p className="login-subtitle">使用管理员分配的账号进入控制台</p>
+          <h1 className="login-title">{t('login:welcomeTitle')}</h1>
+          <p className="login-subtitle">{t('login:welcomeSubtitle')}</p>
         </header>
 
         {error ? (
@@ -111,14 +127,28 @@ export default function Login() {
           disabled={submitting}
           initialValues={{ username: remembered ?? '', remember: Boolean(remembered) }}
         >
-          <Form.Item label="用户名" name="username" rules={[{ required: true, message: '请输入用户名' }]}>
-            <Input prefix={<UserOutlined />} placeholder="输入用户名" size="large" autoComplete="username" autoFocus />
+          <Form.Item
+            label={t('login:usernameLabel')}
+            name="username"
+            rules={[{ required: true, message: t('login:usernameRequired') }]}
+          >
+            <Input
+              prefix={<UserOutlined />}
+              placeholder={t('login:usernamePlaceholder')}
+              size="large"
+              autoComplete="username"
+              autoFocus
+            />
           </Form.Item>
 
-          <Form.Item label="密码" name="password" rules={[{ required: true, message: '请输入密码' }]}>
+          <Form.Item
+            label={t('login:passwordLabel')}
+            name="password"
+            rules={[{ required: true, message: t('login:passwordRequired') }]}
+          >
             <Input.Password
               prefix={<LockOutlined />}
-              placeholder="输入密码"
+              placeholder={t('login:passwordPlaceholder')}
               size="large"
               autoComplete="current-password"
               onKeyUp={(event) => setCapsLock(event.getModifierState?.('CapsLock') ?? false)}
@@ -128,15 +158,15 @@ export default function Login() {
 
           {capsLock ? (
             <div className="login-capslock">
-              <ExclamationCircleOutlined /> 大写锁定已打开
+              <ExclamationCircleOutlined /> {t('login:capsLockOn')}
             </div>
           ) : null}
 
           <div className="login-row">
             <Form.Item name="remember" valuePropName="checked" noStyle>
-              <Checkbox>记住用户名</Checkbox>
+              <Checkbox>{t('login:rememberUsername')}</Checkbox>
             </Form.Item>
-            <span className="login-note">忘记密码请联系管理员</span>
+            <span className="login-note">{t('login:forgotPassword')}</span>
           </div>
 
           <Button
@@ -147,7 +177,7 @@ export default function Login() {
             block
             loading={submitting}
           >
-            {submitting ? '正在登录…' : '登录'}
+            {submitting ? t('login:signingIn') : t('login:signIn')}
           </Button>
         </Form>
 

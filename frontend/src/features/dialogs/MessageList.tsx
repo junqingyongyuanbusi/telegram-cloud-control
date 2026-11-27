@@ -9,7 +9,9 @@ import {
   FileImageOutlined,
   VerticalAlignBottomOutlined,
 } from '@ant-design/icons';
+import { useTranslation } from 'react-i18next';
 import { EmptyState, ErrorState, MessageStatusTag } from '../../components';
+import { isEnglish } from '../../i18n';
 import type { MessageOut } from '../../api/types';
 import type { ImListItem } from './types';
 
@@ -31,9 +33,9 @@ interface MessageListProps {
   scrollToBottom: (smooth?: boolean) => void;
 }
 
-function senderInitial(name: string): string {
-  const trimmed = (name || '对').trim();
-  return trimmed ? Array.from(trimmed)[0] : '对';
+function senderInitial(name: string, fallback: string): string {
+  const trimmed = (name || fallback).trim();
+  return trimmed ? Array.from(trimmed)[0] : fallback;
 }
 
 export function MessageList({
@@ -53,6 +55,7 @@ export function MessageList({
   scrollRef,
   scrollToBottom,
 }: MessageListProps) {
+  const { t, i18n } = useTranslation('dialogs');
   const [atBottom, setAtBottom] = useState(true);
 
   const handleScroll = useCallback(() => {
@@ -93,9 +96,9 @@ export function MessageList({
           <EmptyState
             compact
             art="search"
-            title={`没有匹配「${searchQ.trim()}」的消息`}
-            description="换个关键词试试。"
-            action={<Button size="small" onClick={clearSearch}>退出搜索</Button>}
+            title={t('messages.emptySearchTitle', { query: searchQ.trim() })}
+            description={t('messages.emptySearchDesc')}
+            action={<Button size="small" onClick={clearSearch}>{t('chat.exitSearch')}</Button>}
           />
         </div>
       ) : null}
@@ -105,11 +108,11 @@ export function MessageList({
           <EmptyState
             compact
             art="message"
-            title="这个会话还没有消息"
-            description="点「同步历史消息」把云端聊天记录拉下来。"
+            title={t('messages.emptyTitle')}
+            description={t('messages.emptyDesc')}
             action={
               <Button size="small" type="primary" icon={<CloudSyncOutlined />} onClick={onSync}>
-                同步历史消息
+                {t('chat.syncHistoryFull')}
               </Button>
             }
           />
@@ -119,7 +122,7 @@ export function MessageList({
       {hasMore && items.length ? (
         <div className="im-load-earlier">
           <Button size="small" loading={loadingMore} onClick={onLoadEarlier}>
-            加载更早的消息
+            {t('messages.loadEarlier')}
           </Button>
         </div>
       ) : null}
@@ -135,8 +138,8 @@ export function MessageList({
         if (item.kind === 'unread') {
           return (
             <div className="im-unread-sep" key={item.key}>
-              <button type="button" onClick={onMarkRead} title="点击标记为已读">
-                {item.count} 条新消息 · 标记已读
+              <button type="button" onClick={onMarkRead} title={t('messages.unreadSepTooltip')}>
+                {t('messages.unreadSep', { count: item.count })}
               </button>
             </div>
           );
@@ -144,7 +147,7 @@ export function MessageList({
         const message = item.message;
         const outgoing = message.direction === 'outgoing';
         const failed = outgoing && message.status === 'failed';
-        const time = message.created_at ? dayjsFormat(message.created_at) : '';
+        const time = message.created_at ? formatMessageTime(message.created_at, i18n.language) : '';
         return (
           <div
             key={item.key}
@@ -157,36 +160,41 @@ export function MessageList({
               .join(' ')}
           >
             {!outgoing ? (
-              <div className="im-avatar" title={message.sender_name || '（Telegram 未提供发送者）'}>
-                {senderInitial(message.sender_name)}
+              <div className="im-avatar" title={message.sender_name || t('messages.noSenderTooltip')}>
+                {senderInitial(message.sender_name, t('messages.defaultInitial'))}
               </div>
             ) : null}
             <div className="im-bubble">
               <div className="im-bubble-head">
                 {outgoing ? (
-                  <span>我</span>
+                  <span>{t('messages.me')}</span>
                 ) : (
-                  <span>{message.sender_name || '（发送者未知）'}</span>
+                  <span>{message.sender_name || t('messages.unknownSender')}</span>
                 )}
                 {message.sender_tg_id && !outgoing ? <span>ID {message.sender_tg_id}</span> : null}
               </div>
               {message.has_media ? (
                 <div className="im-media-card">
                   <FileImageOutlined />
-                  <span>{message.media_type || '媒体'} 消息</span>
+                  <span>{t('messages.mediaLabel', { type: message.media_type || t('messages.defaultMediaType') })}</span>
                 </div>
               ) : null}
               {message.body ? <div className="im-bubble-body">{message.body}</div> : null}
+              {message.link ? (
+                <a className="im-bubble-link" href={message.link} target="_blank" rel="noreferrer">
+                  {t('messages.viewInTelegram')}
+                </a>
+              ) : null}
               <div className="im-bubble-foot">
-                {failed ? <span>发送失败</span> : null}
+                {failed ? <span>{t('messages.sendFailed')}</span> : null}
                 <span>{time}</span>
                 {outgoing && !failed ? (
                   <MessageStatusTag status={message.status} label={message.status_label} size="sm" showDot={false} />
                 ) : null}
                 {failed ? (
-                  <Tooltip title="重新走一次发送">
+                  <Tooltip title={t('messages.resendTooltip')}>
                     <button type="button" className="im-retry-btn" onClick={() => onResend(message)}>
-                      重发
+                      {t('messages.resend')}
                     </button>
                   </Tooltip>
                 ) : null}
@@ -200,8 +208,8 @@ export function MessageList({
         <button
           type="button"
           className="im-jump-bottom"
-          aria-label="跳到底部"
-          title="跳到底部"
+          aria-label={t('messages.jumpToBottom')}
+          title={t('messages.jumpToBottom')}
           onClick={() => scrollToBottom(true)}
         >
           <VerticalAlignBottomOutlined />
@@ -217,7 +225,10 @@ export function MessageList({
   );
 }
 
-function dayjsFormat(iso: string): string {
+function formatMessageTime(iso: string, locale: string): string {
   // 轻量时间展示（气泡内只显示时:分）
-  return new Date(iso).toLocaleTimeString('zh-Hans', { hour: '2-digit', minute: '2-digit' });
+  return new Date(iso).toLocaleTimeString(isEnglish(locale) ? 'en-US' : 'zh-Hans', {
+    hour: '2-digit',
+    minute: '2-digit',
+  });
 }

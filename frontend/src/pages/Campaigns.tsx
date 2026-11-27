@@ -7,6 +7,7 @@
  */
 import { useEffect, useState } from 'react';
 import { Navigate, useLocation, useNavigate, useParams } from 'react-router-dom';
+import { useTranslation } from 'react-i18next';
 import {
   Button,
   Card,
@@ -40,7 +41,7 @@ import BulkResultModal from '../features/accounts/BulkResultModal';
 import AccountPickerModal from '../components/AccountPickerModal';
 import MaterialThumb from '../features/materials/MaterialThumb';
 import MaterialPicker from '../features/materials/MaterialSelect';
-import { PageContainer, StatusBadge } from '../components';
+import { PageContainer, StatusBadge, TaskStatusTag } from '../components';
 import {
   accountApi,
   botApi,
@@ -51,6 +52,7 @@ import {
   materialApi,
 } from '../api/endpoints';
 import { useAsyncData } from '../hooks/useAsyncData';
+import { isEnglish, resolveEnumLabel } from '../i18n';
 import { notifySuccess, toast } from '../utils/feedback';
 import { formatNumber, formatTime } from '../utils/format';
 import type {
@@ -59,6 +61,7 @@ import type {
   BulkPmRequest,
   BulkResultOut,
   CampaignBatchItem,
+  CampaignBatchResultItem,
   CampaignBatchOut,
   CampaignScheduleOut,
   ForceAddRequest,
@@ -73,6 +76,7 @@ import type {
   PersonaRequest,
   ProfileBulkRequest,
   StormRequest,
+  TaskStatus,
   UUID,
 } from '../api/types';
 
@@ -99,6 +103,7 @@ const KIND_COLORS: Record<MaterialKind, string> = {
  *（它们写操作必被 Telegram 拒绝），所以勾了 10 个可能只排出 9 条任务。
  */
 function ScopeFields({ value, onChange }: { value: ScopeState; onChange: (next: ScopeState) => void }) {
+  const { t } = useTranslation('campaigns');
   const groups = useAsyncData(() => groupApi.list(), [], { immediate: false });
   const [pickerOpen, setPickerOpen] = useState(false);
   useEffect(() => {
@@ -111,19 +116,21 @@ function ScopeFields({ value, onChange }: { value: ScopeState; onChange: (next: 
         value={value.scope}
         onChange={(scope) => onChange({ ...value, scope })}
         options={[
-          { label: '全部可见账号', value: 'all' },
-          { label: '按分组', value: 'group' },
-          { label: '手动选择', value: 'selected' },
+          { label: t('scope.all'), value: 'all' },
+          { label: t('scope.group'), value: 'group' },
+          { label: t('scope.selected'), value: 'selected' },
         ]}
       />
       {value.scope === 'selected' ? (
         <>
           <Button size="middle" icon={<TeamOutlined />} onClick={() => setPickerOpen(true)}>
-            选择账号{value.ids?.length ? `（已选 ${value.ids.length}）` : ''}
+            {value.ids?.length
+              ? t('scope.selectAccountsWithCount', { count: value.ids.length })
+              : t('scope.selectAccounts')}
           </Button>
           <AccountPickerModal
             open={pickerOpen}
-            title="选择要执行本次任务的账号"
+            title={t('scope.pickerTitle')}
             value={value.ids ?? []}
             onCancel={() => setPickerOpen(false)}
             onSubmit={async (ids) => {
@@ -136,7 +143,7 @@ function ScopeFields({ value, onChange }: { value: ScopeState; onChange: (next: 
       {value.scope === 'group' ? (
         <Select
           style={{ width: 200 }}
-          placeholder="选择账号分组"
+          placeholder={t('scope.selectGroupPlaceholder')}
           value={value.groupId ?? undefined}
           loading={groups.loading}
           onChange={(groupId) => onChange({ ...value, groupId })}
@@ -144,7 +151,7 @@ function ScopeFields({ value, onChange }: { value: ScopeState; onChange: (next: 
         />
       ) : null}
       <span className="tg-scope-limit">
-        <span className="tg-scope-limit-label">最多处理</span>
+        <span className="tg-scope-limit-label">{t('scope.maxPrefix')}</span>
         {/* 原本用 InputNumber 的 addonBefore/addonAfter 做前后缀，antd 已弃用；
             改成并列的普通元素，语义一样、也不会有弃用警告 */}
         <InputNumber
@@ -154,7 +161,7 @@ function ScopeFields({ value, onChange }: { value: ScopeState; onChange: (next: 
           onChange={(limit) => onChange({ ...value, limit: limit ?? 200 })}
           style={{ width: 110 }}
         />
-        <span className="tg-scope-limit-label">个号</span>
+        <span className="tg-scope-limit-label">{t('scope.maxSuffix')}</span>
       </span>
     </Space>
   );
@@ -162,29 +169,36 @@ function ScopeFields({ value, onChange }: { value: ScopeState; onChange: (next: 
 
 /** 可选素材选择：把素材库里的图片/视频/文档配在文本一起发（批量私信 / 群发共用） */
 function MaterialPickField({ value, onChange }: { value?: string | null; onChange?: (next: string | null) => void }) {
+  const { t, i18n } = useTranslation('campaigns');
   const materials = useAsyncData(() => materialApi.list({ page: 1, page_size: 100 }), [], { immediate: false });
   useEffect(() => {
     void materials.reload();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+  const en = isEnglish(i18n.language);
   return (
     <Form.Item
-      label="附带素材（可选）"
+      label={t('materialPick.label')}
       className="tg-pm-material"
-      tooltip="选了素材就按素材发：图片/视频/文档带配文，文本作为配文一起发；留空则只发文本"
+      tooltip={t('materialPick.tooltip')}
     >
       <Select
         allowClear
         // 宽度交给卡片（原先写死 320，比 span3 卡片的内容区还宽，会撑破边框）
         style={{ width: '100%' }}
-        placeholder="不附带素材，只发文本"
+        placeholder={t('materialPick.placeholder')}
         value={value ?? undefined}
         loading={materials.loading}
         onChange={(next) => onChange?.(next ?? null)}
-        options={(materials.data?.items ?? []).map((item) => ({
-          value: item.id,
-          label: `[${item.kind_label ?? item.kind}] ${item.name}`,
-        }))}
+        options={(materials.data?.items ?? []).map((item) => {
+          const kindLabel = en
+            ? t(`materialKind.${item.kind}`, { defaultValue: item.kind_label || item.kind })
+            : item.kind_label || t(`materialKind.${item.kind}`, { defaultValue: item.kind });
+          return {
+            value: item.id,
+            label: `[${kindLabel}] ${item.name}`,
+          };
+        })}
       />
     </Form.Item>
   );
@@ -211,6 +225,7 @@ function splitField(value?: unknown): string[] {
 // ---------------------------------------------------------------- 素材库
 
 function MaterialsTab() {
+  const { t, i18n } = useTranslation(['campaigns', 'common']);
   const materials = useAsyncData(() => materialApi.list({ page: 1, page_size: 100 }), []);
   const [name, setName] = useState('');
   const [text, setText] = useState('');
@@ -218,13 +233,13 @@ function MaterialsTab() {
 
   const createText = async () => {
     if (!name.trim()) {
-      toast.warning('先给素材起个名字');
+      toast.warning(t('campaigns:materials.nameRequired'));
       return;
     }
     setCreating(true);
     try {
       await materialApi.create({ name: name.trim(), text });
-      notifySuccess('文字素材已保存');
+      notifySuccess(t('campaigns:materials.textSaved'));
       setName('');
       setText('');
       void materials.reload();
@@ -237,51 +252,57 @@ function MaterialsTab() {
 
   const remove = async (material: MaterialOut) => {
     await materialApi.remove(material.id);
-    notifySuccess('素材已删除');
+    notifySuccess(t('campaigns:materials.deleted'));
     void materials.reload();
   };
 
+  const en = isEnglish(i18n.language);
   const columns: ColumnsType<MaterialOut> = [
     {
-      title: '预览',
+      title: t('campaigns:materials.colPreview'),
       dataIndex: 'id',
       width: 72,
       render: (_: string, record) => (
         <MaterialThumb materialId={record.id} kind={record.kind} alt={record.name} />
       ),
     },
-    { title: '名称', dataIndex: 'name', width: 180 },
+    { title: t('campaigns:materials.colName'), dataIndex: 'name', width: 180 },
     {
-      title: '类型',
+      title: t('campaigns:materials.colKind'),
       dataIndex: 'kind',
       width: 90,
-      render: (kind: MaterialKind, record) => <Tag color={KIND_COLORS[kind]}>{record.kind_label}</Tag>,
+      render: (kind: MaterialKind, record) => {
+        const label = en
+          ? t(`campaigns:materialKind.${kind}`, { defaultValue: record.kind_label || kind })
+          : record.kind_label || t(`campaigns:materialKind.${kind}`, { defaultValue: kind });
+        return <Tag color={KIND_COLORS[kind]}>{label}</Tag>;
+      },
     },
     {
-      title: '内容',
+      title: t('campaigns:materials.colContent'),
       dataIndex: 'text',
       ellipsis: true,
       render: (value: string, record) => value || record.original_name || <span className="tg-muted">—</span>,
     },
     {
-      title: '大小',
+      title: t('campaigns:materials.colSize'),
       dataIndex: 'size_bytes',
       width: 90,
       render: (value: number) => (value ? formatNumber(value) : <span className="tg-muted">—</span>),
     },
-    { title: '创建时间', dataIndex: 'created_at', width: 170, render: (value: string) => formatTime(value) },
+    { title: t('campaigns:materials.colCreatedAt'), dataIndex: 'created_at', width: 170, render: (value: string) => formatTime(value) },
     {
-      title: '操作',
+      title: t('campaigns:materials.colActions'),
       width: 130,
       render: (_, record) => (
         <Space>
           {record.kind !== 'text' ? (
             <a href={materialApi.downloadUrl(record.id)} target="_blank" rel="noreferrer">
-              下载
+              {t('campaigns:materials.download')}
             </a>
           ) : null}
           <Button type="text" danger size="small" icon={<DeleteOutlined />} onClick={() => void remove(record)}>
-            删除
+            {t('campaigns:materials.delete')}
           </Button>
         </Space>
       ),
@@ -290,26 +311,26 @@ function MaterialsTab() {
 
   return (
     <div className="tg-stack" style={{ gap: 'var(--tg-space-lg)' }}>
-      <Card size="small" title="新建文字素材">
+      <Card size="small" title={t('campaigns:materials.createTextTitle')}>
         <Space.Compact style={{ width: '100%' }}>
           <Input
-            placeholder="素材名（便于识别，例如：八月活动话术）"
+            placeholder={t('campaigns:materials.namePlaceholder')}
             value={name}
             onChange={(event) => setName(event.target.value)}
             style={{ width: 240 }}
           />
           <Input.TextArea
-            placeholder="要发送的文字（批量私信 / 群发 / 吵群都会用到）"
+            placeholder={t('campaigns:materials.textPlaceholder')}
             value={text}
             onChange={(event) => setText(event.target.value)}
             autoSize={{ minRows: 2, maxRows: 4 }}
           />
           <Button type="primary" icon={<PlusOutlined />} loading={creating} onClick={() => void createText()}>
-            保存
+            {t('common:save')}
           </Button>
         </Space.Compact>
       </Card>
-      <Card size="small" title="上传媒体素材（图片 / 视频 / 文件，最大 20MB）">
+      <Card size="small" title={t('campaigns:materials.uploadTitle')}>
         <Upload.Dragger
           multiple={false}
           showUploadList={false}
@@ -318,7 +339,7 @@ function MaterialsTab() {
             const baseName = file.name.replace(/\.[^.]+$/, '');
             try {
               await materialApi.upload(baseName, file);
-              notifySuccess(`「${baseName}」已上传`);
+              notifySuccess(t('campaigns:materials.uploaded', { name: baseName }));
               void materials.reload();
             } catch {
               /* client 已统一提示 */
@@ -328,8 +349,8 @@ function MaterialsTab() {
           <p className="ant-upload-drag-icon">
             <InboxOutlined />
           </p>
-          <p className="ant-upload-text">点击或拖拽文件到这里上传</p>
-          <p className="ant-upload-hint">素材名取文件名；发送时可在素材群发里配说明文字</p>
+          <p className="ant-upload-text">{t('campaigns:materials.uploadText')}</p>
+          <p className="ant-upload-hint">{t('campaigns:materials.uploadHint')}</p>
         </Upload.Dragger>
       </Card>
       <Table<MaterialOut>
@@ -347,16 +368,23 @@ function MaterialsTab() {
 // ---------------------------------------------------------------- 素材下拉
 
 function MaterialSelect(props: { value?: string; onChange?: (value: string) => void }) {
+  const { t, i18n } = useTranslation('campaigns');
   const materials = useAsyncData(() => materialApi.list({ page: 1, page_size: 100 }), []);
+  const en = isEnglish(i18n.language);
   return (
     <Select
       {...props}
-      placeholder="选择素材"
+      placeholder={t('materialSelect.placeholder')}
       loading={materials.loading}
-      options={(materials.data?.items ?? []).map((item) => ({
-        label: `${item.name}（${item.kind_label}）`,
-        value: item.id,
-      }))}
+      options={(materials.data?.items ?? []).map((item) => {
+        const kindLabel = en
+          ? t(`materialKind.${item.kind}`, { defaultValue: item.kind_label || item.kind })
+          : item.kind_label || t(`materialKind.${item.kind}`, { defaultValue: item.kind });
+        return {
+          label: t('materialSelect.optionLabel', { name: item.name, kind: kindLabel }),
+          value: item.id,
+        };
+      })}
     />
   );
 }
@@ -364,6 +392,7 @@ function MaterialSelect(props: { value?: string; onChange?: (value: string) => v
 // ---------------------------------------------------------------- 批次进度
 
 function BatchesTab() {
+  const { t } = useTranslation(['campaigns', 'common', 'enums']);
   const batches = useAsyncData(() => campaignApi.batches({ page: 1, page_size: 50 }), []);
   const [detail, setDetail] = useState<CampaignBatchOut | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
@@ -387,19 +416,24 @@ function BatchesTab() {
   };
 
   const itemColumns: ColumnsType<CampaignBatchItem> = [
-    { title: '账号', dataIndex: 'account_label', width: 140 },
-    { title: '任务类型', dataIndex: 'type_label', width: 110 },
+    { title: t('campaigns:batches.colAccount'), dataIndex: 'account_label', width: 140 },
     {
-      title: '状态',
+      title: t('campaigns:batches.colTaskType'),
+      dataIndex: 'type_label',
+      width: 110,
+      render: (value: string, record) => resolveEnumLabel(`taskType.${record.type}`, value, record.type),
+    },
+    {
+      title: t('campaigns:batches.colStatus'),
       dataIndex: 'status',
       width: 100,
-      render: (value: string, record) => (
-        <StatusBadge status={value as AccountStatus} label={record.status_label} size="sm" />
+      render: (value: TaskStatus, record) => (
+        <TaskStatusTag status={value} label={record.status_label} size="sm" />
       ),
     },
-    { title: '尝试', dataIndex: 'attempts', width: 60 },
+    { title: t('campaigns:batches.colAttempts'), dataIndex: 'attempts', width: 60 },
     {
-      title: '进度',
+      title: t('campaigns:batches.colProgress'),
       dataIndex: 'stage',
       width: 230,
       render: (value: string, record) => {
@@ -407,15 +441,24 @@ function BatchesTab() {
         return (
           <Tooltip title={record.detail || value || ''}>
             <span className="tg-mono">
-              {record.wave_total ? `第 ${(record.wave_index ?? 0) + 1}/${record.wave_total} 轮 · ` : ''}
-              已加 {record.joined ?? 0}/{record.total} · 已发 {record.sent ?? 0}
+              {record.wave_total
+                ? t('campaigns:batches.waveProgress', {
+                    wave: (record.wave_index ?? 0) + 1,
+                    waveTotal: record.wave_total,
+                  })
+                : ''}
+              {t('campaigns:batches.joinedSentProgress', {
+                joined: record.joined ?? 0,
+                total: record.total,
+                sent: record.sent ?? 0,
+              })}
             </span>
           </Tooltip>
         );
       },
     },
     {
-      title: '失败原因',
+      title: t('campaigns:batches.colError'),
       dataIndex: 'error',
       ellipsis: true,
       render: (value: string) => value || <span className="tg-muted">—</span>,
@@ -424,15 +467,15 @@ function BatchesTab() {
 
   const columns: ColumnsType<CampaignBatchOut> = [
     {
-      title: '批次',
+      title: t('campaigns:batches.colBatch'),
       dataIndex: 'batch_id',
       width: 220,
       render: (value: UUID) => <span className="tg-mono">{value.slice(0, 8)}…</span>,
     },
-    { title: '提交时间', dataIndex: 'created_at', width: 170, render: (value: string) => formatTime(value) },
-    { title: '任务数', dataIndex: 'total', width: 80 },
+    { title: t('campaigns:batches.colSubmittedAt'), dataIndex: 'created_at', width: 170, render: (value: string) => formatTime(value) },
+    { title: t('campaigns:batches.colTaskCount'), dataIndex: 'total', width: 80 },
     {
-      title: '状态分布',
+      title: t('campaigns:batches.colStatusDist'),
       dataIndex: 'counts',
       render: (counts: Record<string, number>) => {
         const parts = Object.entries(counts ?? {})
@@ -446,15 +489,15 @@ function BatchesTab() {
       },
     },
     {
-      title: '操作',
+      title: t('campaigns:batches.colActions'),
       width: 160,
       render: (_, record) => (
         <Space>
           <Button size="small" loading={detailLoading} onClick={() => void openDetail(record.batch_id)}>
-            详情
+            {t('campaigns:batches.detail')}
           </Button>
           <Button size="small" danger onClick={() => void cancel(record.batch_id)}>
-            取消
+            {t('campaigns:batches.cancel')}
           </Button>
         </Space>
       ),
@@ -465,9 +508,9 @@ function BatchesTab() {
     <div className="tg-stack" style={{ gap: 'var(--tg-space-lg)' }}>
       <Space>
         <Button icon={<ReloadOutlined />} onClick={() => void batches.reload()}>
-          刷新
+          {t('common:refresh')}
         </Button>
-        <Typography.Text type="secondary">执行中的吵群 / 拟人任务会随每轮发言实时更新进度</Typography.Text>
+        <Typography.Text type="secondary">{t('campaigns:batches.liveHint')}</Typography.Text>
       </Space>
       <Table<CampaignBatchOut>
         size="small"
@@ -475,15 +518,19 @@ function BatchesTab() {
         columns={columns}
         dataSource={batches.data?.items ?? []}
         loading={batches.loading}
-        pagination={{ pageSize: 20, size: 'small', showTotal: (total) => `共 ${total} 批` }}
+        pagination={{ pageSize: 20, size: 'small', showTotal: (total) => t('campaigns:batches.totalBatches', { total }) }}
       />
       {detail ? (
         <Card
           size="small"
-          title={`批次 ${detail.batch_id} · ${formatTime(detail.created_at ?? '')} · 共 ${detail.total} 条任务`}
+          title={t('campaigns:batches.detailTitle', {
+            batchId: detail.batch_id,
+            createdAt: formatTime(detail.created_at ?? ''),
+            total: detail.total,
+          })}
           extra={
             <Button size="small" danger onClick={() => void cancel(detail.batch_id)}>
-              取消未完成任务
+              {t('campaigns:batches.cancelIncomplete')}
             </Button>
           }
         >
@@ -493,6 +540,42 @@ function BatchesTab() {
             columns={itemColumns}
             dataSource={detail.items}
             pagination={{ pageSize: 10, size: 'small' }}
+            expandable={{
+              rowExpandable: (record) => Boolean(record.results?.length),
+              expandedRowRender: (record) => (
+                <Table<CampaignBatchResultItem>
+                  size="small"
+                  rowKey={(item) => item.target || item.link || 'row'}
+                  pagination={false}
+                  dataSource={record.results ?? []}
+                  columns={[
+                    { title: t('campaigns:batches.colTarget'), dataIndex: 'target', ellipsis: true },
+                    {
+                      title: t('campaigns:batches.colOutcome'),
+                      width: 120,
+                      render: (_, item) => {
+                        if (item.error) return <Tag color="red">{t('campaigns:batches.resultFailed')}</Tag>;
+                        if (item.sent) return <Tag color="green">{t('campaigns:batches.resultSent')}</Tag>;
+                        if (item.pending_approval) return <Tag color="gold">{t('campaigns:batches.resultPendingApproval')}</Tag>;
+                        return <Tag>{t('campaigns:batches.resultSkipped')}</Tag>;
+                      },
+                    },
+                    {
+                      title: t('campaigns:batches.colLink'),
+                      width: 220,
+                      render: (_, item) =>
+                        item.link ? (
+                          <a href={item.link} target="_blank" rel="noreferrer">
+                            {t('campaigns:batches.openLink')}
+                          </a>
+                        ) : (
+                          <span className="tg-muted">—</span>
+                        ),
+                    },
+                  ]}
+                />
+              ),
+            }}
           />
         </Card>
       ) : null}
@@ -516,12 +599,15 @@ const TASK_STATUS_COLOR: Record<string, string> = {
  * 页面只留三样东西：顶部写内容 + 挑群，中间一张账号表（提交后同一张表直接显示每号执行状态），
  * 底部提交。节奏参数大多数人不改，收进折叠面板，默认值按保守值预设。 */
 function JoinAndSendTab({ initialTargets = [] }: { initialTargets?: string[] }) {
+  const { t } = useTranslation(['campaigns', 'common', 'enums']);
   const navigate = useNavigate();
   const accounts = useAsyncData(() => accountApi.list({ page: 1, page_size: 200 }), []);
   // null = 还没初始化（首次加载后默认全选）；[] = 用户主动清空
   const [selected, setSelected] = useState<string[] | null>(null);
   // 默认自动挑号：按健康分优先从可用号里选，不用手动勾
   const [autoAccounts, setAutoAccounts] = useState(true);
+  // 默认轮训：一个群只由一个号发，账号之间轮流分担；重复模式才是每个号都发全部群
+  const [dispatch, setDispatch] = useState<'round_robin' | 'each'>('round_robin');
   const [mode, setMode] = useState<'text' | 'material'>('text');
   const [form] = Form.useForm();
   const [submitting, setSubmitting] = useState(false);
@@ -599,39 +685,50 @@ function JoinAndSendTab({ initialTargets = [] }: { initialTargets?: string[] }) 
 
   const accountColumns: ColumnsType<AccountOut> = [
     {
-      title: '账号',
+      title: t('campaigns:joinAndSend.colAccount'),
       dataIndex: 'display_label',
       render: (value: string, record) => value || record.phone_masked,
     },
     {
-      title: '状态',
+      title: t('campaigns:joinAndSend.colStatus'),
       dataIndex: 'status',
       width: 96,
       render: (value: AccountStatus, record) => (
         <StatusBadge status={value} label={record.status_label} size="sm" />
       ),
     },
-    { title: '健康分', dataIndex: 'health_score', width: 76 },
+    { title: t('campaigns:joinAndSend.colHealthScore'), dataIndex: 'health_score', width: 76 },
     {
-      title: '分组',
+      title: t('campaigns:joinAndSend.colGroup'),
       dataIndex: 'group_name',
       width: 110,
       render: (value: string) => value || <span className="tg-muted">—</span>,
     },
-    { title: '群数', dataIndex: 'group_count', width: 64 },
+    { title: t('campaigns:joinAndSend.colGroupCount'), dataIndex: 'group_count', width: 64 },
     {
-      title: '执行状态',
+      title: t('campaigns:joinAndSend.colExecStatus'),
       width: 300,
       render: (_, record) => {
         const item = progressByAccount.get(record.id);
         if (!item) {
-          return <span className="tg-muted">{record.current_task_label || '待提交'}</span>;
+          const taskText = record.current_task
+            ? resolveEnumLabel(`currentTask.${record.current_task}`, record.current_task_label, record.current_task)
+            : '';
+          return <span className="tg-muted">{taskText || t('campaigns:joinAndSend.pendingSubmit')}</span>;
         }
-        const progress = item.total ? `已加 ${item.joined ?? 0}/${item.total} · 已发 ${item.sent ?? 0}` : '';
+        const progress = item.total
+          ? t('campaigns:joinAndSend.joinedSentProgress', {
+              joined: item.joined ?? 0,
+              total: item.total,
+              sent: item.sent ?? 0,
+            })
+          : '';
         return (
           <span className="tg-stack" style={{ gap: 2 }}>
             <Space size={6} wrap>
-              <Tag color={TASK_STATUS_COLOR[item.status] ?? 'default'}>{item.status_label}</Tag>
+              <Tag color={TASK_STATUS_COLOR[item.status] ?? 'default'}>
+                {resolveEnumLabel(`taskStatus.${item.status}`, item.status_label, item.status)}
+              </Tag>
               {progress ? <span className="tg-mono tg-muted">{progress}</span> : null}
             </Space>
             {item.error ? (
@@ -662,11 +759,11 @@ function JoinAndSendTab({ initialTargets = [] }: { initialTargets?: string[] }) 
 
   const groupColumns: ColumnsType<GroupProfileOut> = [
     {
-      title: '群',
+      title: t('campaigns:joinAndSend.colGroupName'),
       dataIndex: 'title',
       render: (value: string, record) => (
         <span className="tg-stack" style={{ gap: 2 }}>
-          <span>{value || '未命名群'}</span>
+          <span>{value || t('campaigns:joinAndSend.unnamedGroup')}</span>
           <span className="tg-muted" style={{ fontSize: 'var(--tg-font-size-xs)' }}>
             {record.username ? `@${record.username}` : record.tg_chat_id}
           </span>
@@ -674,20 +771,24 @@ function JoinAndSendTab({ initialTargets = [] }: { initialTargets?: string[] }) 
       ),
     },
     {
-      title: '成员',
+      title: t('campaigns:joinAndSend.colMembers'),
       dataIndex: 'member_count',
       width: 90,
       render: (value: number | null) => (value ? formatNumber(value) : '—'),
     },
     {
-      title: '发言',
+      title: t('campaigns:joinAndSend.colSpeak'),
       dataIndex: 'send_permission',
       width: 90,
       render: (value: string | null) =>
         value === 'open' ? (
-          <Tag color="green">可发言</Tag>
+          <Tag color="green">{t('campaigns:joinAndSend.speakOpen')}</Tag>
         ) : (
-          <Tag>{value === 'restricted' ? '禁言' : '未校验'}</Tag>
+          <Tag>
+            {value === 'restricted'
+              ? t('campaigns:joinAndSend.speakRestricted')
+              : t('campaigns:joinAndSend.speakUnverified')}
+          </Tag>
         ),
     },
   ];
@@ -712,7 +813,7 @@ function JoinAndSendTab({ initialTargets = [] }: { initialTargets?: string[] }) 
   const applyPickedGroups = () => {
     const links = Object.values(pickedGroups).filter((link): link is string => Boolean(link));
     if (!links.length) {
-      toast.warning('选中的群既没有邀请链接，也没有公开用户名');
+      toast.warning(t('campaigns:joinAndSend.warnNoLink'));
       return;
     }
     const merged = Array.from(new Set([...splitField(form.getFieldValue('targets')), ...links]));
@@ -723,22 +824,22 @@ function JoinAndSendTab({ initialTargets = [] }: { initialTargets?: string[] }) 
 
   const onFinish = async (values: Record<string, unknown>) => {
     if (!autoAccounts && !picked.length) {
-      toast.warning('先在账号表里勾选至少一个号，或打开「自动挑选账号」');
+      toast.warning(t('campaigns:joinAndSend.warnNoAccount'));
       return;
     }
     const targets = splitField(values.targets);
     if (!targets.length) {
-      toast.warning('至少填一个群链接');
+      toast.warning(t('campaigns:joinAndSend.warnNoTarget'));
       return;
     }
     const text = String(values.text ?? '').trim();
     const materialId = (values.material_id as string | undefined) ?? null;
     if (mode === 'material' && !materialId) {
-      toast.warning('素材模式要先选一个素材');
+      toast.warning(t('campaigns:joinAndSend.warnNoMaterial'));
       return;
     }
     if (mode === 'text' && !text) {
-      toast.warning('写一段要发布的内容');
+      toast.warning(t('campaigns:joinAndSend.warnNoText'));
       return;
     }
     const maxAccounts = Number(values.max_accounts ?? 0);
@@ -751,7 +852,7 @@ function JoinAndSendTab({ initialTargets = [] }: { initialTargets?: string[] }) 
       // 轮次：每轮账号数 / 每号每轮群数；0 = 不分轮 / 该号一次拿全部群
       accounts_per_wave: Number(values.accounts_per_wave ?? 0),
       groups_per_account: Number(values.groups_per_account ?? 0),
-      dispatch: 'each',
+      dispatch,
       targets,
       // 素材模式：text 是配文；文本模式：text 是正文
       text: text || null,
@@ -807,24 +908,24 @@ function JoinAndSendTab({ initialTargets = [] }: { initialTargets?: string[] }) 
           <section className="tg-section">
             <div className="tg-section-head">
               <span className="tg-section-bar" />
-              <h2 className="tg-section-title">内容与目标群</h2>
-              <span className="tg-section-note">先写发什么，再挑群；提交后每个号逐群执行</span>
+              <h2 className="tg-section-title">{t('campaigns:joinAndSend.contentAndTargetsTitle')}</h2>
+              <span className="tg-section-note">{t('campaigns:joinAndSend.contentAndTargetsNote')}</span>
             </div>
             <div className="tg-form-grid">
               <div>
-                <div className="tg-form-group-title">发布内容</div>
+                <div className="tg-form-group-title">{t('campaigns:joinAndSend.publishContent')}</div>
                 <Segmented
                   value={mode}
                   onChange={(next) => setMode(next as 'text' | 'material')}
                   options={[
-                    { label: '文本', value: 'text' },
-                    { label: '素材', value: 'material' },
+                    { label: t('campaigns:joinAndSend.modeText'), value: 'text' },
+                    { label: t('campaigns:joinAndSend.modeMaterial'), value: 'material' },
                   ]}
                 />
                 {mode === 'text' ? (
                   <Form.Item name="text" style={{ marginTop: 'var(--tg-space-sm)' }}>
                     <Input.TextArea
-                      placeholder="进群后发送这段话；每个号发同一段"
+                      placeholder={t('campaigns:joinAndSend.textPlaceholder')}
                       autoSize={{ minRows: 5, maxRows: 10 }}
                     />
                   </Form.Item>
@@ -838,21 +939,21 @@ function JoinAndSendTab({ initialTargets = [] }: { initialTargets?: string[] }) 
                         />
                       )}
                     </Form.Item>
-                    <Form.Item label="配文（可选）" name="text">
+                    <Form.Item label={t('campaigns:joinAndSend.captionLabel')} name="text">
                       <Input.TextArea autoSize={{ minRows: 2, maxRows: 5 }} />
                     </Form.Item>
                   </>
                 )}
               </div>
               <div>
-                <div className="tg-form-group-title">目标群</div>
+                <div className="tg-form-group-title">{t('campaigns:joinAndSend.targetGroups')}</div>
                 <Space wrap style={{ marginBottom: 'var(--tg-space-sm)' }}>
                   <Button size="small" icon={<PlusOutlined />} onClick={() => setPickerOpen(true)}>
-                    从群情报选可发言群
+                    {t('campaigns:joinAndSend.pickFromIntel')}
                   </Button>
-                  <span className="tg-muted">一行一个，最多 100 个</span>
+                  <span className="tg-muted">{t('campaigns:joinAndSend.onePerLineLimit')}</span>
                 </Space>
-                <Form.Item name="targets" rules={[{ required: true, message: '至少一个群链接' }]}>
+                <Form.Item name="targets" rules={[{ required: true, message: t('campaigns:joinAndSend.targetsRequired') }]}>
                   <Input.TextArea
                     placeholder={'https://t.me/+AbCdEf123456\n@public_group\nt.me/another_group'}
                     autoSize={{ minRows: 5, maxRows: 10 }}
@@ -867,42 +968,45 @@ function JoinAndSendTab({ initialTargets = [] }: { initialTargets?: string[] }) 
             items={[
               {
                 key: 'rhythm',
-                label: '节奏与验证（已按保守值预设，通常不用改）',
+                label: t('campaigns:joinAndSend.rhythmPanelLabel'),
                 children: (
                   <div className="tg-form-grid">
-                    <Form.Item label="群间最小间隔（秒）" name="join_min_interval">
+                    <Form.Item label={t('campaigns:joinAndSend.joinMinInterval')} name="join_min_interval">
                       <InputNumber min={5} max={300} style={{ width: '100%' }} />
                     </Form.Item>
-                    <Form.Item label="群间最大间隔（秒）" name="join_max_interval">
+                    <Form.Item label={t('campaigns:joinAndSend.joinMaxInterval')} name="join_max_interval">
                       <InputNumber min={5} max={600} style={{ width: '100%' }} />
                     </Form.Item>
                     <Form.Item
-                      label="加群后等待（秒）"
+                      label={t('campaigns:joinAndSend.delayAfterJoin')}
                       name="delay_after_join"
-                      tooltip="固定等这么久再发言；0 = 用下面的发送间隔"
+                      tooltip={t('campaigns:joinAndSend.delayAfterJoinTooltip')}
                     >
                       <InputNumber min={0} max={600} style={{ width: '100%' }} />
                     </Form.Item>
-                    <Form.Item label="发送间隔最小（秒）" name="send_min_interval">
+                    <Form.Item label={t('campaigns:joinAndSend.sendMinInterval')} name="send_min_interval">
                       <InputNumber min={1} max={60} style={{ width: '100%' }} />
                     </Form.Item>
-                    <Form.Item label="发送间隔最大（秒）" name="send_max_interval">
+                    <Form.Item label={t('campaigns:joinAndSend.sendMaxInterval')} name="send_max_interval">
                       <InputNumber min={1} max={120} style={{ width: '100%' }} />
                     </Form.Item>
                     <Form.Item
-                      label="验证等待（秒）"
+                      label={t('campaigns:joinAndSend.verifyTimeout')}
                       name="verify_timeout"
-                      tooltip="等待入群验证消息的最长时间（佩奇 Cap / NuoMi Turnstile）"
+                      tooltip={t('campaigns:joinAndSend.verifyTimeoutTooltip')}
                     >
                       <InputNumber min={30} max={600} style={{ width: '100%' }} />
                     </Form.Item>
                     <Form.Item
-                      label="忽略活跃时段"
+                      label={t('campaigns:joinAndSend.ignoreActiveHours')}
                       name="ignore_active_hours"
                       valuePropName="checked"
-                      tooltip="打开后不受「活跃时段（默认 8-24 点）」限制；熔断与最小间隔照常"
+                      tooltip={t('campaigns:joinAndSend.ignoreActiveHoursTooltip')}
                     >
-                      <Switch checkedChildren="立即" unCheckedChildren="按时段" />
+                      <Switch
+                        checkedChildren={t('campaigns:joinAndSend.switchNow')}
+                        unCheckedChildren={t('campaigns:joinAndSend.switchByWindow')}
+                      />
                     </Form.Item>
                   </div>
                 ),
@@ -913,38 +1017,51 @@ function JoinAndSendTab({ initialTargets = [] }: { initialTargets?: string[] }) 
           <section className="tg-section">
             <div className="tg-section-head">
               <span className="tg-section-bar" />
-              <h2 className="tg-section-title">账号与执行状态</h2>
+              <h2 className="tg-section-title">{t('campaigns:joinAndSend.accountsSectionTitle')}</h2>
               <span className="tg-section-note">
-                自动模式按健康分挑号；轮次跑完一轮才开下一轮，提交后同一张表显示每号进度
+                {t('campaigns:joinAndSend.accountsSectionNote')}
               </span>
             </div>
             <div className="tg-form-grid" style={{ marginBottom: 'var(--tg-space-md)' }}>
-              <Form.Item label="账号挑选" tooltip="自动：按健康分优先从可用号里挑，不需要手动勾选">
+              <Form.Item label={t('campaigns:joinAndSend.accountPickLabel')} tooltip={t('campaigns:joinAndSend.accountPickTooltip')}>
                 <Switch
                   checked={autoAccounts}
                   onChange={setAutoAccounts}
-                  checkedChildren="自动"
-                  unCheckedChildren="手动"
+                  checkedChildren={t('campaigns:joinAndSend.switchAuto')}
+                  unCheckedChildren={t('campaigns:joinAndSend.switchManual')}
                 />
               </Form.Item>
               <Form.Item
-                label="每轮账号数"
+                label={t('campaigns:joinAndSend.dispatchLabel')}
+                tooltip={t('campaigns:joinAndSend.dispatchTooltip')}
+              >
+                <Segmented
+                  value={dispatch}
+                  onChange={(value) => setDispatch(value as 'round_robin' | 'each')}
+                  options={[
+                    { label: t('campaigns:joinAndSend.dispatchRoundRobin'), value: 'round_robin' },
+                    { label: t('campaigns:joinAndSend.dispatchEach'), value: 'each' },
+                  ]}
+                />
+              </Form.Item>
+              <Form.Item
+                label={t('campaigns:joinAndSend.accountsPerWave')}
                 name="accounts_per_wave"
-                tooltip="例如每轮 100 个号；0 = 全部账号一轮跑完"
+                tooltip={t('campaigns:joinAndSend.accountsPerWaveTooltip')}
               >
                 <InputNumber min={0} max={1000} style={{ width: '100%' }} />
               </Form.Item>
               <Form.Item
-                label="每号每轮群数"
+                label={t('campaigns:joinAndSend.groupsPerAccount')}
                 name="groups_per_account"
-                tooltip="例如 10 = 每个号每轮处理 10 个群；0 = 一个号一次处理全部群"
+                tooltip={t('campaigns:joinAndSend.groupsPerAccountTooltip')}
               >
                 <InputNumber min={0} max={100} style={{ width: '100%' }} />
               </Form.Item>
               <Form.Item
-                label="最多使用账号数"
+                label={t('campaigns:joinAndSend.maxAccounts')}
                 name="max_accounts"
-                tooltip="0 = 不限制；按健康分排序取前 N 个"
+                tooltip={t('campaigns:joinAndSend.maxAccountsTooltip')}
               >
                 <InputNumber min={0} max={500} style={{ width: '100%' }} />
               </Form.Item>
@@ -953,10 +1070,10 @@ function JoinAndSendTab({ initialTargets = [] }: { initialTargets?: string[] }) 
               {autoAccounts ? null : (
                 <>
                   <Button size="small" icon={<TeamOutlined />} onClick={() => setSelected(rows.map((item) => item.id))}>
-                    全选
+                    {t('common:selectAll')}
                   </Button>
                   <Button size="small" onClick={() => setSelected([])}>
-                    清空
+                    {t('campaigns:joinAndSend.clear')}
                   </Button>
                 </>
               )}
@@ -969,30 +1086,37 @@ function JoinAndSendTab({ initialTargets = [] }: { initialTargets?: string[] }) 
                   void accounts.reload();
                 }}
               >
-                刷新账号
+                {t('campaigns:joinAndSend.refreshAccounts')}
               </Button>
               <span className="tg-muted">
                 {autoAccounts ? (
                   <>
-                    自动挑选：可用{' '}
-                    <b>{rows.filter((item) => item.status === 'healthy' || item.status === 'limited').length}</b> 个号
+                    {t('campaigns:joinAndSend.autoPickPrefix')}
+                    <b>{rows.filter((item) => item.status === 'healthy' || item.status === 'limited').length}</b>
+                    {t('campaigns:joinAndSend.autoPickSuffix')}
                   </>
                 ) : (
                   <>
-                    已选 <b>{picked.length}</b> / {rows.length} 个号
+                    {t('campaigns:joinAndSend.manualPickPrefix')}
+                    <b>{picked.length}</b>
+                    {t('campaigns:joinAndSend.manualPickSuffix', { total: rows.length })}
                   </>
                 )}
               </span>
               {batchId ? (
                 <>
-                  <Tag color="blue">批次 {batchId.slice(0, 8)}</Tag>
+                  <Tag color="blue">{t('campaigns:joinAndSend.batchTag', { id: batchId.slice(0, 8) })}</Tag>
                   <span className="tg-muted">
                     {batch
-                      ? `运行 ${batch.counts?.running ?? 0} · 完成 ${batch.counts?.completed ?? 0} · 失败 ${batch.counts?.failed ?? 0}`
-                      : '同步中…'}
+                      ? t('campaigns:joinAndSend.batchSummary', {
+                          running: batch.counts?.running ?? 0,
+                          completed: batch.counts?.completed ?? 0,
+                          failed: batch.counts?.failed ?? 0,
+                        })
+                      : t('campaigns:joinAndSend.syncing')}
                   </span>
                   <Button size="small" onClick={() => navigate('/campaigns/batches')}>
-                    批次进度
+                    {t('campaigns:sections.batches')}
                   </Button>
                 </>
               ) : null}
@@ -1011,27 +1135,27 @@ function JoinAndSendTab({ initialTargets = [] }: { initialTargets?: string[] }) 
                       onChange: (keys) => setSelected(keys as string[]),
                     }
               }
-              pagination={{ pageSize: 10, size: 'small', showTotal: (total) => `共 ${total} 个号` }}
+              pagination={{ pageSize: 10, size: 'small', showTotal: (total) => t('campaigns:joinAndSend.totalAccounts', { total }) }}
             />
           </section>
         </div>
 
         <footer className="tg-submit-dock">
           <Button type="primary" size="large" htmlType="submit" icon={<RocketOutlined />} loading={submitting}>
-            提交任务
+            {t('campaigns:joinAndSend.submitButton')}
           </Button>
           <div className="tg-submit-hint">
-            <strong>提交即排队</strong>
-            <span>按轮次串行执行，每号逐群「加群 → 验证 → 发言」；批次进度页可随时终止</span>
+            <strong>{t('campaigns:joinAndSend.submitTitle')}</strong>
+            <span>{t('campaigns:joinAndSend.submitDesc')}</span>
           </div>
         </footer>
       </Form>
 
       <Modal
         open={pickerOpen}
-        title="从群情报选择可发言群"
+        title={t('campaigns:joinAndSend.pickerModalTitle')}
         width={820}
-        okText={`添加 ${Object.keys(pickedGroups).length} 个群`}
+        okText={t('campaigns:joinAndSend.pickerModalOk', { count: Object.keys(pickedGroups).length })}
         okButtonProps={{ disabled: !Object.keys(pickedGroups).length }}
         onOk={applyPickedGroups}
         onCancel={() => {
@@ -1042,7 +1166,7 @@ function JoinAndSendTab({ initialTargets = [] }: { initialTargets?: string[] }) 
         <Space wrap style={{ marginBottom: 'var(--tg-space-md)' }}>
           <Input.Search
             allowClear
-            placeholder="按关键词筛选群名 / 用户名"
+            placeholder={t('campaigns:joinAndSend.pickerSearchPlaceholder')}
             style={{ width: 300 }}
             onSearch={(value) => {
               setGroupPage(1);
@@ -1050,9 +1174,9 @@ function JoinAndSendTab({ initialTargets = [] }: { initialTargets?: string[] }) 
             }}
           />
           <Button icon={<ReloadOutlined />} onClick={() => void groups.reload()}>
-            刷新
+            {t('common:refresh')}
           </Button>
-          <span className="tg-muted">只列「可发言」的讨论组；没有邀请链接时用 @用户名</span>
+          <span className="tg-muted">{t('campaigns:joinAndSend.pickerHint')}</span>
         </Space>
         <Table<GroupProfileOut>
           size="small"
@@ -1108,6 +1232,7 @@ const PROFILE_TEMPLATE_FIELDS = [
 ] as const;
 
 function ProfileTemplates() {
+  const { t } = useTranslation(['campaigns', 'common']);
   const form = Form.useFormInstance();
   const [templates, setTemplates] = useState<Record<string, Record<string, unknown>>>(() => {
     try {
@@ -1137,33 +1262,33 @@ function ProfileTemplates() {
     persist({ ...templates, [name]: snapshot });
     setNaming(false);
     setDraftName('');
-    setMessage(`已保存模板「${name}」`);
+    setMessage(t('campaigns:profileTemplates.saved', { name }));
   };
 
   const applyTemplate = (name: string) => {
     form.setFieldsValue(templates[name]);
-    setMessage(`已套用模板「${name}」`);
+    setMessage(t('campaigns:profileTemplates.applied', { name }));
   };
 
   const removeTemplate = (name: string) => {
     const next = { ...templates };
     delete next[name];
     persist(next);
-    setMessage(`已删除模板「${name}」`);
+    setMessage(t('campaigns:profileTemplates.deleted', { name }));
   };
 
   const names = Object.keys(templates);
 
   return (
     <div className="tg-template-bar" style={{ gridColumn: '1 / -1' }}>
-      <span className="tg-template-label">资料模板</span>
-      {names.length === 0 && <span className="tg-template-empty">还没有模板，填好下面内容后点右侧保存</span>}
+      <span className="tg-template-label">{t('campaigns:profileTemplates.label')}</span>
+      {names.length === 0 && <span className="tg-template-empty">{t('campaigns:profileTemplates.empty')}</span>}
       {names.map((name) => (
         <span key={name} className="tg-template-chip">
-          <button type="button" onClick={() => applyTemplate(name)} title="套用这套资料">
+          <button type="button" onClick={() => applyTemplate(name)} title={t('campaigns:profileTemplates.applyTitle')}>
             {name}
           </button>
-          <button type="button" className="tg-template-del" onClick={() => removeTemplate(name)} title="删除">
+          <button type="button" className="tg-template-del" onClick={() => removeTemplate(name)} title={t('campaigns:profileTemplates.deleteTitle')}>
             ×
           </button>
         </span>
@@ -1173,17 +1298,17 @@ function ProfileTemplates() {
           <Input
             size="small"
             autoFocus
-            placeholder="模板名，例如「印尼号-男」"
+            placeholder={t('campaigns:profileTemplates.namePlaceholder')}
             value={draftName}
             style={{ width: 200 }}
             onChange={(event) => setDraftName(event.target.value)}
             onPressEnter={saveCurrent}
           />
-          <Button size="small" type="primary" onClick={saveCurrent}>保存</Button>
-          <Button size="small" onClick={() => setNaming(false)}>取消</Button>
+          <Button size="small" type="primary" onClick={saveCurrent}>{t('common:save')}</Button>
+          <Button size="small" onClick={() => setNaming(false)}>{t('common:cancel')}</Button>
         </span>
       ) : (
-        <Button size="small" onClick={() => setNaming(true)}>＋ 保存当前为模板</Button>
+        <Button size="small" onClick={() => setNaming(true)}>{t('campaigns:profileTemplates.saveCurrent')}</Button>
       )}
       {message && <span className="tg-template-msg">{message}</span>}
     </div>
@@ -1192,6 +1317,7 @@ function ProfileTemplates() {
 
 /** 节奏预设按钮：靠 Form.useFormInstance 拿到当前表单实例，一键套用整组参数 */
 function RhythmPresets() {
+  const { t } = useTranslation('campaigns');
   const form = Form.useFormInstance();
   return (
     <div
@@ -1199,19 +1325,23 @@ function RhythmPresets() {
       /* 这排预设是横向卡片组，必须独占整行；靠 CSS 选择器匹配容易失手，直接写死更稳 */
       style={{ gridColumn: '1 / -1' }}
     >
-      <span className="tg-preset-label">一键套用节奏：</span>
-      {RHYTHM_PRESETS.map((preset) => (
-        <button
-          key={preset.key}
-          type="button"
-          className="tg-preset-btn"
-          title={preset.detail}
-          onClick={() => form.setFieldsValue(preset.values)}
-        >
-          <b>{preset.label}</b>
-          <span>{preset.detail}</span>
-        </button>
-      ))}
+      <span className="tg-preset-label">{t('rhythmPresets.label')}</span>
+      {RHYTHM_PRESETS.map((preset) => {
+        const label = t(`rhythmPresets.${preset.key}Label`);
+        const detail = t(`rhythmPresets.${preset.key}Detail`);
+        return (
+          <button
+            key={preset.key}
+            type="button"
+            className="tg-preset-btn"
+            title={detail}
+            onClick={() => form.setFieldsValue(preset.values)}
+          >
+            <b>{label}</b>
+            <span>{detail}</span>
+          </button>
+        );
+      })}
     </div>
   );
 }
@@ -1225,6 +1355,7 @@ function ActionTab({
   scheduleAction,
   initialValues,
 }: ActionFormProps) {
+  const { t } = useTranslation('campaigns');
   const [scope, setScope] = useState<ScopeState>({ scope: 'all', limit: 200 });
   const [form] = Form.useForm();
   const [submitting, setSubmitting] = useState(false);
@@ -1249,7 +1380,7 @@ function ActionTab({
           start_in_minutes: 0,
           payload: taskPayload,
         });
-        notifySuccess('已加入定时队列，可在下方「正在定时」里查看与暂停');
+        notifySuccess(t('actionTab.scheduledSuccess'));
         setScheduleTick((n) => n + 1);
         return;
       }
@@ -1269,8 +1400,8 @@ function ActionTab({
           <p className="tg-page-desc">{description}</p>
         </div>
         <div className="tg-page-head-meta">
-          <span className="tg-chip">错峰入队</span>
-          <span className="tg-chip tg-chip-soft">Worker 执行</span>
+          <span className="tg-chip">{t('actionTab.chipStaggered')}</span>
+          <span className="tg-chip tg-chip-soft">{t('actionTab.chipWorker')}</span>
         </div>
       </header>
 
@@ -1281,22 +1412,22 @@ function ActionTab({
           <section className="tg-section">
             <div className="tg-section-head">
               <span className="tg-section-bar" />
-              <h2 className="tg-section-title">定时队列</h2>
+              <h2 className="tg-section-title">{t('actionTab.scheduleSectionTitle')}</h2>
               <span className="tg-section-note">
-                打开后提交不是立刻发，而是每 N 分钟自动跑一批；下方「正在定时」实时显示下次执行时间
+                {t('actionTab.scheduleSectionNote')}
               </span>
             </div>
             <div className="tg-flex" style={{ gap: 'var(--tg-space-xl)', flexWrap: 'wrap', alignItems: 'flex-end' }}>
-              <Form.Item label="加入定时队列" name="schedule_enabled" valuePropName="checked" initialValue={false}>
+              <Form.Item label={t('actionTab.scheduleEnabledLabel')} name="schedule_enabled" valuePropName="checked" initialValue={false}>
                 <Switch />
               </Form.Item>
-              <Form.Item label="间隔（分钟）" name="schedule_interval" initialValue={30}>
+              <Form.Item label={t('actionTab.scheduleIntervalLabel')} name="schedule_interval" initialValue={30}>
                 <InputNumber min={1} max={1440} style={{ width: 140 }} />
               </Form.Item>
               <Form.Item
-                label="执行时间窗"
+                label={t('actionTab.scheduleWindowLabel')}
                 name="schedule_window"
-                tooltip="留空 = 不限；写成 09:00-22:00 时，窗口外的任务会自动顺延到窗口开始再发"
+                tooltip={t('actionTab.scheduleWindowTooltip')}
               >
                 <Input placeholder="09:00-22:00" style={{ width: 180 }} />
               </Form.Item>
@@ -1307,9 +1438,9 @@ function ActionTab({
         <section className="tg-section">
           <div className="tg-section-head">
             <span className="tg-section-bar" />
-            <h2 className="tg-section-title">账号范围</h2>
+            <h2 className="tg-section-title">{t('actionTab.scopeSectionTitle')}</h2>
             <span className="tg-section-note">
-              冻结 / 失效 / 停用的号会自动跳过（它们发不出去消息）；检测 / 申诉解封 / 官方养号不受此限制
+              {t('actionTab.scopeSectionNote')}
             </span>
           </div>
           <ScopeFields value={scope} onChange={setScope} />
@@ -1317,11 +1448,11 @@ function ActionTab({
 
         <footer className="tg-submit-dock">
           <Button type="primary" size="large" htmlType="submit" icon={<RocketOutlined />} loading={submitting}>
-            提交任务
+            {t('actionTab.submitButton')}
           </Button>
           <div className="tg-submit-hint">
-            <strong>提交即排队</strong>
-            <span>按「一号一任务」错峰入队，由 Worker 执行；进度在「批次进度」页查看与取消</span>
+            <strong>{t('actionTab.submitTitle')}</strong>
+            <span>{t('actionTab.submitDesc')}</span>
           </div>
         </footer>
       </Form>
@@ -1336,6 +1467,7 @@ function ActionTab({
  * 差集由后端算——已经在群里的号会跳过，不重复加群（重复加群最容易吃风控）。
  */
 function JoinMissingPanel() {
+  const { t } = useTranslation('campaigns');
   const options = useAsyncData(() => campaignApi.groupOptions(), []);
   const [picked, setPicked] = useState<string[]>([]);
   const [busy, setBusy] = useState(false);
@@ -1360,7 +1492,7 @@ function JoinMissingPanel() {
         mode="multiple"
         showSearch
         allowClear
-        placeholder="选要覆盖的群（可多选）"
+        placeholder={t('joinMissing.placeholder')}
         optionFilterProp="label"
         loading={options.loading}
         value={picked}
@@ -1369,11 +1501,15 @@ function JoinMissingPanel() {
         style={{ width: '100%' }}
         options={(options.data ?? []).map((row) => ({
           value: row.value,
-          label: `${row.title || row.value}（${row.kind === 'channel' ? '频道·需管理员' : '群'}，${row.account_count} 个号在里面）`,
+          label: t('joinMissing.optionLabel', {
+            title: row.title || row.value,
+            kind: row.kind === 'channel' ? t('joinMissing.kindChannel') : t('joinMissing.kindGroup'),
+            count: row.account_count,
+          }),
         }))}
       />
       <Button type="primary" ghost loading={busy} disabled={!picked.length} onClick={() => void run()}>
-        让所有号都进这些群
+        {t('joinMissing.submit')}
       </Button>
     </Space>
   );
@@ -1391,6 +1527,7 @@ function GroupPicker({
   value?: string[];
   onChange?: (next: string[]) => void;
 }) {
+  const { t } = useTranslation(['campaigns', 'common']);
   const options = useAsyncData(() => campaignApi.groupOptions(), []);
   const rows = options.data ?? [];
   const selected = value ?? [];
@@ -1405,7 +1542,7 @@ function GroupPicker({
       mode="multiple"
       showSearch
       allowClear
-      placeholder="从已同步的群里挑（可搜群名 / @用户名）"
+      placeholder={t('campaigns:groupPicker.placeholder')}
       loading={options.loading}
       optionFilterProp="label"
       maxTagCount="responsive"
@@ -1423,7 +1560,7 @@ function GroupPicker({
               onMouseDown={(event) => event.preventDefault()}
               onClick={selectAll}
             >
-              全选（{allValues.length}）
+              {t('campaigns:groupPicker.selectAllWithCount', { count: allValues.length })}
             </Button>
             <Button
               type="link"
@@ -1432,9 +1569,9 @@ function GroupPicker({
               onMouseDown={(event) => event.preventDefault()}
               onClick={clearAll}
             >
-              清空
+              {t('campaigns:groupPicker.clear')}
             </Button>
-            <Typography.Text type="secondary">已选 {selected.length} 个</Typography.Text>
+            <Typography.Text type="secondary">{t('common:selectedCount', { count: selected.length })}</Typography.Text>
           </Space>
           {menu}
         </>
@@ -1442,9 +1579,13 @@ function GroupPicker({
       options={rows.map((row) => ({
         value: row.value,
         // 频道只有管理员能发言：标出来，不然选完只会收到 ChatAdminRequiredError
-        label: `${row.title || row.value}（${row.kind === 'channel' ? '频道·需管理员' : '群'}，${row.account_count} 个号在里面）`,
+        label: t('campaigns:joinMissing.optionLabel', {
+          title: row.title || row.value,
+          kind: row.kind === 'channel' ? t('campaigns:joinMissing.kindChannel') : t('campaigns:joinMissing.kindGroup'),
+          count: row.account_count,
+        }),
       }))}
-      notFoundContent={options.loading ? '加载中…' : '还没有已同步的群：先去「会话」页把各号的群列表同步一次'}
+      notFoundContent={options.loading ? t('campaigns:groupPicker.loading') : t('campaigns:groupPicker.empty')}
     />
   );
 }
@@ -1455,6 +1596,7 @@ function GroupPicker({
  * 计划到点由服务端调度器展开成任务，这里只做展示与三件事——暂停/启用、立即跑一轮、删掉。
  */
 function SchedulePanel({ refreshKey = 0 }: { refreshKey?: number }) {
+  const { t } = useTranslation(['campaigns', 'common', 'enums']);
   const schedules = useAsyncData(() => campaignScheduleApi.list(), [refreshKey]);
   const [busyId, setBusyId] = useState<string | null>(null);
 
@@ -1464,7 +1606,7 @@ function SchedulePanel({ refreshKey = 0 }: { refreshKey?: number }) {
     setBusyId(row.id);
     try {
       await campaignScheduleApi.update(row.id, { enabled: !row.enabled });
-      toast.success(row.enabled ? '已暂停，不再自动跑' : '已启用');
+      toast.success(row.enabled ? t('campaigns:schedulePanel.paused') : t('campaigns:schedulePanel.enabled'));
       void schedules.reload();
     } catch {
       /* client 已统一提示 */
@@ -1477,7 +1619,7 @@ function SchedulePanel({ refreshKey = 0 }: { refreshKey?: number }) {
     setBusyId(row.id);
     try {
       await campaignScheduleApi.runNow(row.id);
-      notifySuccess('已提交一轮，进度去「批次进度」看');
+      notifySuccess(t('campaigns:schedulePanel.runNowSuccess'));
       void schedules.reload();
     } catch {
       /* client 已统一提示 */
@@ -1490,7 +1632,7 @@ function SchedulePanel({ refreshKey = 0 }: { refreshKey?: number }) {
     setBusyId(row.id);
     try {
       await campaignScheduleApi.remove(row.id);
-      notifySuccess('计划已删除');
+      notifySuccess(t('campaigns:schedulePanel.deleted'));
       void schedules.reload();
     } catch {
       /* client 已统一提示 */
@@ -1503,19 +1645,19 @@ function SchedulePanel({ refreshKey = 0 }: { refreshKey?: number }) {
     <section className="tg-section" style={{ marginTop: 'var(--tg-space-xl)' }}>
       <div className="tg-section-head">
         <span className="tg-section-bar" />
-        <h2 className="tg-section-title">正在定时</h2>
+        <h2 className="tg-section-title">{t('campaigns:schedulePanel.title')}</h2>
         <span className="tg-section-note">
-          到点自动提交一批（按上面配置的目标 / 文案 / 账号范围）；暂停后不再自动跑，已排队的任务不受影响
+          {t('campaigns:schedulePanel.note')}
         </span>
         <Button size="small" icon={<ReloadOutlined />} loading={schedules.loading} onClick={() => void schedules.reload()}>
-          刷新
+          {t('common:refresh')}
         </Button>
       </div>
 
       {rows.length === 0 ? (
         <Empty
           image={Empty.PRESENTED_IMAGE_SIMPLE}
-          description="还没有定时计划：上面填好内容，打开「加入定时队列」再提交即可"
+          description={t('campaigns:schedulePanel.empty')}
         />
       ) : (
         <div className="tg-stack" style={{ gap: 'var(--tg-space-md)' }}>
@@ -1533,29 +1675,31 @@ function SchedulePanel({ refreshKey = 0 }: { refreshKey?: number }) {
                 opacity: row.enabled ? 1 : 0.6,
               }}
             >
-              <Tag color={row.enabled ? 'green' : 'default'}>{row.enabled ? '定时中' : '已暂停'}</Tag>
+              <Tag color={row.enabled ? 'green' : 'default'}>
+                {row.enabled ? t('campaigns:schedulePanel.statusActive') : t('campaigns:schedulePanel.statusPaused')}
+              </Tag>
               <span style={{ fontWeight: 'var(--tg-font-weight-medium)' }}>{row.name}</span>
-              <span className="tg-muted">{row.action_label}</span>
+              <span className="tg-muted">{resolveEnumLabel(`taskType.${row.action}`, row.action_label, row.action)}</span>
               <span className="tg-mono tg-muted">{row.target_summary}</span>
-              <span className="tg-muted">每 {row.interval_minutes} 分钟</span>
-              {row.send_window ? <span className="tg-muted">窗口 {row.send_window}</span> : null}
+              <span className="tg-muted">{t('campaigns:schedulePanel.everyMinutes', { minutes: row.interval_minutes })}</span>
+              {row.send_window ? <span className="tg-muted">{t('campaigns:schedulePanel.window', { window: row.send_window })}</span> : null}
               <span className="tg-muted">
-                下次 {formatTime(row.next_run_at)}
-                {row.run_count ? ` · 已跑 ${formatNumber(row.run_count)} 次` : ''}
+                {t('campaigns:schedulePanel.nextRun', { time: formatTime(row.next_run_at) })}
+                {row.run_count ? t('campaigns:schedulePanel.runCountSuffix', { count: formatNumber(row.run_count) }) : ''}
               </span>
               {row.last_error ? (
                 <Tooltip title={row.last_error}>
                   <span className="tg-text-danger tg-clamp-cell" style={{ maxWidth: 220 }}>
-                    上次失败：{row.last_error}
+                    {t('campaigns:schedulePanel.lastError', { error: row.last_error })}
                   </span>
                 </Tooltip>
               ) : null}
               <Space size={8} style={{ marginLeft: 'auto' }}>
                 <Button size="small" loading={busyId === row.id} onClick={() => void toggle(row)}>
-                  {row.enabled ? '暂停' : '启用'}
+                  {row.enabled ? t('campaigns:schedulePanel.pause') : t('campaigns:schedulePanel.enable')}
                 </Button>
                 <Button size="small" type="primary" ghost loading={busyId === row.id} onClick={() => void runNow(row)}>
-                  立即执行
+                  {t('campaigns:schedulePanel.runNow')}
                 </Button>
                 <Button
                   size="small"
@@ -1579,32 +1723,25 @@ function SchedulePanel({ refreshKey = 0 }: { refreshKey?: number }) {
  *  数值偏保守是故意的——号被封的代价远大于发慢一点。 */
 const RHYTHM_PRESETS = [
   {
-    key: 'safe',
-    label: '保守养号',
-    detail: '新号 / 刚解封的号用这套：间隔长、白天发、每天少发',
+    key: 'safe' as const,
     values: { min_interval: 25, max_interval: 70, send_window: '10:00-22:00', daily_quota: 20 },
   },
   {
-    key: 'normal',
-    label: '标准推广',
-    detail: '日常批量默认值：中等间隔、全天主要时段、每号每天 50 条',
+    key: 'normal' as const,
     values: { min_interval: 8, max_interval: 25, send_window: '09:00-23:00', daily_quota: 50 },
   },
   {
-    key: 'fast',
-    label: '快速触达',
-    detail: '老号 / 急需铺量：间隔短、白天全时段、每号每天 120 条（风险自负）',
+    key: 'fast' as const,
     values: { min_interval: 3, max_interval: 10, send_window: '08:00-24:00', daily_quota: 120 },
   },
   {
-    key: 'unlimited',
-    label: '不限时段',
-    detail: '配合已有配额的号源：清掉时间窗与配额限制，交给节流自己管',
+    key: 'unlimited' as const,
     values: { min_interval: 3, max_interval: 8, send_window: '', daily_quota: 0 },
   },
 ];
 
 export default function Campaigns() {
+  const { t } = useTranslation('campaigns');
   const navigate = useNavigate();
   const location = useLocation();
   // 群情报页「同步到加群」把链接放在路由 state 里：进入页面时读一次，随后清掉 state，下次进来不残留
@@ -1622,19 +1759,19 @@ export default function Campaigns() {
   // 吵群 / 拟人发言）在 UI 隐藏，旧地址会被下面的 !current 判断重定向回素材库。
   const VISIBLE_SECTIONS = new Set(['materials', 'join-send', 'batches']);
   const sections = [
-    { key: 'materials', label: '素材库', children: <MaterialsTab /> },
+    { key: 'materials', label: t('sections.materials'), children: <MaterialsTab /> },
     {
       key: 'join-send',
-      label: '加群群发',
+      label: t('sections.joinSend'),
       children: <JoinAndSendTab initialTargets={syncedJoinTargets} />,
     },
     {
       key: 'bulk-pm',
-      label: '批量私信',
+      label: t('sections.bulkPm'),
       children: (
         <ActionTab
-          title="批量私信"
-          description="一批号各向目标逐个发消息；文本池给多条时按账号顺序分配给不同号，说的话不重样。目标支持 @用户名、手机号或数字用户 ID，一行一个或逗号分隔。"
+          title={t('bulkPm.title')}
+          description={t('bulkPm.description')}
           buildPayload={(scope, values) => ({
             ...scopePayload(scope),
             targets: splitField(values.targets),
@@ -1660,15 +1797,15 @@ export default function Campaigns() {
           })}
           submit={(payload) => campaignApi.bulkPm(payload as unknown as BulkPmRequest)}
         >
-          <div className="tg-form-group-title">内容：发什么、发给谁</div>
-          <Form.Item label="私信目标" name="targets" rules={[{ required: true, message: '至少一个目标' }]}>
+          <div className="tg-form-group-title">{t('bulkPm.groupContent')}</div>
+          <Form.Item label={t('bulkPm.targetsLabel')} name="targets" rules={[{ required: true, message: t('bulkPm.targetsRequired') }]}>
             <Input.TextArea placeholder="@user1\n@user2\n+12025550143" autoSize={{ minRows: 3, maxRows: 6 }} style={{ maxWidth: '100%' }} />
           </Form.Item>
-          <Form.Item label="文本（所有号同一句）" name="text">
-            <Input.TextArea placeholder="填了统一文本就忽略文本池" autoSize={{ minRows: 3, maxRows: 4 }} style={{ maxWidth: '100%' }} />
+          <Form.Item label={t('bulkPm.textLabel')} name="text">
+            <Input.TextArea placeholder={t('bulkPm.textPlaceholder')} autoSize={{ minRows: 3, maxRows: 4 }} style={{ maxWidth: '100%' }} />
           </Form.Item>
-          <Form.Item label="文本池（按账号取模分配，每行一条）" name="texts">
-            <Input.TextArea placeholder="第一号发这句\n第二号发这句\n…" autoSize={{ minRows: 3, maxRows: 6 }} style={{ maxWidth: '100%' }} />
+          <Form.Item label={t('bulkPm.textsLabel')} name="texts">
+            <Input.TextArea placeholder={t('bulkPm.textsPlaceholder')} autoSize={{ minRows: 3, maxRows: 6 }} style={{ maxWidth: '100%' }} />
           </Form.Item>
           <Form.Item noStyle shouldUpdate={(prev, next) => prev.material_id !== next.material_id}>
             {({ getFieldValue, setFieldValue }) => (
@@ -1679,102 +1816,102 @@ export default function Campaigns() {
             )}
           </Form.Item>
           {/* 节奏与配额：什么时候发、发多快、一天发多少 */}
-          <div className="tg-form-group-title">节奏与配额</div>
+          <div className="tg-form-group-title">{t('bulkPm.groupRhythm')}</div>
           <RhythmPresets />
           <div className="tg-form-grid">
-            <Form.Item label="目标间最小间隔（秒）" name="min_interval" initialValue={3}>
+            <Form.Item label={t('bulkPm.minInterval')} name="min_interval" initialValue={3}>
               <InputNumber min={1} max={60} style={{ width: '100%' }} />
             </Form.Item>
-            <Form.Item label="最大间隔（秒）" name="max_interval" initialValue={8}>
+            <Form.Item label={t('bulkPm.maxInterval')} name="max_interval" initialValue={8}>
               <InputNumber min={1} max={120} style={{ width: '100%' }} />
             </Form.Item>
             <Form.Item
-              label="文字格式（富文本）"
+              label={t('bulkPm.parseModeLabel')}
               name="parse_mode"
-              tooltip="Markdown：**加粗**、> 引用、`代码`；HTML：<b>加粗</b>。留空 = 纯文本"
+              tooltip={t('bulkPm.parseModeTooltip')}
             >
               <Select
                 style={{ width: '100%' }}
                 allowClear
-                placeholder="纯文本"
+                placeholder={t('bulkPm.parseModePlain')}
                 options={[
-                  { value: 'md', label: 'Markdown（加粗 / 引用 / 代码块）' },
-                  { value: 'html', label: 'HTML（<b> 等标签）' },
+                  { value: 'md', label: t('bulkPm.parseModeMd') },
+                  { value: 'html', label: t('bulkPm.parseModeHtml') },
                 ]}
               />
             </Form.Item>
             <Form.Item
-              label="转发模式（可选）"
+              label={t('bulkPm.forwardLabel')}
               className="tg-pm-forward"
-              tooltip="填了来源会话与消息 id 就转发那条消息，而不是发文本；勾上隐藏来源则不显示原频道署名"
+              tooltip={t('bulkPm.forwardTooltip')}
             >
               <Space size="small" wrap>
                 <Form.Item name="forward_from_chat_id" noStyle>
-                  <InputNumber placeholder="来源 chat_id（-100...）" style={{ width: 210 }} />
+                  <InputNumber placeholder={t('bulkPm.forwardChatIdPlaceholder')} style={{ width: 210 }} />
                 </Form.Item>
                 <Form.Item name="forward_from_message_id" noStyle>
-                  <InputNumber placeholder="消息 id" style={{ width: 130 }} />
+                  <InputNumber placeholder={t('bulkPm.forwardMessageIdPlaceholder')} style={{ width: 130 }} />
                 </Form.Item>
                 <Form.Item name="drop_author" valuePropName="checked" noStyle>
-                  <Checkbox>隐藏转发来源</Checkbox>
+                  <Checkbox>{t('bulkPm.dropAuthor')}</Checkbox>
                 </Form.Item>
               </Space>
             </Form.Item>
             <Form.Item
-              label="发送时间窗（定时）"
+              label={t('bulkPm.sendWindowLabel')}
               name="send_window"
               className="tg-pm-num"
-              tooltip="只在这个时间段内发；不在窗内会自动顺延到窗口开始，不用手动掐点。留空 = 不限"
+              tooltip={t('bulkPm.sendWindowTooltip')}
             >
-              <Input placeholder="09:00-23:00（留空 = 不限）" allowClear />
+              <Input placeholder={t('bulkPm.sendWindowPlaceholder')} allowClear />
             </Form.Item>
             <Form.Item
-              label="每号每日配额（定量）"
+              label={t('bulkPm.dailyQuotaLabel')}
               name="daily_quota"
               className="tg-pm-num"
-              tooltip="每个号每天最多发多少条，超了自动顺延到次日。0 = 不限"
+              tooltip={t('bulkPm.dailyQuotaTooltip')}
             >
-              <InputNumber min={0} max={2000} style={{ width: '100%' }} placeholder="0 = 不限" />
+              <InputNumber min={0} max={2000} style={{ width: '100%' }} placeholder={t('bulkPm.dailyQuotaPlaceholder')} />
             </Form.Item>
             <Form.Item
-              label="口语化微调"
+              label={t('bulkPm.naturalizeLabel')}
               name="naturalize"
               valuePropName="checked"
               initialValue={false}
               className="tg-field-switch"
-              tooltip="在文本里做轻微改写（同义替换、标点变化），让不同号发出去的话不完全一样"
+              tooltip={t('bulkPm.naturalizeTooltip')}
             >
               <Switch />
             </Form.Item>
           </div>
-          <div className="tg-form-group-title">发送通道</div>
+          <div className="tg-form-group-title">{t('bulkPm.groupChannel')}</div>
           <div className="tg-form-grid">
             <Form.Item
-              label="用谁发"
+              label={t('bulkPm.viaBotLabel')}
               name="via_bot"
               initialValue={false}
               className="tg-pm-via"
-              tooltip="用 Bot 发：不占账号每日配额、不受账号冻结影响；但 Telegram 规定 Bot 只能给**和它交互过**的用户发私信，陌生目标会失败"
+              tooltip={t('bulkPm.viaBotTooltip')}
             >
               <Segmented
                 block
                 options={[
-                  { label: '用账号私信', value: false },
-                  { label: '用 Bot 私信', value: true },
+                  { label: t('bulkPm.viaAccount'), value: false },
+                  { label: t('bulkPm.viaBot'), value: true },
                 ]}
               />
             </Form.Item>
             <Form.Item noStyle shouldUpdate={(prev, next) => prev.via_bot !== next.via_bot}>
               {({ getFieldValue }) =>
                 getFieldValue('via_bot') ? (
-                  <Form.Item label="选择 Bot（必填）" name="bot_id" className="tg-pm-bot">
+                  <Form.Item label={t('bulkPm.botSelectLabel')} name="bot_id" className="tg-pm-bot">
                     <Select
-                      placeholder="选一个已配置的 Bot"
+                      placeholder={t('bulkPm.botSelectPlaceholder')}
                       options={(bots.data ?? []).map((item: { id: string; name: string; bot_username?: string | null }) => ({
                         value: item.id,
                         label: `@${item.bot_username || item.name}`,
                       }))}
-                      notFoundContent="还没有配置 Bot"
+                      notFoundContent={t('bulkPm.botSelectEmpty')}
                     />
                   </Form.Item>
                 ) : null
@@ -1782,28 +1919,28 @@ export default function Campaigns() {
             </Form.Item>
           </div>
 
-          <div className="tg-form-group-title">执行方式</div>
+          <div className="tg-form-group-title">{t('bulkPm.groupExecution')}</div>
           <div className="tg-form-grid">
             <Form.Item
-              label="分发方式"
+              label={t('bulkPm.dispatchLabel')}
               name="dispatch"
               initialValue="each"
               className="tg-pm-dispatch"
-            tooltip="轮询分配：目标按账号轮流切分，一个目标只由一个号处理——多号并行分摊，互不重复打扰"
-          >
-            <Segmented
-              options={[
-                { label: '每个号都发一遍', value: 'each' },
-                { label: '按账号轮询分配目标', value: 'round_robin' },
-              ]}
-            />
+              tooltip={t('bulkPm.dispatchTooltip')}
+            >
+              <Segmented
+                options={[
+                  { label: t('bulkPm.dispatchEach'), value: 'each' },
+                  { label: t('bulkPm.dispatchRoundRobin'), value: 'round_robin' },
+                ]}
+              />
             </Form.Item>
             <Form.Item
-              label="无号时自动补号"
+              label={t('bulkPm.autoSupplyLabel')}
               name="auto_supply"
               valuePropName="checked"
               className="tg-field-switch tg-pm-supply"
-              tooltip="可用的号不够承担这批目标时，自动从号池补状态正常的号；补进来的号同样受配额与节流约束"
+              tooltip={t('bulkPm.autoSupplyTooltip')}
             >
               <Switch />
             </Form.Item>
@@ -1813,11 +1950,11 @@ export default function Campaigns() {
     },
     {
       key: 'broadcast',
-      label: '群发',
+      label: t('sections.broadcast'),
       children: (
         <ActionTab
-          title="批量群发"
-          description="一批号各向指定群发一条。目标群支持 @用户名、数字群 ID 或已同步的会话 ID。"
+          title={t('broadcast.title')}
+          description={t('broadcast.description')}
           buildPayload={(scope, values) => ({
             ...scopePayload(scope),
             target_groups: Array.isArray(values.target_groups) ? (values.target_groups as string[]) : [],
@@ -1843,23 +1980,23 @@ export default function Campaigns() {
         >
           {/* 排版 class（.tg-bc-*）只在本页字段上用，规则见 styles.css 末尾「群发页字段排布」。
               两行排满 12 列：文本 / 文本池各 6 列；目标群是主输入项占 8 列，两个开关压成窄条各 2 列。 */}
-          <Form.Item label="文本（所有号同一句）" name="text" className="tg-bc-text">
+          <Form.Item label={t('broadcast.textLabel')} name="text" className="tg-bc-text">
             <Input.TextArea autoSize={{ minRows: 3, maxRows: 6 }} />
           </Form.Item>
-          <Form.Item label="文本池（按账号取模分配，每行一条）" name="texts" className="tg-bc-text">
+          <Form.Item label={t('broadcast.textsLabel')} name="texts" className="tg-bc-text">
             <Input.TextArea autoSize={{ minRows: 3, maxRows: 6 }} />
           </Form.Item>
           <Form.Item
-            label="目标群（可多选）"
+            label={t('broadcast.targetGroupsLabel')}
             name="target_groups"
             className="tg-bc-target"
-            rules={[{ required: true, message: '至少选一个群' }]}
-            tooltip="列表来自各号已同步的会话；括号里的数字是「这个群里有几个号能发」——提交只会派给这些号"
+            rules={[{ required: true, message: t('broadcast.targetGroupsRequired') }]}
+            tooltip={t('broadcast.targetGroupsTooltip')}
           >
             <GroupPicker />
           </Form.Item>
           <Form.Item
-            label="口语化微调"
+            label={t('broadcast.naturalizeLabel')}
             name="naturalize"
             valuePropName="checked"
             initialValue={false}
@@ -1868,35 +2005,35 @@ export default function Campaigns() {
             <Switch />
           </Form.Item>
           <Form.Item
-            label="只发给群成员"
+            label={t('broadcast.onlyMembersLabel')}
             name="only_members"
             valuePropName="checked"
             initialValue={true}
             className="tg-bc-toggle"
-            tooltip="提交时自动过滤掉「不在这个群里」的号——它们发出去只会失败，还白占队列、多挨一次限流"
+            tooltip={t('broadcast.onlyMembersTooltip')}
           >
             <Switch />
           </Form.Item>
           <Form.Item
-            label="忽略活跃时段"
+            label={t('broadcast.ignoreActiveHoursLabel')}
             name="ignore_active_hours"
             valuePropName="checked"
             initialValue={false}
             className="tg-bc-toggle"
-            tooltip="打开后不受「活跃时段（默认 8-24 点）」限制，凌晨也立即发；最小间隔 / 每日配额 / 熔断照常"
+            tooltip={t('broadcast.ignoreActiveHoursTooltip')}
           >
-            <Switch checkedChildren="立即" unCheckedChildren="按时段" />
+            <Switch checkedChildren={t('joinAndSend.switchNow')} unCheckedChildren={t('joinAndSend.switchByWindow')} />
           </Form.Item>
         </ActionTab>
       ),
     },
     {
       key: 'material-send',
-      label: '素材群发',
+      label: t('sections.materialSend'),
       children: (
         <ActionTab
-          title="素材群发"
-          description="把素材库里的文字或媒体发给目标：填目标群就发到群里；填私信目标则逐个私信。"
+          title={t('materialSend.title')}
+          description={t('materialSend.description')}
           buildPayload={(scope, values) => ({
             ...scopePayload(scope),
             material_id: String(values.material_id ?? ''),
@@ -1920,34 +2057,34 @@ export default function Campaigns() {
           })}
           submit={(payload) => campaignApi.materialSend(payload as unknown as MaterialSendRequest)}
         >
-          <Form.Item label="素材" name="material_id" className="tg-field-line" rules={[{ required: true, message: '先到素材库建一条' }]}>
+          <Form.Item label={t('materialSend.materialLabel')} name="material_id" className="tg-field-line" rules={[{ required: true, message: t('materialSend.materialRequired') }]}>
             <MaterialSelect />
           </Form.Item>
-          <Form.Item label="目标群（二选一）" name="target_group" className="tg-field-line">
-            <Input placeholder="@用户名 / 群 ID / 会话 ID" />
+          <Form.Item label={t('materialSend.targetGroupLabel')} name="target_group" className="tg-field-line">
+            <Input placeholder={t('materialSend.targetGroupPlaceholder')} />
           </Form.Item>
-          <Form.Item label="私信目标（二选一，每行一个）" name="targets" className="tg-field-line">
+          <Form.Item label={t('materialSend.targetsLabel')} name="targets" className="tg-field-line">
             <Input.TextArea autoSize={{ minRows: 2, maxRows: 4 }} />
           </Form.Item>
           <Space wrap className="tg-mat-intervals">
-            <Form.Item label="最小间隔（秒）" name="min_interval" initialValue={3}>
+            <Form.Item label={t('materialSend.minInterval')} name="min_interval" initialValue={3}>
               <InputNumber min={1} max={60} />
             </Form.Item>
-            <Form.Item label="最大间隔（秒）" name="max_interval" initialValue={8}>
+            <Form.Item label={t('materialSend.maxInterval')} name="max_interval" initialValue={8}>
               <InputNumber min={1} max={120} />
             </Form.Item>
           </Space>
           <Form.Item
-            label="分发方式"
+            label={t('materialSend.dispatchLabel')}
             name="dispatch"
             initialValue="each"
             className="tg-mat-dispatch"
-            tooltip="轮询分配：目标列表按账号轮流切分，多号并行分摊，互不重复"
+            tooltip={t('materialSend.dispatchTooltip')}
           >
             <Segmented
               options={[
-                { label: '每个号都发一遍', value: 'each' },
-                { label: '按账号轮询分配目标', value: 'round_robin' },
+                { label: t('materialSend.dispatchEach'), value: 'each' },
+                { label: t('materialSend.dispatchRoundRobin'), value: 'round_robin' },
               ]}
             />
           </Form.Item>
@@ -1956,11 +2093,11 @@ export default function Campaigns() {
     },
     {
       key: 'join',
-      label: '加群',
+      label: t('sections.join'),
       children: (
         <ActionTab
-          title="批量加群"
-          description="一批号加入一个或多个群：邀请链接（t.me/+...）或 @公开群用户名，一行一个。已加入的自动跳过；群多时可选「按账号轮询分配」，让每个号分头进不同的群。"
+          title={t('join.title')}
+          description={t('join.description')}
           buildPayload={(scope, values) => ({
             ...scopePayload(scope),
             targets: splitField(values.targets),
@@ -1981,16 +2118,16 @@ export default function Campaigns() {
           initialValues={syncedJoinTargets.length ? { targets: syncedJoinTargets.join('\n') } : undefined}
         >
           <Form.Item
-            label="补齐覆盖（让所有号都进这些群）"
+            label={t('join.coverLabel')}
             className="tg-join-cover"
-            tooltip="按「哪些号在哪些群」自动算差集：已经在群里的号跳过，只给缺的号排加群任务；一个号一条任务，群与群之间按 20–60 秒间隔慢慢加"
+            tooltip={t('join.coverTooltip')}
           >
             <JoinMissingPanel />
           </Form.Item>
           <Form.Item
-            label="邀请链接或公开群（一行一个，可批量）"
+            label={t('join.targetsLabel')}
             name="targets"
-            rules={[{ required: true, message: '至少填一个群' }]}
+            rules={[{ required: true, message: t('join.targetsRequired') }]}
           >
             <Input.TextArea
               placeholder={'t.me/+AbCdEfGh1234\n@public_group\nt.me/another_group'}
@@ -1998,57 +2135,57 @@ export default function Campaigns() {
             />
           </Form.Item>
           <Form.Item
-            label="分发方式"
+            label={t('join.dispatchLabel')}
             name="dispatch"
             initialValue="each"
             className="tg-join-dispatch"
-            tooltip="轮询分配：群按账号轮流切分，一个群只由一个号去加——避免所有号同时挤进同一个群"
+            tooltip={t('join.dispatchTooltip')}
           >
             <Segmented
               options={[
-                { label: '每个号都加全部群', value: 'each' },
-                { label: '按账号轮询分配群', value: 'round_robin' },
+                { label: t('join.dispatchEach'), value: 'each' },
+                { label: t('join.dispatchRoundRobin'), value: 'round_robin' },
               ]}
             />
           </Form.Item>
           <Form.Item
-            label="自动过入群验证"
+            label={t('join.autoVerifyLabel')}
             name="auto_verify"
             valuePropName="checked"
             initialValue
             className="tg-field-switch"
-            tooltip="识别佩奇(Cap) / NuoMi(Turnstile) 等验证机器人，自动打开浏览器完成验证，再回查能否发言确认放行；失败会自动退群重进重试（每个号在每个群原本只有一次验证机会，退群重进可重置）"
+            tooltip={t('join.autoVerifyTooltip')}
           >
-            <Switch checkedChildren="自动过" unCheckedChildren="跳过" />
+            <Switch checkedChildren={t('join.autoVerifyOn')} unCheckedChildren={t('join.autoVerifyOff')} />
           </Form.Item>
           <Form.Item
-            label="验证等待时长（秒）"
+            label={t('join.verifyTimeoutLabel')}
             name="verify_timeout"
             initialValue={150}
-            tooltip="等验证机器人发来验证消息的最长时间。验证链接寿命很短（NuoMi 60 秒、佩奇 300 秒），设太长没有意义"
+            tooltip={t('join.verifyTimeoutTooltip')}
           >
             <InputNumber min={30} max={600} step={30} style={{ width: 160 }} />
           </Form.Item>
           <Form.Item
-            label="忽略活跃时段"
+            label={t('join.ignoreActiveHoursLabel')}
             name="ignore_active_hours"
             valuePropName="checked"
             initialValue={false}
             className="tg-field-switch"
-            tooltip="默认只在本地 08:00–24:00 执行加群，避开凌晨批量操作这种机器特征；打开后凌晨也立即执行，熔断 / 最小间隔 / 每日配额仍然生效"
+            tooltip={t('join.ignoreActiveHoursTooltip')}
           >
-            <Switch checkedChildren="立即" unCheckedChildren="按时段" />
+            <Switch checkedChildren={t('joinAndSend.switchNow')} unCheckedChildren={t('joinAndSend.switchByWindow')} />
           </Form.Item>
         </ActionTab>
       ),
     },
     {
       key: 'leave',
-      label: '退群',
+      label: t('sections.leave'),
       children: (
         <ActionTab
-          title="批量退群"
-          description="一批号退出一个或多个群，一行一个。支持 @用户名、数字群 ID 或会话 ID；群多时可选「按账号轮询分配」，让每个号分头退不同的群。"
+          title={t('leave.title')}
+          description={t('leave.description')}
           buildPayload={(scope, values) => ({
             ...scopePayload(scope),
             targets: splitField(values.targets),
@@ -2067,16 +2204,16 @@ export default function Campaigns() {
           submit={(payload) => campaignApi.leaveGroup(payload as unknown as LeaveGroupRequest)}
         >
           <Form.Item
-            label="要退的群（一行一个，可批量）"
+            label={t('leave.targetsLabel')}
             name="targets"
             className="tg-leave-targets tg-field-line"
-            rules={[{ required: true, message: '至少一个群' }]}
+            rules={[{ required: true, message: t('leave.targetsRequired') }]}
           >
             <Input.TextArea placeholder={'@group_a\n-1001234567890\nt.me/group_c'} autoSize={{ minRows: 3, maxRows: 10 }} />
           </Form.Item>
           {/* 顺序调整：开关挪到分发方式之前，三者正好排满一行（6+2+4 列），并一起拉伸等高 */}
           <Form.Item
-            label="退出后删除该会话记录"
+            label={t('leave.deleteHistoryLabel')}
             name="delete_history"
             valuePropName="checked"
             initialValue={true}
@@ -2085,16 +2222,16 @@ export default function Campaigns() {
             <Switch />
           </Form.Item>
           <Form.Item
-            label="分发方式"
+            label={t('leave.dispatchLabel')}
             name="dispatch"
             initialValue="each"
             className="tg-leave-dispatch tg-field-line"
-            tooltip="轮询分配：群按账号轮流切分，一个群只由一个号去退"
+            tooltip={t('leave.dispatchTooltip')}
           >
             <Segmented
               options={[
-                { label: '每个号都退全部群', value: 'each' },
-                { label: '按账号轮询分配群', value: 'round_robin' },
+                { label: t('leave.dispatchEach'), value: 'each' },
+                { label: t('leave.dispatchRoundRobin'), value: 'round_robin' },
               ]}
             />
           </Form.Item>
@@ -2103,11 +2240,11 @@ export default function Campaigns() {
     },
     {
       key: 'force-add',
-      label: '强拉进群',
+      label: t('sections.forceAdd'),
       children: (
         <ActionTab
-          title="强拉进群"
-          description="把成员拉进一个或多个目标群。执行号必须是这些群的管理员（普通群需成员为执行号的联系人）。成员：@用户名、手机号或数字用户 ID，每行一个，最多 50。"
+          title={t('forceAdd.title')}
+          description={t('forceAdd.description')}
           buildPayload={(scope, values) => ({
             ...scopePayload(scope),
             groups: splitField(values.groups),
@@ -2125,10 +2262,10 @@ export default function Campaigns() {
           })}
           submit={(payload) => campaignApi.forceAdd(payload as unknown as ForceAddRequest)}
         >
-          <Form.Item label="目标群（一行一个，可批量）" name="groups" rules={[{ required: true, message: '至少一个群' }]}>
+          <Form.Item label={t('forceAdd.groupsLabel')} name="groups" rules={[{ required: true, message: t('forceAdd.groupsRequired') }]}>
             <Input.TextArea placeholder={'@group_a\n-1001234567890'} autoSize={{ minRows: 3, maxRows: 8 }} />
           </Form.Item>
-          <Form.Item label="要拉进的成员（每行一个）" name="members" rules={[{ required: true, message: '至少一个成员' }]}>
+          <Form.Item label={t('forceAdd.membersLabel')} name="members" rules={[{ required: true, message: t('forceAdd.membersRequired') }]}>
             <Input.TextArea placeholder="@user1\n@user2" autoSize={{ minRows: 3, maxRows: 8 }} />
           </Form.Item>
         </ActionTab>
@@ -2136,11 +2273,11 @@ export default function Campaigns() {
     },
     {
       key: 'profile',
-      label: '批量改资料',
+      label: t('sections.profile'),
       children: (
         <ActionTab
-          title="批量改资料"
-          description="一批号改名 / 简介 / 用户名 / 头像。文字框里写一行=所有号统一改成它，写多行=当成候选池，每个号拿不同的值（避免一批号资料完全一样）。留空的字段不改。可把整套配置存成模板，下次一键套用。"
+          title={t('profile.title')}
+          description={t('profile.description')}
           buildPayload={(scope, values) => {
             // 一行 = 统一值；多行 = 候选池（按号顺序轮流取 或 随机取）
             const nameLines = splitField(values.first_name);
@@ -2169,60 +2306,60 @@ export default function Campaigns() {
         >
           <ProfileTemplates />
           <Space wrap align="start" className="tg-pf-lines">
-            <Form.Item label="名字（多行=候选池）" name="first_name">
-              <Input.TextArea placeholder={'David\nAlex\n小林'} autoSize={{ minRows: 2, maxRows: 6 }} style={{ width: 200 }} />
+            <Form.Item label={t('profile.firstNameLabel')} name="first_name">
+              <Input.TextArea placeholder={t('profile.firstNamePlaceholder')} autoSize={{ minRows: 2, maxRows: 6 }} style={{ width: 200 }} />
             </Form.Item>
-            <Form.Item label="姓氏（多行=候选池）" name="last_name">
+            <Form.Item label={t('profile.lastNameLabel')} name="last_name">
               <Input.TextArea placeholder={'Chen\nWang\nLi'} autoSize={{ minRows: 2, maxRows: 6 }} style={{ width: 200 }} />
             </Form.Item>
             <Form.Item
-              label="固定用户名（@ 后面部分）"
+              label={t('profile.fixedUsernameLabel')}
               name="username"
-              tooltip="直接填用户名即可；带 @ 或 t.me 链接会被自动清洗。规则：5-32 位，字母/数字/下划线，以字母开头"
+              tooltip={t('profile.fixedUsernameTooltip')}
             >
-              <Input placeholder="例如 woieduanai（@ 会自动去掉）" style={{ width: 240 }} />
+              <Input placeholder={t('profile.fixedUsernamePlaceholder')} style={{ width: 240 }} />
             </Form.Item>
           </Space>
-          <Form.Item label="简介（多行=候选池）" name="bio" className="tg-pf-bio">
+          <Form.Item label={t('profile.bioLabel')} name="bio" className="tg-pf-bio">
             <Input.TextArea
-              placeholder={'第一句简介\n第二句简介\n第三句简介'}
+              placeholder={t('profile.bioPlaceholder')}
               autoSize={{ minRows: 3, maxRows: 8 }}
             />
           </Form.Item>
           <Space wrap align="start" className="tg-pf-lines">
             <Form.Item
-              label="用户名前缀（推荐）"
+              label={t('profile.usernamePrefixLabel')}
               name="username_prefix"
-              tooltip="用户名全局唯一，批量时用「前缀 + 随机数字」，每个号自动生成不撞名"
+              tooltip={t('profile.usernamePrefixTooltip')}
             >
-              <Input placeholder="例如 user_" style={{ width: 160 }} />
+              <Input placeholder={t('profile.usernamePrefixPlaceholder')} style={{ width: 160 }} />
             </Form.Item>
-            <Form.Item label="随机数字位数" name="username_random_digits" initialValue={4}>
+            <Form.Item label={t('profile.randomDigitsLabel')} name="username_random_digits" initialValue={4}>
               <InputNumber min={2} max={8} style={{ width: 120 }} />
             </Form.Item>
             <Form.Item
-              label="池化取值方式"
+              label={t('profile.assignModeLabel')}
               name="assign_mode"
               initialValue="sequence"
-              tooltip="按号顺序：同批号轮流取池里的值，互不重复；随机：每个号随机取一个"
+              tooltip={t('profile.assignModeTooltip')}
             >
               <Segmented
                 options={[
-                  { label: '按号顺序', value: 'sequence' },
-                  { label: '随机', value: 'random' },
+                  { label: t('profile.assignSequence'), value: 'sequence' },
+                  { label: t('profile.assignRandom'), value: 'random' },
                 ]}
               />
             </Form.Item>
           </Space>
           <Form.Item
-            label="头像（推荐从素材库选）"
+            label={t('profile.avatarLabel')}
             name="photo_material_id"
             className="tg-pf-photo"
-            tooltip="直接选素材库里的图片；也可以改下面的地址字段，二选一"
+            tooltip={t('profile.avatarTooltip')}
           >
-            <MaterialPicker kinds={['photo']} placeholder="从素材库选一张图片（可选）" style={{ width: '100%' }} />
+            <MaterialPicker kinds={['photo']} placeholder={t('profile.avatarPlaceholder')} style={{ width: '100%' }} />
           </Form.Item>
-          <Form.Item label="或填头像图片地址" name="photo_url">
+          <Form.Item label={t('profile.avatarUrlLabel')} name="photo_url">
             <Input placeholder="https://…/avatar.jpg" style={{ maxWidth: 420 }} />
           </Form.Item>
         </ActionTab>
@@ -2230,11 +2367,11 @@ export default function Campaigns() {
     },
     {
       key: 'storm',
-      label: '吵群',
+      label: t('sections.storm'),
       children: (
         <ActionTab
-          title="吵群"
-          description="一批号在同一个群里按随机间隔轮流发文本池里的话（每轮随机挑一句），可配置每轮回复群内最近消息的概率。总时长 = 轮数 × 最大间隔，不能超过 25 分钟。"
+          title={t('storm.title')}
+          description={t('storm.description')}
           buildPayload={(scope, values) => ({
             ...scopePayload(scope),
             group: String(values.group ?? '').trim() || null,
@@ -2255,23 +2392,23 @@ export default function Campaigns() {
           })}
           submit={(payload) => campaignApi.storm(payload as unknown as StormRequest)}
         >
-          <Form.Item label="目标群" name="group" className="tg-field-line" rules={[{ required: true, message: '必填' }]}>
-            <Input placeholder="@用户名 或 群 ID" />
+          <Form.Item label={t('storm.groupLabel')} name="group" className="tg-field-line" rules={[{ required: true, message: t('storm.required') }]}>
+            <Input placeholder={t('storm.groupPlaceholder')} />
           </Form.Item>
-          <Form.Item label="文本池（每轮随机挑一句，每行一条）" name="texts" className="tg-field-line" rules={[{ required: true, message: '至少一句' }]}>
-            <Input.TextArea placeholder="这句不错\n顶一下\n有道理" autoSize={{ minRows: 4, maxRows: 8 }} />
+          <Form.Item label={t('storm.textsLabel')} name="texts" className="tg-field-line" rules={[{ required: true, message: t('storm.textsRequired') }]}>
+            <Input.TextArea placeholder={t('storm.textsPlaceholder')} autoSize={{ minRows: 4, maxRows: 8 }} />
           </Form.Item>
           <Space wrap className="tg-storm-params">
-            <Form.Item label="每个号发几轮" name="rounds" initialValue={5}>
+            <Form.Item label={t('storm.roundsLabel')} name="rounds" initialValue={5}>
               <InputNumber min={1} max={20} />
             </Form.Item>
-            <Form.Item label="最小间隔（秒）" name="min_interval" initialValue={8}>
+            <Form.Item label={t('storm.minIntervalLabel')} name="min_interval" initialValue={8}>
               <InputNumber min={3} max={120} />
             </Form.Item>
-            <Form.Item label="最大间隔（秒）" name="max_interval" initialValue={30}>
+            <Form.Item label={t('storm.maxIntervalLabel')} name="max_interval" initialValue={30}>
               <InputNumber min={3} max={120} />
             </Form.Item>
-            <Form.Item label="回复群内最近消息的概率" name="reply_probability" initialValue={0}>
+            <Form.Item label={t('storm.replyProbLabel')} name="reply_probability" initialValue={0}>
               <InputNumber min={0} max={1} step={0.1} />
             </Form.Item>
           </Space>
@@ -2280,11 +2417,11 @@ export default function Campaigns() {
     },
     {
       key: 'persona',
-      label: '拟人发言',
+      label: t('sections.persona'),
       children: (
         <ActionTab
-          title="拟人发言"
-          description="一批号按人设连续发言：每轮看群里最近消息，用 AI 生成符合人设的话；AI 未配置或失败时自动退回备用文本池。"
+          title={t('persona.title')}
+          description={t('persona.description')}
           buildPayload={(scope, values) => ({
             ...scopePayload(scope),
             group: String(values.group ?? '').trim() || null,
@@ -2307,39 +2444,39 @@ export default function Campaigns() {
           })}
           submit={(payload) => campaignApi.persona(payload as unknown as PersonaRequest)}
         >
-          <Form.Item label="目标群" name="group" className="tg-field-line" rules={[{ required: true, message: '必填' }]}>
-            <Input placeholder="@用户名 或 群 ID" />
+          <Form.Item label={t('persona.groupLabel')} name="group" className="tg-field-line" rules={[{ required: true, message: t('persona.required') }]}>
+            <Input placeholder={t('persona.groupPlaceholder')} />
           </Form.Item>
-          <Form.Item label="人设（给 AI 的角色设定）" name="persona" className="tg-field-line" rules={[{ required: true, message: '必填' }]}>
+          <Form.Item label={t('persona.personaLabel')} name="persona" className="tg-field-line" rules={[{ required: true, message: t('persona.required') }]}>
             <Input.TextArea
-              placeholder="例：你是 25 岁的数码爱好者，说话随意、爱用短句和网络词，偶尔吐槽。"
+              placeholder={t('persona.personaPlaceholder')}
               autoSize={{ minRows: 2, maxRows: 4 }}
             />
           </Form.Item>
-          <Form.Item label="话题（可选）" name="topic" className="tg-field-line">
-            <Input placeholder="不给就看群里在聊什么" />
+          <Form.Item label={t('persona.topicLabel')} name="topic" className="tg-field-line">
+            <Input placeholder={t('persona.topicPlaceholder')} />
           </Form.Item>
-          <Form.Item label="AI 不可用时的备用文本池（每行一条）" name="texts" className="tg-persona-texts">
+          <Form.Item label={t('persona.fallbackTextsLabel')} name="texts" className="tg-persona-texts">
             <Input.TextArea autoSize={{ minRows: 2, maxRows: 5 }} />
           </Form.Item>
           <Space wrap className="tg-persona-params">
-            <Form.Item label="使用 AI 生成" name="use_ai" valuePropName="checked" initialValue={true} className="tg-field-switch">
+            <Form.Item label={t('persona.useAiLabel')} name="use_ai" valuePropName="checked" initialValue={true} className="tg-field-switch">
               <Switch />
             </Form.Item>
-            <Form.Item label="每个号发几轮" name="rounds" initialValue={5}>
+            <Form.Item label={t('persona.roundsLabel')} name="rounds" initialValue={5}>
               <InputNumber min={1} max={20} />
             </Form.Item>
-            <Form.Item label="最小间隔（秒）" name="min_interval" initialValue={10}>
+            <Form.Item label={t('persona.minIntervalLabel')} name="min_interval" initialValue={10}>
               <InputNumber min={3} max={120} />
             </Form.Item>
-            <Form.Item label="最大间隔（秒）" name="max_interval" initialValue={40}>
+            <Form.Item label={t('persona.maxIntervalLabel')} name="max_interval" initialValue={40}>
               <InputNumber min={3} max={120} />
             </Form.Item>
           </Space>
         </ActionTab>
       ),
     },
-    { key: 'batches', label: '批次进度', children: <BatchesTab /> },
+    { key: 'batches', label: t('sections.batches'), children: <BatchesTab /> },
   ].filter((item) => VISIBLE_SECTIONS.has(item.key));
 
   const current = sections.find((item) => item.key === section);
@@ -2349,7 +2486,7 @@ export default function Campaigns() {
   return (
     <PageContainer
       title={active.label}
-      description="批量运营：提交后按「一 号一任务」错峰入队，由 Worker 执行；进度与取消在「批次进度」页。左侧「触达中心」子菜单可切换功能。"
+      description={t('pageDescription')}
       actions={
         <Select
           size="small"
@@ -2357,7 +2494,7 @@ export default function Campaigns() {
           value={active.key}
           onChange={(key) => navigate(`/campaigns/${key}`)}
           options={sections.map((item) => ({ value: item.key, label: item.label }))}
-          aria-label="切换触达中心功能"
+          aria-label={t('switchSectionAria')}
         />
       }
     >

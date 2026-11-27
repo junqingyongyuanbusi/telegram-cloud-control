@@ -1,0 +1,114 @@
+{
+  "title": "工作台",
+  "descriptionWithTime": "数据生成于 {{time}}；在线数按租约心跳统计，Redis 心跳丢了会重新认领。",
+  "descriptionDefault": "在线数、异常数、Worker 心跳与任务积压。",
+  "autoRefresh": "自动刷新（15 秒）",
+  "telegramNotReady": {
+    "message": "未配置 Telegram API 凭据，Worker 空转中：不会连接 Telegram，任务也不会执行",
+    "introBeforeCode": "这不是本系统的限制，而是 Telegram 的机制：任何第三方客户端（包括本系统、各类云控面板）都必须用自己申请的",
+    "introAfterCode": "才能连接。申请免费，几分钟就好：",
+    "step1BeforeLink": "1. 打开 ",
+    "step1AfterLink": " → 用你的手机号登录（收到的验证码填进去）；",
+    "step2BeforeBold": "2. 进 ",
+    "step2AfterBold": " → 随便填个应用名（App title / Short name）→ 创建；",
+    "step3Part1": "3. 把页面上的 ",
+    "step3Part2": "（数字）与 ",
+    "step3Part3": "（32 位字符串）填进",
+    "step3Part4": "，然后 ",
+    "step3Part5": " 重启。",
+    "tip": "提示：一套凭据可以给多个号用；号多时建议分几套，避免一套被限流牵连全部账号。不要用网上公开的 api_id，那会被封。"
+  },
+  "noAccounts": {
+    "message": "还没有接入任何 Telegram 账号",
+    "description": "账号是整套系统的起点：先用一个自己的号通过验证码登录，系统才能同步会话、接收消息并按你的指令发送。登录后建议顺手在账号管理页做一次「检测」确认号在线。",
+    "loginFirst": "登录第一个账号",
+    "goAccounts": "进入账号管理"
+  },
+  "stats": {
+    "online": "在线数",
+    "onlineUnit": "/ 共 {{total}} 个号",
+    "onlineHint": "持租约 {{count}} 个号",
+    "abnormal": "异常数",
+    "abnormalHint": "要验证码 / 冻结 / 失效 / 永久双向 / 停用",
+    "failedTasks": "失败任务",
+    "failedTasksHint": "24 小时内失败总数",
+    "totalAccounts": "账号总数",
+    "totalAccountsHint": "会话 {{dialogs}} · 未读 {{unread}} · Bot {{bots}}"
+  },
+  "quickLinks": {
+    "title": "快捷入口",
+    "subtitle": "常用页面一键跳转",
+    "accounts": "账号管理",
+    "accountsDesc": "状态、分组、心跳",
+    "network": "网络",
+    "networkDesc": "代理与出站地址",
+    "tasks": "任务中心",
+    "tasksDesc": "队列进度与失败重试",
+    "campaigns": "触达中心",
+    "campaignsDesc": "素材 / 加群群发",
+    "dialogs": "会话",
+    "dialogsDesc": "私信与群聊"
+  },
+  "trends": {
+    "title": "在线趋势",
+    "subtitle": "在线账号 / 异常账号 / 任务成功 / 任务失败，按小时（7d、30d 为按天）聚合",
+    "window24h": "24 小时",
+    "window7d": "7 天",
+    "window30d": "30 天",
+    "chartEmpty": "后端还没有开始采样，稍后自动出现趋势点",
+    "chartAriaLabel": "在线趋势折线图",
+    "hoverItem": "{{label}}：",
+    "series": {
+      "online_accounts": "在线账号",
+      "abnormal_accounts": "异常账号",
+      "tasks_succeeded": "任务成功",
+      "tasks_failed": "任务失败"
+    }
+  },
+  "workers": {
+    "title": "Worker 心跳",
+    "subtitle": "超过 60 秒没有心跳标红，值班时先看这里",
+    "emptyTitle": "还没有 Worker 上报心跳",
+    "emptyDesc": "启动 Worker 后这里会出现心跳记录。",
+    "staleAlertMessage": "{{count}} 个 Worker 超过 60 秒无心跳",
+    "staleAlertDesc": "处置：到部署机确认 Worker 进程是否存活（看进程列表与日志），必要时重启；Worker 死后租约到期会被重新认领，账号数据不受影响。",
+    "colWorker": "Worker",
+    "colLastHeartbeat": "最后心跳",
+    "colOnlineAccounts": "在线号数",
+    "colLeasedAccounts": "持租约号数",
+    "colSource": "来源",
+    "statusStale": "超 60 秒无心跳",
+    "statusHealthy": "心跳正常",
+    "sourceRedis": "Redis 心跳"
+  },
+  "failures": {
+    "title": "最近失败任务",
+    "subtitle": "按创建时间倒序，最近 10 条",
+    "goTasks": "去任务中心",
+    "emptyTitle": "最近没有失败任务",
+    "emptyDesc": "任务失败后会出现在这里。",
+    "colTaskType": "任务类型",
+    "colAccount": "账号",
+    "colError": "失败原因",
+    "colAttempts": "重试",
+    "colCreatedAt": "创建时间"
+  },
+  "queue": {
+    "title": "任务队列积压",
+    "subtitle": "点击数字去任务中心看明细",
+    "pending": "待执行",
+    "running": "执行中",
+    "overdue": "到期未领",
+    "stuck": "卡住",
+    "explanation": "到期未领：已过计划执行时间、仍没有被 Worker 认领；卡住：执行中超时未完成，需要优先人工介入。"
+  },
+  "notifications": {
+    "title": "未读通知",
+    "unreadSubtitle": "{{count}} 条未读异常",
+    "defaultSubtitle": "任务失败 / Worker 掉线 / 账号异常 / 备份失败",
+    "markAllRead": "全部已读",
+    "markedAllRead": "已全部标记为已读",
+    "emptyTitle": "没有未读通知",
+    "emptyDesc": "一切正常；异常发生时这里会出现提醒。"
+  }
+}

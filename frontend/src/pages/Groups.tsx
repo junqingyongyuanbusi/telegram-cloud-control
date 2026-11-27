@@ -2,6 +2,7 @@ import { useMemo, useState } from 'react';
 import { Button, Form, Input, Modal, Space, Tooltip, Typography } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
 import { DeleteOutlined, EditOutlined, PlusOutlined, ReloadOutlined, TeamOutlined } from '@ant-design/icons';
+import { useTranslation } from 'react-i18next';
 import { accountApi, groupApi } from '../api/endpoints';
 import { useAsyncData } from '../hooks/useAsyncData';
 import { formatTime } from '../utils/format';
@@ -26,6 +27,7 @@ interface GroupDistribution {
 }
 
 export default function Groups() {
+  const { t } = useTranslation(['groups', 'common']);
   const groups = useAsyncData(() => groupApi.list(), []);
   const accounts = useAsyncData(() => accountApi.list({ page: 1, page_size: 200 }), []);
 
@@ -63,7 +65,7 @@ export default function Groups() {
     setRemoving(true);
     try {
       const res = await groupApi.remove(deleting.id);
-      toast.success(res.message || '分组已删除');
+      toast.success(res.message || t('groups:toast.deleted'));
       setDeleting(null);
       void groups.reload();
       void accounts.reload();
@@ -84,13 +86,13 @@ export default function Groups() {
     try {
       if (added.length) {
         const res = await groupApi.addAccounts(memberGroup.id, added);
-        toast.success(res.message || `已加入 ${added.length} 个账号`);
+        toast.success(res.message || t('groups:toast.addedMembers', { count: added.length }));
       }
       if (removed.length) {
         const res = await groupApi.removeAccounts(memberGroup.id, removed);
-        toast.success(res.message || `已移出 ${removed.length} 个账号`);
+        toast.success(res.message || t('groups:toast.removedMembers', { count: removed.length }));
       }
-      if (!added.length && !removed.length) toast.info('分组没有变化');
+      if (!added.length && !removed.length) toast.info(t('groups:toast.noMemberChange'));
       setMemberGroup(null);
       void groups.reload();
       void accounts.reload();
@@ -103,33 +105,39 @@ export default function Groups() {
 
   const columns: ColumnsType<GroupOut> = [
     {
-      title: '分组名',
+      title: t('groups:columns.name'),
       dataIndex: 'name',
       width: 200,
       render: (value: string) => <SoftTag tone="primary">{value}</SoftTag>,
     },
     {
-      title: '说明',
+      title: t('groups:columns.description'),
       dataIndex: 'description',
       render: (value: string) => value || <span className="tg-muted">—</span>,
     },
-    { title: '账号数', dataIndex: 'account_count', width: 90, render: (value: number) => <span className="tg-num">{value}</span> },
+    { title: t('groups:columns.accountCount'), dataIndex: 'account_count', width: 90, render: (value: number) => <span className="tg-num">{value}</span> },
     {
-      title: '状态分布',
+      title: t('groups:columns.distribution'),
       key: 'distribution',
       width: 280,
       render: (_: unknown, record) => {
         const dist = distributionOf.get(record.id);
         if (!dist) return <span className="tg-muted">—</span>;
         const chips = [
-          { label: '正常', count: dist.healthy, status: 'healthy' as const },
-          { label: '待登录', count: dist.pending, status: 'pending' as const },
-          { label: '异常', count: dist.abnormal, status: 'frozen' as const },
+          { label: t('groups:status.healthy'), count: dist.healthy, status: 'healthy' as const },
+          { label: t('groups:status.pending'), count: dist.pending, status: 'pending' as const },
+          { label: t('groups:status.abnormal'), count: dist.abnormal, status: 'frozen' as const },
         ];
         return (
           <span className="tg-flex" style={{ gap: 'var(--tg-space-md)', flexWrap: 'wrap' }}>
             {chips.map((chip) => (
-              <Tooltip key={chip.status} title={`${chip.label} ${chip.count} 个${dist.partial ? '（基于前 200 个账号）' : ''}`}>
+              <Tooltip
+                key={chip.status}
+                title={t(dist.partial ? 'groups:status.tooltipPartial' : 'groups:status.tooltip', {
+                  label: chip.label,
+                  count: chip.count,
+                })}
+              >
                 <span
                   className="tg-flex"
                   style={{
@@ -149,25 +157,25 @@ export default function Groups() {
       },
     },
     {
-      title: '创建时间',
+      title: t('groups:columns.createdAt'),
       dataIndex: 'created_at',
       width: 170,
       render: (value: string | null) => formatTime(value),
     },
     {
-      title: '操作',
+      title: t('groups:columns.actions'),
       key: 'actions',
       width: 250,
       render: (_: unknown, record) => (
         <Space>
           <Button size="small" icon={<TeamOutlined />} onClick={() => setMemberGroup(record)}>
-            管理账号
+            {t('groups:actions.manageAccounts')}
           </Button>
           <Button size="small" icon={<EditOutlined />} onClick={() => setEditing(record)}>
-            编辑
+            {t('groups:actions.edit')}
           </Button>
           <Button size="small" danger icon={<DeleteOutlined />} onClick={() => setDeleting(record)}>
-            删除
+            {t('groups:actions.delete')}
           </Button>
         </Space>
       ),
@@ -176,8 +184,8 @@ export default function Groups() {
 
   return (
     <PageContainer
-      title="账号分组"
-      description="分组是自定义标签，用来把号分给同事；一个号同一时间只属于一个分组。"
+      title={t('groups:title')}
+      description={t('groups:description')}
       actions={
         <Space>
           <Button
@@ -188,10 +196,10 @@ export default function Groups() {
               void accounts.reload();
             }}
           >
-            刷新
+            {t('common:refresh')}
           </Button>
           <Button type="primary" icon={<PlusOutlined />} onClick={() => setCreateOpen(true)}>
-            新建分组
+            {t('groups:create')}
           </Button>
         </Space>
       }
@@ -209,13 +217,13 @@ export default function Groups() {
         showDensity={false}
         empty={{
           art: 'list',
-          title: '还没有分组',
-          description: '新建分组后，把账号批量移入即可按组分配。',
-          action: <Button type="primary" onClick={() => setCreateOpen(true)}>新建分组</Button>,
+          title: t('groups:empty.title'),
+          description: t('groups:empty.description'),
+          action: <Button type="primary" onClick={() => setCreateOpen(true)}>{t('groups:create')}</Button>,
         }}
       />
       <Typography.Paragraph type="secondary" style={{ fontSize: 'var(--tg-font-size-sm)' }}>
-        状态分布按当前加载的账号统计；账号超过 200 个时显示前 200 个的口径，账号数仍以后端为准。
+        {t('groups:footnote')}
       </Typography.Paragraph>
 
       <GroupFormModal
@@ -236,9 +244,9 @@ export default function Groups() {
       <ConfirmModal
         open={Boolean(deleting)}
         danger
-        title={`删除分组「${deleting?.name ?? ''}」？`}
-        content={<Typography.Text>账号本身不会被删除，只是不再属于该分组（变为未分组）。</Typography.Text>}
-        okText="删除"
+        title={t('groups:deleteConfirm.title', { name: deleting?.name ?? '' })}
+        content={<Typography.Text>{t('groups:deleteConfirm.content')}</Typography.Text>}
+        okText={t('groups:deleteConfirm.ok')}
         loading={removing}
         onOk={() => void handleDelete()}
         onCancel={() => setDeleting(null)}
@@ -246,8 +254,8 @@ export default function Groups() {
 
       <AccountPickerModal
         open={Boolean(memberGroup)}
-        title={`管理分组账号：${memberGroup?.name ?? ''}`}
-        hint="勾选 = 加入该分组，取消勾选 = 移出该分组；保存时只提交变化的部分。"
+        title={t('groups:membersModal.title', { name: memberGroup?.name ?? '' })}
+        hint={t('groups:membersModal.hint')}
         value={memberIds}
         confirmLoading={savingMembers}
         onCancel={() => setMemberGroup(null)}
@@ -268,6 +276,7 @@ function GroupFormModal({
   onCancel: () => void;
   onSuccess: () => void;
 }) {
+  const { t } = useTranslation(['groups', 'common']);
   const [form] = Form.useForm<GroupForm>();
   const [submitting, setSubmitting] = useState(false);
   const isEdit = Boolean(group);
@@ -277,10 +286,10 @@ function GroupFormModal({
     try {
       if (group) {
         await groupApi.update(group.id, { name: values.name.trim(), description: values.description ?? '' });
-        toast.success('分组已更新');
+        toast.success(t('groups:toast.updated'));
       } else {
         await groupApi.create({ name: values.name.trim(), description: values.description ?? '' });
-        toast.success('分组已创建');
+        toast.success(t('groups:toast.created'));
       }
       onSuccess();
     } catch {
@@ -293,11 +302,11 @@ function GroupFormModal({
   return (
     <Modal
       open={open}
-      title={isEdit ? `编辑分组：${group?.name}` : '新建分组'}
+      title={isEdit ? t('groups:form.editTitle', { name: group?.name ?? '' }) : t('groups:form.createTitle')}
       onCancel={onCancel}
       onOk={() => form.submit()}
-      okText="保存"
-      cancelText="取消"
+      okText={t('common:save')}
+      cancelText={t('common:cancel')}
       confirmLoading={submitting}
     >
       <Form
@@ -308,17 +317,17 @@ function GroupFormModal({
         initialValues={{ name: group?.name ?? '', description: group?.description ?? '' }}
       >
         <Form.Item
-          label="分组名"
+          label={t('groups:form.nameLabel')}
           name="name"
           rules={[
-            { required: true, message: '请输入分组名' },
-            { max: 64, message: '最多 64 个字符' },
+            { required: true, message: t('groups:form.nameRequired') },
+            { max: 64, message: t('groups:form.nameMax') },
           ]}
         >
-          <Input placeholder="例如：一组 / 值班号" allowClear />
+          <Input placeholder={t('groups:form.namePlaceholder')} allowClear />
         </Form.Item>
-        <Form.Item label="说明" name="description">
-          <Input.TextArea rows={2} placeholder="说明（可选）" />
+        <Form.Item label={t('groups:form.descriptionLabel')} name="description">
+          <Input.TextArea rows={2} placeholder={t('groups:form.descriptionPlaceholder')} />
         </Form.Item>
       </Form>
     </Modal>

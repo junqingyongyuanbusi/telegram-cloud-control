@@ -1,0 +1,167 @@
+{
+  "title": "Group Intel",
+  "description": "Discover groups via keyword search or precision search; matched groups are saved to Group Profiles.",
+  "actions": {
+    "keywordSearch": "Keyword Search",
+    "preciseSearch": "Precision Search",
+    "syncToJoin": "Sync to Join",
+    "syncToJoinTooltip": "Filter speakable groups by current keyword and send their invite links / @usernames to the Join & Send page"
+  },
+  "profiles": {
+    "cardTitle": "Group Profiles",
+    "searchPlaceholder": "Search by group title / username",
+    "searchButton": "Search",
+    "filterAll": "All groups",
+    "filterSpeakable": "Speakable only",
+    "totalGroups": "{{count}} groups",
+    "emptyText": "No group profiles yet. Use Keyword Search or Precision Search above to start.",
+    "syncEmptyWarning": "No groups to sync: none have an invite link or public username.",
+    "unnamedGroup": "Unnamed group",
+    "unsynced": "Not synced",
+    "columns": {
+      "group": "Group",
+      "kind": "Type",
+      "speak": "Posting",
+      "memberCount": "Members",
+      "memberSampled": "Sampled",
+      "collectedAt": "Collected",
+      "source": "Source"
+    },
+    "sources": {
+      "join_event": "Join event",
+      "profile_sync": "Profile sync"
+    }
+  },
+  "kind": {
+    "group": "Group",
+    "megagroup": "Supergroup",
+    "channel": "Channel",
+    "chat": "Chat"
+  },
+  "sendPermission": {
+    "open": "Speakable",
+    "restricted": "Muted",
+    "unknown": "Unverified"
+  },
+  "activity": {
+    "unconfirmed": "Unconfirmed",
+    "hasMessages": "{{count}} msgs",
+    "noMessages": "No messages"
+  },
+  "discoverySource": {
+    "contacts_search": "Native search",
+    "global_message_search": "Message search",
+    "short_query": "Short query",
+    "linked_chat": "Linked chat",
+    "channel_recommendation": "Similar channels",
+    "channel_message_link": "Channel link",
+    "joined_group_graph": "Joined graph",
+    "candidate_link": "Manual candidate",
+    "tme_preview": "t.me preview",
+    "external_web": "External web",
+    "channel_posts": "Channel posts",
+    "common_chat_graph": "Common chats",
+    "local_index": "Local index",
+    "contacts": "Native search",
+    "short_core": "Short fallback",
+    "message_search": "Message search",
+    "joined_dialog": "Joined group",
+    "joined_link": "Joined link",
+    "recommendation": "Similar channels",
+    "channel_link": "Channel link",
+    "web_candidate": "Web candidate"
+  },
+  "findModal": {
+    "title": "Find Public Groups by Keyword",
+    "okText": "Start Search",
+    "keywordRequired": "Enter at least one keyword",
+    "alertTitle": "Uses Telegram native search without third-party directories",
+    "alertDescription": "Enter keywords to query Telegram public search directly (optionally expanded by region/language), returning member counts. Matched groups are saved to Group Profiles below for further screening. Read-only: never joins or posts.",
+    "keywordsLabel": "Keywords (comma or newline separated, up to 20)",
+    "keywordsPlaceholder": "USDT\ncrypto\nForex",
+    "regionExpandLabel": "Region expansion (optional; leave empty to search raw keywords only)",
+    "regionPlaceholder": "Select regions, e.g. Malaysia",
+    "languagePlaceholder": "Group suffix language (defaults by region)",
+    "regions": {
+      "MY": "Malaysia MY",
+      "SG": "Singapore SG",
+      "ID": "Indonesia ID",
+      "TH": "Thailand TH"
+    },
+    "languages": {
+      "ms": "Malay ms",
+      "en": "English en",
+      "zh": "Chinese zh",
+      "id": "Indonesian id",
+      "th": "Thai th"
+    },
+    "expandLinked": "Follow discussion groups linked to public channels (linked_chat, read-only)",
+    "expandMessages": "Extract t.me / @username links from recent channel messages (graph depth=1)",
+    "expandRecommendations": "Fetch Telegram similar channel recommendations",
+    "enrichTme": "Fetch public t.me pages for bio and member count (no login)",
+    "expandHint": "When regions are selected, keywords expand across region, city, local language, Chinese, and group suffixes (up to 120 queries) for broader coverage; channels are also saved as seeds. Query yields are tracked and expansions with 0 yield for 3 consecutive runs (after 5 runs) are auto-disabled.",
+    "perKeywordPrefix": "Fetch",
+    "perKeywordSuffix": "per keyword",
+    "minMembersLabel": "Members ≥",
+    "kindOptions": {
+      "group": "Groups only",
+      "channel": "Channels only",
+      "any": "Groups & channels"
+    }
+  },
+  "preciseModal": {
+    "title": "Precision Search",
+    "okStart": "Start Search",
+    "okRestart": "New Search",
+    "keywordRequired": "Enter at least one keyword",
+    "keywordsLabel": "Keywords (comma or newline separated, up to 20)",
+    "keywordsPlaceholder": "Forex Thailand\nกลุ่มเทรด Forex\nCrypto MY",
+    "status": {
+      "batchFound": "Found {{count}} discussion groups ({{completed}}/{{total}} account tasks done)",
+      "batchRunning": "Multi-account search running ({{completed}}/{{total}} done, {{active}} active); auto-refreshes every 3s",
+      "taskFound": "{{count}} matches found",
+      "taskQueued": "Search task queued and running; refreshes every 3s.",
+      "batchDesc": "Batch {{batchId}}{{failedPart}}. Groups active in the last 3 months and speakable are saved to Group Profiles; others appear here only. Unverified public links are under Pending Verification below.",
+      "failedTasksPart": " ({{count}} subtasks failed)",
+      "taskDesc": "Task {{taskId}}. Groups active in the last 3 months and speakable are saved to Group Profiles."
+    },
+    "aiNotesTitle": "Channel / Budget / AI Fallback Notes",
+    "stats": {
+      "contactsSearch": "Native {{count}}",
+      "messageSearch": "Messages {{count}}",
+      "channelLinked": "Channel-linked {{count}}",
+      "postSeeds": "Post seeds {{count}}",
+      "externalLinks": "External links {{count}}",
+      "relationGraph": "Graph {{count}}",
+      "accepted": "Verified {{count}}",
+      "needsReview": "Needs review {{count}}",
+      "filtered": "Filtered {{count}}",
+      "rpcUsed": "RPC {{count}}",
+      "limitStopped": "Rate/budget stop {{count}}"
+    },
+    "tabs": {
+      "verified": "Results ({{count}})",
+      "pending": "Pending Verification ({{count}})"
+    },
+    "verifiedColumns": {
+      "group": "Group",
+      "members": "Members",
+      "activity90d": "90d Activity",
+      "speakable": "Posting",
+      "archived": "Saved"
+    },
+    "matchStatus": {
+      "accepted": "Saved",
+      "needs_review": "Unconfirmed",
+      "rejected": "Not qualified"
+    },
+    "pendingColumns": {
+      "url": "Public Candidate URL",
+      "source": "Source",
+      "status": "Status",
+      "queryAdapter": "Query / Adapter",
+      "reason": "Unverified Reason"
+    },
+    "unverifiedDefaultStatus": "External discovery, unverified"
+  }
+}

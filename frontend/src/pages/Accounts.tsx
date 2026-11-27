@@ -16,6 +16,7 @@ import {
   LoginOutlined,
   QrcodeOutlined,
 } from '@ant-design/icons';
+import { useTranslation } from 'react-i18next';
 import { api } from '../api/client';
 import { accountApi, accountBulkApiExtra, exportApi, groupApi, proxyApi, userApi } from '../api/endpoints';
 import '../features/accounts/accounts.css';
@@ -23,7 +24,8 @@ import { useAsyncData } from '../hooks/useAsyncData';
 import { useWsEvent } from '../hooks/useWebSocket';
 import { useTableQuery, buildActiveFilters } from '../hooks/useTableQuery';
 import { useAuth } from '../auth/AuthContext';
-import { ACCOUNT_STATUS_OPTIONS, CURRENT_TASK_OPTIONS } from '../constants';
+import { getAccountStatusOptions, getCurrentTaskOptions } from '../constants';
+import { resolveEnumLabel } from '../i18n';
 import { downloadBlob } from '../utils/download';
 import { formatAccountAge } from '../utils/format';
 import { toast } from '../utils/feedback';
@@ -63,6 +65,7 @@ interface AccountFilters extends Record<string, unknown> {
  * 到点后 worker 的扫描循环会把号改回「正常」，不用人工解。
  */
 function FloodCountdown({ until }: { until: string }) {
+  const { t } = useTranslation('accounts');
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
     const timer = window.setInterval(() => setNow(Date.now()), 1000);
@@ -74,18 +77,23 @@ function FloodCountdown({ until }: { until: string }) {
   if (left <= 0) {
     return (
       <span className="tg-muted" style={{ fontSize: 'var(--tg-font-size-xs)' }}>
-        恢复中…
+        {t('flood.recovering')}
       </span>
     );
   }
-  const text = left >= 60 ? `${Math.ceil(left / 60)} 分` : `${left} 秒`;
+  const text = left >= 60 ? t('flood.minutes', { count: Math.ceil(left / 60) }) : t('flood.seconds', { count: left });
   return (
-    <span style={{ fontSize: 'var(--tg-font-size-xs)', color: 'var(--tg-color-warning)' }}>{text}后恢复</span>
+    <span style={{ fontSize: 'var(--tg-font-size-xs)', color: 'var(--tg-color-warning)' }}>
+      {t('flood.recoverAfter', { time: text })}
+    </span>
   );
 }
 
 export default function Accounts() {
+  const { t, i18n } = useTranslation(['accounts', 'common', 'enums']);
   const { isAdmin } = useAuth();
+  const accountStatusOptions = useMemo(() => getAccountStatusOptions(), [i18n.language]);
+  const currentTaskOptions = useMemo(() => getCurrentTaskOptions(), [i18n.language]);
   const [draftPhone, setDraftPhone] = useState('');
   const [draftKeyword, setDraftKeyword] = useState('');
   const selection = useRowSelection();
@@ -167,20 +175,23 @@ export default function Accounts() {
     // 这次检测会让 Worker 顺带刷新该号的头像缓存，旧结论作废、头像位立刻重拉
     forgetAvatar(account.id);
     // 分隔用中点：掩码号码后面直接跟一长串中文太挤
-    if (res.reachable) toast.success(`${res.phone_masked} · ${res.message || '连得上'}`);
-    else toast.error(`${res.phone_masked} · ${res.message || res.status_label || '连不上'}`);
+    if (res.reachable) toast.success(`${res.phone_masked} · ${res.message || t('accounts:toasts.reachable')}`);
+    else {
+      const statusText = resolveEnumLabel(`accountStatus.${res.status}`, res.status_label, '');
+      toast.error(`${res.phone_masked} · ${res.message || statusText || t('accounts:toasts.unreachable')}`);
+    }
     void accounts.reload();
   };
 
   const handleSync = async (account: AccountOut) => {
     const res = await accountApi.syncDialogs(account.id);
-    toast.success(res.message || '已提交同步会话任务');
+    toast.success(res.message || t('accounts:toasts.syncSubmitted'));
     void accounts.reload();
   };
 
   const handleReleaseLease = async (account: AccountOut) => {
     const res = await accountApi.releaseLease(account.id);
-    toast.success(res.message || '租约已清除');
+    toast.success(res.message || t('accounts:toasts.leaseReleased'));
     void accounts.reload();
   };
 
@@ -189,7 +200,9 @@ export default function Accounts() {
       account.status === 'disabled'
         ? await accountApi.enable(account.id)
         : await accountApi.disable(account.id);
-    toast.success(res.message || (account.status === 'disabled' ? '账号已启用' : '账号已停用'));
+    toast.success(
+      res.message || (account.status === 'disabled' ? t('accounts:toasts.accountEnabled') : t('accounts:toasts.accountDisabled')),
+    );
     void accounts.reload();
   };
 
@@ -198,7 +211,7 @@ export default function Accounts() {
     setDeleting(true);
     try {
       const res = await accountApi.remove(deleteAccount.id);
-      toast.success(res.message || '账号已删除');
+      toast.success(res.message || t('accounts:toasts.accountDeleted'));
       setDeleteAccount(null);
       reloadAll();
     } catch {
@@ -229,8 +242,15 @@ export default function Accounts() {
       order: q.order ?? undefined,
     });
     downloadBlob(result.blob, result.filename);
-    if (result.truncated) toast.warning('导出超过 5 万行已截断，请缩小筛选范围');
-    else toast.success(`已导出 ${result.total ?? '全部'} 行 → ${result.filename}`);
+    if (result.truncated) toast.warning(t('accounts:toasts.exportTruncated'));
+    else {
+      toast.success(
+        t('accounts:toasts.exportSuccess', {
+          total: result.total ?? t('accounts:toasts.exportAll'),
+          filename: result.filename,
+        }),
+      );
+    }
   };
 
   // ---------------------------------------------------------------- 表格列
@@ -240,13 +260,13 @@ export default function Accounts() {
   const baseColumns: ColumnsType<AccountOut> = useMemo(
     () => [
       {
-        title: '手机号',
+        title: t('accounts:columns.phone'),
         dataIndex: 'phone_masked',
         key: 'phone_masked',
         width: 130,
         fixed: 'left',
         render: (value: string, record) => (
-          <Tooltip title={record.display_name ? `本号资料名称：${record.display_name}` : undefined}>
+          <Tooltip title={record.display_name ? t('accounts:columns.profileNameTooltip', { name: record.display_name }) : undefined}>
             <span className="tg-flex" style={{ gap: 'var(--tg-space-sm)', alignItems: 'center' }}>
               <AccountAvatar
                 accountId={record.id}
@@ -265,33 +285,33 @@ export default function Accounts() {
           </Tooltip>
         ),
       },
-      { title: '用户名', dataIndex: 'username', key: 'username', width: 120, render: (value: string | null) => value || <span className="tg-muted">—</span> },
+      { title: t('accounts:columns.username'), dataIndex: 'username', key: 'username', width: 120, render: (value: string | null) => value || <span className="tg-muted">—</span> },
       {
-        title: '用户 ID',
+        title: t('accounts:columns.userId'),
         dataIndex: 'tg_user_id',
         key: 'tg_user_id',
         width: 110,
         render: (value: number | null) => (value ? <span className="tg-mono">{String(value)}</span> : <span className="tg-muted">—</span>),
       },
-      { title: '号龄', dataIndex: 'age_days', key: 'age_days', width: 90, render: (value: number | null) => formatAccountAge(value) },
-      { title: '群数量', dataIndex: 'group_count', key: 'group_count', width: 80, render: (value: number) => <span className="tg-num">{value}</span> },
+      { title: t('accounts:columns.age'), dataIndex: 'age_days', key: 'age_days', width: 90, render: (value: number | null) => formatAccountAge(value) },
+      { title: t('accounts:columns.groupCount'), dataIndex: 'group_count', key: 'group_count', width: 80, render: (value: number) => <span className="tg-num">{value}</span> },
       {
-        title: '分组',
+        title: t('accounts:columns.group'),
         dataIndex: 'group_name',
         key: 'group_name',
         width: 110,
-        render: (value: string | null) => (value ? <SoftTag tone="primary" size="sm">{value}</SoftTag> : <SoftTag tone="neutral" size="sm">未分组</SoftTag>),
+        render: (value: string | null) => (value ? <SoftTag tone="primary" size="sm">{value}</SoftTag> : <SoftTag tone="neutral" size="sm">{t('accounts:columns.ungrouped')}</SoftTag>),
       },
       {
-        title: '代理',
+        title: t('accounts:columns.proxy'),
         dataIndex: 'proxy_endpoint',
         key: 'proxy_endpoint',
         width: 170,
         render: (value: string | null) =>
-          value ? <span className="tg-mono tg-ellipsis" style={{ display: 'inline-block', maxWidth: 150 }}>{value}</span> : <span className="tg-muted">直连</span>,
+          value ? <span className="tg-mono tg-ellipsis" style={{ display: 'inline-block', maxWidth: 150 }}>{value}</span> : <span className="tg-muted">{t('accounts:columns.direct')}</span>,
       },
       {
-        title: '状态',
+        title: t('accounts:columns.status'),
         dataIndex: 'status',
         key: 'status',
         width: 140,
@@ -306,21 +326,21 @@ export default function Accounts() {
         ),
       },
       {
-        title: '当前任务',
+        title: t('accounts:columns.currentTask'),
         dataIndex: 'current_task',
         key: 'current_task',
         width: 120,
         render: (_: unknown, record) => <CurrentTaskTag task={record.current_task} label={record.current_task_label} size="sm" />,
       },
       {
-        title: '最后心跳',
+        title: t('accounts:columns.lastHeartbeat'),
         dataIndex: 'last_heartbeat',
         key: 'last_heartbeat',
         width: 150,
         render: (value: string | null) => <RelativeTime value={value} />,
       },
       {
-        title: '操作',
+        title: t('accounts:columns.actions'),
         key: 'actions',
         width: 132,
         fixed: 'right',
@@ -328,25 +348,25 @@ export default function Accounts() {
           <span onClick={(event) => event.stopPropagation()} className="tg-flex" style={{ gap: 'var(--tg-space-xs)' }}>
             {/* 单号检测直接放行内：一眼可见、一点就走，不用进菜单找 */}
             <Button size="small" type="link" icon={<SafetyCertificateOutlined />} onClick={() => void handleCheck(record)}>
-              检测
+              {t('accounts:actions.check')}
             </Button>
             <Dropdown
               trigger={['click']}
               menu={{
                 items: [
-                  { key: 'check', icon: <SafetyCertificateOutlined />, label: '单号检测' },
-                  { key: 'sync', icon: <CloudSyncOutlined />, label: '同步会话' },
-                  { key: 'login', icon: <LoginOutlined />, label: '验证码登录' },
-                  { key: 'qr', icon: <QrcodeOutlined />, label: '扫码登录' },
-                  { key: 'edit', icon: <EditOutlined />, label: '改分组 / 代理' },
-                  { key: 'profile', icon: <UserSwitchOutlined />, label: '改资料' },
-                  { key: 'release', icon: <ThunderboltOutlined />, label: '清除租约' },
+                  { key: 'check', icon: <SafetyCertificateOutlined />, label: t('accounts:actions.singleCheck') },
+                  { key: 'sync', icon: <CloudSyncOutlined />, label: t('accounts:actions.syncDialogs') },
+                  { key: 'login', icon: <LoginOutlined />, label: t('accounts:actions.codeLogin') },
+                  { key: 'qr', icon: <QrcodeOutlined />, label: t('accounts:actions.qrLogin') },
+                  { key: 'edit', icon: <EditOutlined />, label: t('accounts:actions.editGroupProxy') },
+                  { key: 'profile', icon: <UserSwitchOutlined />, label: t('accounts:actions.editProfile') },
+                  { key: 'release', icon: <ThunderboltOutlined />, label: t('accounts:actions.releaseLease') },
                   { type: 'divider' },
                   record.status === 'disabled'
-                    ? { key: 'enable', icon: <StopOutlined />, label: '启用' }
-                    : { key: 'disable', icon: <StopOutlined />, label: '停用', danger: true },
+                    ? { key: 'enable', icon: <StopOutlined />, label: t('accounts:actions.enable') }
+                    : { key: 'disable', icon: <StopOutlined />, label: t('accounts:actions.disable'), danger: true },
                   { type: 'divider' },
-                  { key: 'delete', label: '删除', danger: true },
+                  { key: 'delete', label: t('accounts:actions.delete'), danger: true },
                 ],
                 onClick: ({ key }) => {
                   if (key === 'check') void handleCheck(record);
@@ -367,14 +387,19 @@ export default function Accounts() {
                 },
               }}
             >
-              <Button size="small" type="text" icon={<MoreOutlined />} aria-label={`账号 ${record.phone_masked} 操作`} />
+              <Button
+                size="small"
+                type="text"
+                icon={<MoreOutlined />}
+                aria-label={t('accounts:actions.accountActionsAria', { phone: record.phone_masked })}
+              />
             </Dropdown>
           </span>
         ),
       },
     ],
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [],
+    [t, i18n.language],
   );
 
   const selectColumn: ColumnsType<AccountOut>[number] = {
@@ -383,7 +408,7 @@ export default function Accounts() {
         checked={selection.pageAllSelected(pageIds)}
         indeterminate={selection.pageSomeSelected(pageIds) && !selection.pageAllSelected(pageIds)}
         onChange={(event) => selection.togglePage(pageIds, event.target.checked)}
-        aria-label="选择本页全部账号"
+        aria-label={t('accounts:actions.selectAllOnPageAria')}
       />
     ),
     key: 'select',
@@ -394,7 +419,7 @@ export default function Accounts() {
         <Checkbox
           checked={selection.isSelected(record.id)}
           onChange={(event) => selection.toggleOne(record.id, event.target.checked)}
-          aria-label={`选择账号 ${record.phone_masked}`}
+          aria-label={t('accounts:actions.selectAccountAria', { phone: record.phone_masked })}
         />
       </span>
     ),
@@ -403,7 +428,7 @@ export default function Accounts() {
   // 申诉解封：给 @SpamBot 发 /start → 看判定 → 点「这是误判」，可选顺带养号
   const runAppeal = async () => {
     if (!selection.count) {
-      toast.warning('先在列表里勾选要申诉的账号');
+      toast.warning(t('accounts:toasts.selectAccountsForAppeal'));
       return;
     }
     setAppealBusy(true);
@@ -426,7 +451,7 @@ export default function Accounts() {
   // 官方机制养号：上线/翻会话/下线，不发消息
   const runWarmup = async () => {
     if (!selection.count) {
-      toast.warning('先在列表里勾选要养号的账号');
+      toast.warning(t('accounts:toasts.selectAccountsForWarmup'));
       return;
     }
     const values = warmupForm.getFieldsValue() as {
@@ -462,7 +487,7 @@ export default function Accounts() {
   // 深度验活：排队执行，结果写回健康分
   const runProbe = async () => {
     if (!selection.count) {
-      toast.warning('先在列表里勾选要验活的账号');
+      toast.warning(t('accounts:toasts.selectAccountsForProbe'));
       return;
     }
     setProbeBusy(true);
@@ -485,7 +510,7 @@ export default function Accounts() {
   // 节流设置：留空不改，填 0 回到自动阶梯
   const runThrottle = async () => {
     if (!selection.count) {
-      toast.warning('先在列表里勾选要设置节流的账号');
+      toast.warning(t('accounts:toasts.selectAccountsForThrottle'));
       return;
     }
     const values = throttleForm.getFieldsValue() as {
@@ -516,19 +541,25 @@ export default function Accounts() {
   // 健康分列：验活结果的直观呈现（绿 ≥80 / 黄 ≥50 / 红 <50）
   // 官方身份列：显示对齐的客户端平台（导入时从官方发布版本表里取）
   const clientColumn: ColumnsType<AccountOut>[number] = {
-    title: '客户端',
+    title: t('accounts:columns.client'),
     dataIndex: 'client_kind',
     width: 110,
     render: (value: string) => {
       const label =
-        value === 'android' ? '官方 Android' : value === 'ios' ? '官方 iOS' : value === 'tdesktop' ? '官方 Desktop' : '未对齐';
+        value === 'android'
+          ? t('accounts:columns.clientAndroid')
+          : value === 'ios'
+            ? t('accounts:columns.clientIos')
+            : value === 'tdesktop'
+              ? t('accounts:columns.clientDesktop')
+              : t('accounts:columns.clientUnaligned');
       return <SoftTag tone={value ? 'neutral' : 'warning'} size="sm">{label}</SoftTag>;
     },
   };
 
   // API 配置：这个号是用哪套 api_id 登录的（多套凭据混用时便于排查限流来源）
   const apiColumn: ColumnsType<AccountOut>[number] = {
-    title: 'API 配置',
+    title: t('accounts:columns.apiConfig'),
     dataIndex: 'api_id',
     width: 110,
     render: (value: number | null) => (
@@ -539,7 +570,7 @@ export default function Accounts() {
   };
 
   const healthColumn: ColumnsType<AccountOut>[number] = {
-    title: '健康',
+    title: t('accounts:columns.health'),
     dataIndex: 'health_score',
     width: 88,
     render: (value: number, record) => {
@@ -547,7 +578,7 @@ export default function Accounts() {
       const tone = score >= 80 ? 'success' : score >= 50 ? 'warning' : 'danger';
       const color = `var(--tg-color-${tone === 'success' ? 'success' : tone === 'warning' ? 'warning' : 'danger'})`;
       return (
-        <Tooltip title={record.health_checked_at ? '深度验活结果' : '还没验活过：选「深度验活」跑一次'}>
+        <Tooltip title={record.health_checked_at ? t('accounts:columns.healthCheckedTooltip') : t('accounts:columns.healthUncheckedTooltip')}>
           <span className="tg-num" style={{ color, fontWeight: 'var(--tg-font-weight-medium)' }}>
             {score}
           </span>
@@ -572,28 +603,28 @@ export default function Accounts() {
   });
 
   const bulkMenuItems = [
-    { key: 'appeal', label: '申诉解封（@SpamBot）' },
+    { key: 'appeal', label: t('accounts:bulkMenu.appeal') },
     { type: 'divider' as const },
-    { key: 'bulk_delete', danger: true, label: '批量删除账号（不可恢复）' },
-    { key: 'warmup', label: '官方养号（上线/翻会话）' },
-    { key: 'probe', label: '深度验活（健康分）' },
-    { key: 'throttle', label: '设置发送节流（防封）' },
+    { key: 'bulk_delete', danger: true, label: t('accounts:bulkMenu.bulkDelete') },
+    { key: 'warmup', label: t('accounts:bulkMenu.warmup') },
+    { key: 'probe', label: t('accounts:bulkMenu.probe') },
+    { key: 'throttle', label: t('accounts:bulkMenu.throttle') },
     { type: 'divider' as const },
-    { key: 'check', label: '批量检测' },
-    { key: 'sync-dialogs', label: '批量同步会话' },
-    { key: 'group', label: '批量改分组 / 移出分组' },
-    { key: 'proxy', label: '批量改代理 / 解绑直连' },
-    ...(isAdmin ? [{ key: 'assign', label: '批量分配 / 取消分配' }] : []),
+    { key: 'check', label: t('accounts:bulkMenu.check') },
+    { key: 'sync-dialogs', label: t('accounts:bulkMenu.syncDialogs') },
+    { key: 'group', label: t('accounts:bulkMenu.group') },
+    { key: 'proxy', label: t('accounts:bulkMenu.proxy') },
+    ...(isAdmin ? [{ key: 'assign', label: t('accounts:bulkMenu.assign') }] : []),
     { type: 'divider' as const },
-    { key: 'disable', label: '批量停用', danger: true },
-    { key: 'enable', label: '批量启用' },
-    { key: 'release-lease', label: '批量清除租约' },
+    { key: 'disable', label: t('accounts:bulkMenu.disable'), danger: true },
+    { key: 'enable', label: t('accounts:bulkMenu.enable') },
+    { key: 'release-lease', label: t('accounts:bulkMenu.releaseLease') },
   ];
 
   return (
     <PageContainer
-      title="账号管理"
-      description="状态、分组、心跳、当前任务；异常口径与工作台一致（不等于「正常」，也不是「待登录」）。"
+      title={t('accounts:pageTitle')}
+      description={t('accounts:pageDescription')}
       actions={
         <Space>
           <Button
@@ -603,7 +634,7 @@ export default function Accounts() {
               setLoginOpen(true);
             }}
           >
-            验证码登录
+            {t('accounts:actions.codeLogin')}
           </Button>
           <Button
             icon={<QrcodeOutlined />}
@@ -612,24 +643,44 @@ export default function Accounts() {
               setQrOpen(true);
             }}
           >
-            扫码登录
+            {t('accounts:actions.qrLogin')}
           </Button>
           <Button icon={<ImportOutlined />} onClick={() => setImportOpen(true)}>
-            批量导入
+            {t('accounts:actions.bulkImport')}
           </Button>
         </Space>
       }
     >
       <StatGrid>
-        <StatCard title="账号总数" value={summary?.total ?? accounts.data?.total ?? 0} tone="primary" icon={<UserSwitchOutlined />} hint="含停用与待登录" onClick={() => q.reset()} />
-        <StatCard title="正常" value={summary?.healthy ?? 0} tone="success" icon={<SafetyCertificateOutlined />} hint="租约有效、心跳正常" onClick={() => q.setFilter('status', 'healthy')} />
-        <StatCard title="异常" value={summary?.abnormal ?? 0} tone={summary?.abnormal ? 'danger' : 'success'} icon={<ThunderboltOutlined />} hint="要验证码 / 冻结 / 失效 / 永久双向 / 停用" />
         <StatCard
-          title="本周新增"
+          title={t('accounts:stats.total')}
+          value={summary?.total ?? accounts.data?.total ?? 0}
+          tone="primary"
+          icon={<UserSwitchOutlined />}
+          hint={t('accounts:stats.totalHint')}
+          onClick={() => q.reset()}
+        />
+        <StatCard
+          title={t('accounts:stats.healthy')}
+          value={summary?.healthy ?? 0}
+          tone="success"
+          icon={<SafetyCertificateOutlined />}
+          hint={t('accounts:stats.healthyHint')}
+          onClick={() => q.setFilter('status', 'healthy')}
+        />
+        <StatCard
+          title={t('accounts:stats.abnormal')}
+          value={summary?.abnormal ?? 0}
+          tone={summary?.abnormal ? 'danger' : 'success'}
+          icon={<ThunderboltOutlined />}
+          hint={t('accounts:stats.abnormalHint')}
+        />
+        <StatCard
+          title={t('accounts:stats.newThisWeek')}
           value={summary?.new_this_week ?? 0}
           tone="info"
           icon={<PlusOutlined />}
-          hint={`在线 ${summary?.online ?? 0} · 持租约 ${summary?.leased ?? 0}`}
+          hint={t('accounts:stats.onlineAndLeased', { online: summary?.online ?? 0, leased: summary?.leased ?? 0 })}
         />
       </StatGrid>
 
@@ -638,13 +689,13 @@ export default function Accounts() {
         {(() => {
           const by = summary?.by_status ?? {};
           const cats: { key: string; label: string; tone?: string }[] = [
-            { key: '', label: '全部' },
-            { key: 'healthy', label: '正常', tone: 'is-ok' },
-            { key: 'frozen', label: '冻结', tone: 'is-danger' },
-            { key: 'needs_code', label: '待验证码', tone: 'is-warn' },
-            { key: 'invalid', label: '失效', tone: 'is-danger' },
-            { key: 'dead', label: '永久双向', tone: 'is-danger' },
-            { key: 'disabled', label: '已停用', tone: 'is-muted' },
+            { key: '', label: t('accounts:categories.all') },
+            { key: 'healthy', label: t('accounts:categories.healthy'), tone: 'is-ok' },
+            { key: 'frozen', label: t('accounts:categories.frozen'), tone: 'is-danger' },
+            { key: 'needs_code', label: t('accounts:categories.needs_code'), tone: 'is-warn' },
+            { key: 'invalid', label: t('accounts:categories.invalid'), tone: 'is-danger' },
+            { key: 'dead', label: t('accounts:categories.dead'), tone: 'is-danger' },
+            { key: 'disabled', label: t('accounts:categories.disabled'), tone: 'is-muted' },
           ];
           const current = q.filters.status || '';
           return cats.map((cat) => {
@@ -683,66 +734,66 @@ export default function Accounts() {
         activeFilters={buildActiveFilters([
           {
             key: 'group_id',
-            label: '分组',
+            label: t('accounts:filters.group'),
             display: groups.data?.find((g) => g.id === q.filters.group_id)?.name,
             clear: () => q.setFilter('group_id', null),
           },
           {
             key: 'archived',
-            label: '归档',
-            display: q.filters.archived === 'yes' ? '已归档' : undefined,
+            label: t('accounts:filters.archived'),
+            display: q.filters.archived === 'yes' ? t('accounts:filters.archivedDisplay') : undefined,
             clear: () => q.setFilter('archived', ''),
           },
           {
             key: 'status',
-            label: '状态',
-            display: ACCOUNT_STATUS_OPTIONS.find((o) => o.value === q.filters.status)?.label,
+            label: t('accounts:filters.status'),
+            display: accountStatusOptions.find((o) => o.value === q.filters.status)?.label,
             clear: () => q.setFilter('status', ''),
           },
           {
             key: 'current_task',
-            label: '当前任务',
-            display: CURRENT_TASK_OPTIONS.find((o) => o.value === q.filters.current_task)?.label,
+            label: t('accounts:filters.currentTask'),
+            display: currentTaskOptions.find((o) => o.value === q.filters.current_task)?.label,
             clear: () => q.setFilter('current_task', ''),
           },
-          { key: 'phone', label: '手机号', display: q.filters.phone as string, clear: () => { setDraftPhone(''); q.setFilter('phone', ''); } },
-          { key: 'keyword', label: '关键词', display: q.filters.keyword as string, clear: () => { setDraftKeyword(''); q.setFilter('keyword', ''); } },
+          { key: 'phone', label: t('accounts:filters.phone'), display: q.filters.phone as string, clear: () => { setDraftPhone(''); q.setFilter('phone', ''); } },
+          { key: 'keyword', label: t('accounts:filters.keyword'), display: q.filters.keyword as string, clear: () => { setDraftKeyword(''); q.setFilter('keyword', ''); } },
         ])}
       >
         <Select
           allowClear
-          placeholder="归档（默认只看在用）"
+          placeholder={t('accounts:filters.archivedPlaceholder')}
           style={{ width: 190 }}
           value={(q.filters.archived as string) || undefined}
           onChange={(value) => q.setFilter('archived', value ?? '')}
-          options={[{ label: '已归档的号', value: 'yes' }]}
+          options={[{ label: t('accounts:filters.archivedOnly'), value: 'yes' }]}
         />
         <Select
           allowClear
-          placeholder="分组"
+          placeholder={t('accounts:filters.group')}
           style={{ width: 170 }}
           value={(q.filters.group_id as string | null) ?? undefined}
           onChange={(value) => q.setFilter('group_id', value ?? null)}
-          options={(groups.data ?? []).map((g) => ({ value: g.id, label: `${g.name}（${g.account_count}）` }))}
+          options={(groups.data ?? []).map((g) => ({ value: g.id, label: `${g.name} (${g.account_count})` }))}
         />
         <Select
           allowClear
-          placeholder="状态"
+          placeholder={t('accounts:filters.status')}
           style={{ width: 130 }}
           value={(q.filters.status as string) || undefined}
           onChange={(value) => q.setFilter('status', (value as AccountStatus) ?? '')}
-          options={ACCOUNT_STATUS_OPTIONS}
+          options={accountStatusOptions}
         />
         <Select
           allowClear
-          placeholder="当前任务"
+          placeholder={t('accounts:filters.currentTask')}
           style={{ width: 150 }}
           value={(q.filters.current_task as string) || undefined}
           onChange={(value) => q.setFilter('current_task', (value as CurrentTask) ?? '')}
-          options={CURRENT_TASK_OPTIONS}
+          options={currentTaskOptions}
         />
-        <Input allowClear placeholder="手机号" style={{ width: 150 }} value={draftPhone} onChange={(e) => setDraftPhone(e.target.value)} />
-        <Input allowClear placeholder="用户名 / 备注 / 关键词" style={{ width: 200 }} value={draftKeyword} onChange={(e) => setDraftKeyword(e.target.value)} />
+        <Input allowClear placeholder={t('accounts:filters.phone')} style={{ width: 150 }} value={draftPhone} onChange={(e) => setDraftPhone(e.target.value)} />
+        <Input allowClear placeholder={t('accounts:filters.keywordPlaceholder')} style={{ width: 200 }} value={draftKeyword} onChange={(e) => setDraftKeyword(e.target.value)} />
       </FilterBar>
 
       <DataTable<AccountOut>
@@ -774,9 +825,9 @@ export default function Accounts() {
         title={
           selection.count ? (
             <span className="tg-flex" style={{ alignItems: 'center', gap: 'var(--tg-space-sm)' }}>
-              <span style={{ color: 'var(--tg-color-primary)' }}>已选 {selection.count} 个</span>
+              <span style={{ color: 'var(--tg-color-primary)' }}>{t('common:selectedCount', { count: selection.count })}</span>
               <Button type="link" size="small" onClick={selection.clear}>
-                取消选择
+                {t('accounts:actions.clearSelection')}
               </Button>
             </span>
           ) : undefined
@@ -797,11 +848,11 @@ export default function Accounts() {
               trigger={['click']}
             >
               <Button icon={<ExportOutlined />} disabled={!accounts.data?.total}>
-                批量操作 <DownOutlined />
+                {t('accounts:actions.bulkActions')} <DownOutlined />
               </Button>
             </Dropdown>
             <Button size="small" onClick={() => selection.togglePage(pageIds, true)}>
-              选择本页
+              {t('accounts:actions.selectPage')}
             </Button>
           </span>
         }
@@ -811,9 +862,9 @@ export default function Accounts() {
         })}
         empty={{
           art: 'accounts',
-          title: '还没有账号',
-          description: '用右上角「批量导入」上传手机号清单、Session 串、.session 文件或 tdata 目录。',
-          action: <Button type="primary" onClick={() => setImportOpen(true)}>批量导入</Button>,
+          title: t('accounts:empty.title'),
+          description: t('accounts:empty.description'),
+          action: <Button type="primary" onClick={() => setImportOpen(true)}>{t('accounts:actions.bulkImport')}</Button>,
         }}
       />
 
@@ -876,11 +927,11 @@ export default function Accounts() {
       <ConfirmModal
         open={Boolean(deleteAccount)}
         danger
-        title={`删除账号 ${deleteAccount?.display_label || deleteAccount?.phone_masked || ''}？`}
-        content={<Typography.Text>删除后本号与它的会话 / 消息记录都会一并清掉，不可恢复。</Typography.Text>}
+        title={t('accounts:deleteConfirm.title', { label: deleteAccount?.display_label || deleteAccount?.phone_masked || '' })}
+        content={<Typography.Text>{t('accounts:deleteConfirm.content')}</Typography.Text>}
         confirmPhrase={deleteAccount?.display_label || deleteAccount?.phone_masked || ''}
-        confirmPhraseHint="这是高危操作，请输入该账号的标识（手机号 / 用户名 / ID）确认。"
-        okText="删除"
+        confirmPhraseHint={t('accounts:deleteConfirm.phraseHint')}
+        okText={t('accounts:deleteConfirm.okText')}
         loading={deleting}
         onOk={() => void handleDelete()}
         onCancel={() => setDeleteAccount(null)}
@@ -914,10 +965,10 @@ export default function Accounts() {
 
       <Modal
         open={bulkDeleteOpen}
-        title={`批量删除账号（${selection.count} 个）`}
-        okText="确认删除"
+        title={t('accounts:bulkDelete.title', { count: selection.count })}
+        okText={t('accounts:bulkDelete.okText')}
         okButtonProps={{ danger: true, disabled: deletePhrase !== 'DELETE' }}
-        cancelText="取消"
+        cancelText={t('common:cancel')}
         confirmLoading={bulkDeleting}
         onCancel={() => {
           setBulkDeleteOpen(false);
@@ -947,11 +998,11 @@ export default function Accounts() {
           <Alert
             type="error"
             showIcon
-            message="这是不可恢复的操作"
-            description="删除后该号的会话、消息记录、任务、租约都会一并清除（审计行保留但不再关联账号），无法找回。"
+            message={t('accounts:bulkDelete.alertTitle')}
+            description={t('accounts:bulkDelete.alertDesc')}
           />
           <div className="tg-stack" style={{ gap: 'var(--tg-space-xs)' }}>
-            <span>请输入 DELETE 确认：</span>
+            <span>{t('accounts:bulkDelete.prompt')}</span>
             <Input
               value={deletePhrase}
               onChange={(e) => setDeletePhrase(e.target.value)}
@@ -964,9 +1015,9 @@ export default function Accounts() {
 
       <Modal
         open={appealOpen}
-        title="申诉解封（模拟真人走官方流程）"
-        okText="发起申诉"
-        cancelText="取消"
+        title={t('accounts:appeal.title')}
+        okText={t('accounts:appeal.okText')}
+        cancelText={t('common:cancel')}
         confirmLoading={appealBusy}
         onCancel={() => setAppealOpen(false)}
         onOk={() => void runAppeal()}
@@ -975,20 +1026,20 @@ export default function Accounts() {
           <Alert
             type="info"
             showIcon
-            message={`将对选中的 ${selection.count} 个号发起申诉`}
-            description="流程和真人一样：打开官方 @SpamBot → 发 /start → 读它的判定 → 有「这是误判」按钮就点一下 → 记录结果。同一账号 24 小时内只申诉一次（反复打扰官方反而更难解），结论会写回账号状态。"
+            message={t('accounts:appeal.alertTitle', { count: selection.count })}
+            description={t('accounts:appeal.alertDesc')}
           />
           <Checkbox checked={appealWarmup} onChange={(event) => setAppealWarmup(event.target.checked)}>
-            申诉后顺带跑一轮官方养号（真人被限制后也是照常刷消息，更像正常用户）
+            {t('accounts:appeal.withWarmup')}
           </Checkbox>
         </div>
       </Modal>
 
       <Modal
         open={warmupOpen}
-        title="官方机制养号"
-        okText="排队养号"
-        cancelText="取消"
+        title={t('accounts:warmup.title')}
+        okText={t('accounts:warmup.okText')}
+        cancelText={t('common:cancel')}
         confirmLoading={warmupBusy}
         onCancel={() => setWarmupOpen(false)}
         onOk={() => void runWarmup()}
@@ -997,33 +1048,33 @@ export default function Accounts() {
           <Alert
             type="info"
             showIcon
-            message={`将对选中的 ${selection.count} 个号排队官方节奏活动`}
-            description="动作完全对齐官方客户端：上线 → 翻会话列表 → 下线。全程不发消息、不加群，只产生正常的读行为与在线状态。默认不同步已读与打字状态（那两项对方可见）。"
+            message={t('accounts:warmup.alertTitle', { count: selection.count })}
+            description={t('accounts:warmup.alertDesc')}
           />
           <Form
             form={warmupForm}
             layout="vertical"
             initialValues={{ rounds: 1, online_min_seconds: 60, online_max_seconds: 300, sync_limits: true }}
           >
-            <Form.Item label="养号轮数" name="rounds">
+            <Form.Item label={t('accounts:warmup.rounds')} name="rounds">
               <InputNumber min={1} max={5} style={{ width: 140 }} />
             </Form.Item>
             <Space>
-              <Form.Item label="单轮在线最短（秒）" name="online_min_seconds">
+              <Form.Item label={t('accounts:warmup.onlineMin')} name="online_min_seconds">
                 <InputNumber min={10} max={1800} style={{ width: 160 }} />
               </Form.Item>
-              <Form.Item label="最长（秒）" name="online_max_seconds">
+              <Form.Item label={t('accounts:warmup.onlineMax')} name="online_max_seconds">
                 <InputNumber min={10} max={3600} style={{ width: 160 }} />
               </Form.Item>
             </Space>
             <Form.Item name="read_inbox" valuePropName="checked" style={{ marginBottom: 'var(--tg-space-sm)' }}>
-              <Checkbox>标记已读（更像真人，但对方会看到「已读」）</Checkbox>
+              <Checkbox>{t('accounts:warmup.readInbox')}</Checkbox>
             </Form.Item>
             <Form.Item name="typing" valuePropName="checked" style={{ marginBottom: 'var(--tg-space-sm)' }}>
-              <Checkbox>显示「正在输入」（对方可见，慎用）</Checkbox>
+              <Checkbox>{t('accounts:warmup.typing')}</Checkbox>
             </Form.Item>
             <Form.Item name="sync_limits" valuePropName="checked" style={{ marginBottom: 0 }}>
-              <Checkbox>同时同步官方限制参数（服务端下发的 flood/上限，节流只收紧不放松）</Checkbox>
+              <Checkbox>{t('accounts:warmup.syncLimits')}</Checkbox>
             </Form.Item>
           </Form>
         </div>
@@ -1031,9 +1082,9 @@ export default function Accounts() {
 
       <Modal
         open={probeOpen}
-        title="深度验活"
-        okText="开始验活"
-        cancelText="取消"
+        title={t('accounts:probe.title')}
+        okText={t('accounts:probe.okText')}
+        cancelText={t('common:cancel')}
         confirmLoading={probeBusy}
         onCancel={() => setProbeOpen(false)}
         onOk={() => void runProbe()}
@@ -1042,20 +1093,20 @@ export default function Accounts() {
           <Alert
             type="info"
             showIcon
-            message={`将对选中的 ${selection.count} 个账号排队深度验活`}
-            description="验活会读账号状态、会话列表与授权会话数，复算 0-100 的健康分；结果写回账号页的健康列。"
+            message={t('accounts:probe.alertTitle', { count: selection.count })}
+            description={t('accounts:probe.alertDesc')}
           />
           <Checkbox checked={probeWrite} onChange={(event) => setProbeWrite(event.target.checked)}>
-            额外做一次写权限探测（往该号自己的收藏夹发一条「验活探测」）
+            {t('accounts:probe.writeProbe')}
           </Checkbox>
         </div>
       </Modal>
 
       <Modal
         open={throttleOpen}
-        title="设置发送节流"
-        okText="应用到选中账号"
-        cancelText="取消"
+        title={t('accounts:throttle.title')}
+        okText={t('accounts:throttle.okText')}
+        cancelText={t('common:cancel')}
         confirmLoading={throttleBusy}
         onCancel={() => setThrottleOpen(false)}
         onOk={() => void runThrottle()}
@@ -1064,18 +1115,18 @@ export default function Accounts() {
           <Alert
             type="info"
             showIcon
-            message={`将对选中的 ${selection.count} 个账号应用节流设置`}
-            description="每日额度已关闭（所有账号不再受每日上限约束）。最小动作间隔留空表示不修改；填 0 表示回到「按号龄自动阶梯」。"
+            message={t('accounts:throttle.alertTitle', { count: selection.count })}
+            description={t('accounts:throttle.alertDesc')}
           />
           <Form form={throttleForm} layout="vertical" initialValues={{ interval: undefined }}>
-            <Form.Item label="最小动作间隔（秒）" name="interval">
-              <InputNumber min={0} max={3600} style={{ width: 200 }} placeholder="留空不改；0 = 自动阶梯" />
+            <Form.Item label={t('accounts:throttle.intervalLabel')} name="interval">
+              <InputNumber min={0} max={3600} style={{ width: 200 }} placeholder={t('accounts:throttle.intervalPlaceholder')} />
             </Form.Item>
             <Form.Item name="resetFlood" valuePropName="checked" style={{ marginBottom: 'var(--tg-space-md)' }}>
-              <Checkbox>同时解除熔断冷却与限流计数（确认账号已恢复再勾）</Checkbox>
+              <Checkbox>{t('accounts:throttle.resetFlood')}</Checkbox>
             </Form.Item>
             <Form.Item name="warmupNow" valuePropName="checked" style={{ marginBottom: 0 }}>
-              <Checkbox>把养号起点重置为今天（新导入的号从最严档开始）</Checkbox>
+              <Checkbox>{t('accounts:throttle.warmupNow')}</Checkbox>
             </Form.Item>
           </Form>
         </div>

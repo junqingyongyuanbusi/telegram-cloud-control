@@ -1,0 +1,17 @@
+{
+  "badRequest": "请求参数不正确",
+  "unauthorized": "登录已过期，请重新登录",
+  "forbidden": "没有权限执行该操作",
+  "notFound": "接口不存在（404）：{{path}}",
+  "conflict": "当前状态不允许该操作，请刷新后重试",
+  "unprocessable": "参数校验失败",
+  "tooManyRequests": "操作太频繁，请稍后再试",
+  "serverError": "服务端错误（{{status}}），请稍后重试",
+  "requestFailed": "请求失败（{{status}}）",
+  "cancelled": "请求已取消",
+  "timeout": "请求超时，请稍后重试",
+  "networkError": "无法连接后端服务，请确认 API 已启动",
+  "exportCancelled": "导出已取消",
+  "exportNetworkError": "导出失败：无法连接后端服务",
+  "exportFailed": "导出失败（{{status}}）"
+}

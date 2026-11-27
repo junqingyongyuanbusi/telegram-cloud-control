@@ -20,6 +20,7 @@
  */
 import type { CSSProperties, ReactNode } from 'react';
 import { Link } from 'react-router-dom';
+import { useTranslation } from 'react-i18next';
 
 export interface Crumb {
   title: ReactNode;
@@ -37,11 +38,12 @@ export interface PageHeaderProps {
 }
 
 export function PageHeader({ title, description, actions, breadcrumb, tabs, className, style }: PageHeaderProps) {
+  const { t } = useTranslation('shell');
   return (
     <header className={['tg-page-header', className].filter(Boolean).join(' ')} style={style}>
       <div className="tg-page-header-main">
         {breadcrumb && breadcrumb.length ? (
-          <nav className="app-breadcrumb" aria-label="面包屑">
+          <nav className="app-breadcrumb" aria-label={t('topbar.breadcrumbAria')}>
             {breadcrumb.map((crumb, index) => (
               <span key={`${String(crumb.title)}-${index}`} style={{ display: 'inline-flex', alignItems: 'center', gap: 'var(--tg-space-sm)' }}>
                 {index > 0 ? <span className="app-breadcrumb-sep">/</span> : null}

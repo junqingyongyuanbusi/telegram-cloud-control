@@ -16,6 +16,7 @@ import type {
   TaskType,
   UserRole,
 } from './api/types';
+import i18n from './i18n';
 
 export interface SelectOption<T extends string = string> {
   value: T;
@@ -217,6 +218,70 @@ export function optionLabel(
 ): string {
   if (!value) return fallback;
   return map[value] ?? value;
+}
+
+/** 按当前语言动态生成下拉选项（配合 useTranslation() 在语言切换时自动重算） */
+export function getAccountStatusOptions(): SelectOption<AccountStatus>[] {
+  return (Object.keys(ACCOUNT_STATUS_LABELS) as AccountStatus[]).map((value) => ({
+    value,
+    label: i18n.t(`enums:accountStatus.${value}`, { defaultValue: ACCOUNT_STATUS_LABELS[value] }),
+  }));
+}
+
+export function getCurrentTaskOptions(): SelectOption<CurrentTask>[] {
+  return (Object.keys(CURRENT_TASK_LABELS) as CurrentTask[]).map((value) => ({
+    value,
+    label: i18n.t(`enums:currentTask.${value}`, { defaultValue: CURRENT_TASK_LABELS[value] }),
+  }));
+}
+
+export function getTaskStatusOptions(): SelectOption<TaskStatus>[] {
+  return (Object.keys(TASK_STATUS_LABELS) as TaskStatus[]).map((value) => ({
+    value,
+    label: i18n.t(`enums:taskStatus.${value}`, { defaultValue: TASK_STATUS_LABELS[value] }),
+  }));
+}
+
+export function getTaskTypeOptions(): SelectOption<TaskType>[] {
+  return (Object.keys(TASK_TYPE_LABELS) as TaskType[]).map((value) => ({
+    value,
+    label: i18n.t(`enums:taskType.${value}`, { defaultValue: TASK_TYPE_LABELS[value] }),
+  }));
+}
+
+export function getUserRoleOptions(): SelectOption<UserRole>[] {
+  return (Object.keys(USER_ROLE_LABELS) as UserRole[]).map((value) => ({
+    value,
+    label: i18n.t(`enums:userRole.${value}`, { defaultValue: USER_ROLE_LABELS[value] }),
+  }));
+}
+
+export function getAuditActionOptions(): SelectOption[] {
+  return Object.entries(AUDIT_ACTION_LABELS).map(([value, fallback]) => ({
+    value,
+    label: `${i18n.t(`enums:auditAction.${value}`, { defaultValue: fallback })} (${value})`,
+  }));
+}
+
+export function getDialogChannelOptions(): SelectOption<DialogChannel>[] {
+  return (Object.keys(DIALOG_CHANNEL_LABELS) as DialogChannel[]).map((value) => ({
+    value,
+    label: i18n.t(`enums:dialogChannel.${value}`, { defaultValue: DIALOG_CHANNEL_LABELS[value] }),
+  }));
+}
+
+export function getDialogKindOptions(): SelectOption<DialogKind>[] {
+  return (Object.keys(DIALOG_KIND_LABELS) as DialogKind[]).map((value) => ({
+    value,
+    label: i18n.t(`enums:dialogKind.${value}`, { defaultValue: DIALOG_KIND_LABELS[value] }),
+  }));
+}
+
+export function getRelayTargetKindOptions(): SelectOption<RelayTargetKind>[] {
+  return RELAY_TARGET_KIND_OPTIONS.map((opt) => ({
+    value: opt.value,
+    label: i18n.t(`enums:relayTargetKind.${opt.value}`, { defaultValue: opt.label }),
+  }));
 }
 
 /** 账号「异常」口径：非 healthy 且非 pending（待登录单独算，不算异常） */

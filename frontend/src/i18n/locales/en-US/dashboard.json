@@ -1,0 +1,114 @@
+{
+  "title": "Dashboard",
+  "descriptionWithTime": "Generated at {{time}}. Online count tracks lease heartbeats; accounts are reclaimed if Redis heartbeats drop.",
+  "descriptionDefault": "Online accounts, anomalies, worker heartbeats, and task queue backlog.",
+  "autoRefresh": "Auto-refresh (15s)",
+  "telegramNotReady": {
+    "message": "Telegram API credentials are not configured; Worker is idle and will not connect to Telegram or run tasks",
+    "introBeforeCode": "This is a Telegram requirement, not a system limit: every third-party client (including this console) must use its own",
+    "introAfterCode": "credentials to connect. Registration is free and takes a few minutes:",
+    "step1BeforeLink": "1. Open ",
+    "step1AfterLink": " and sign in with your phone number (enter the verification code).",
+    "step2BeforeBold": "2. Go to ",
+    "step2AfterBold": ", enter any App title / Short name, and create the app.",
+    "step3Part1": "3. Put the ",
+    "step3Part2": " (numeric) and ",
+    "step3Part3": " (32-character string) into",
+    "step3Part4": ", then restart with ",
+    "step3Part5": ".",
+    "tip": "Tip: One pair of credentials can serve multiple accounts. For large fleets, split across several pairs to reduce rate-limit impact. Never use public api_id values found online."
+  },
+  "noAccounts": {
+    "message": "No Telegram accounts connected yet",
+    "description": "Accounts are the starting point of the system: sign in with one account via verification code so the console can sync dialogs, receive messages, and send on command. Run a quick check on the Accounts page afterward to verify it is online.",
+    "loginFirst": "Connect First Account",
+    "goAccounts": "Go to Accounts"
+  },
+  "stats": {
+    "online": "Online",
+    "onlineUnit": "/ {{total}} total",
+    "onlineHint": "{{count}} leased accounts",
+    "abnormal": "Abnormal",
+    "abnormalHint": "Needs code / Frozen / Invalid / Dead / Disabled",
+    "failedTasks": "Failed Tasks",
+    "failedTasksHint": "Total failures in last 24h",
+    "totalAccounts": "Total Accounts",
+    "totalAccountsHint": "Dialogs {{dialogs}} · Unread {{unread}} · Bots {{bots}}"
+  },
+  "quickLinks": {
+    "title": "Quick Actions",
+    "subtitle": "Jump directly to common views",
+    "accounts": "Accounts",
+    "accountsDesc": "Status, groups, heartbeats",
+    "network": "Network",
+    "networkDesc": "Proxies & outbound endpoints",
+    "tasks": "Task Center",
+    "tasksDesc": "Queue progress & retries",
+    "campaigns": "Outreach Center",
+    "campaignsDesc": "Materials / Join & Send",
+    "dialogs": "Dialogs",
+    "dialogsDesc": "Private & group chats"
+  },
+  "trends": {
+    "title": "Online Trends",
+    "subtitle": "Online accounts / abnormal accounts / succeeded / failed tasks aggregated hourly (daily for 7d and 30d)",
+    "window24h": "24 Hours",
+    "window7d": "7 Days",
+    "window30d": "30 Days",
+    "chartEmpty": "No trend samples yet; data points will appear automatically once collected.",
+    "chartAriaLabel": "Online trends line chart",
+    "hoverItem": "{{label}}: ",
+    "series": {
+      "online_accounts": "Online Accounts",
+      "abnormal_accounts": "Abnormal Accounts",
+      "tasks_succeeded": "Tasks Succeeded",
+      "tasks_failed": "Tasks Failed"
+    }
+  },
+  "workers": {
+    "title": "Worker Heartbeats",
+    "subtitle": "Highlighted in red if no heartbeat for >60s — check here first when on call",
+    "emptyTitle": "No worker heartbeats reported",
+    "emptyDesc": "Heartbeat records will appear here once a worker starts.",
+    "staleAlertMessage": "{{count}} worker(s) without heartbeat for >60s",
+    "staleAlertDesc": "Action: check the host to verify the worker process is running (inspect process list and logs) and restart if needed. Leases will be reclaimed automatically after expiry without losing account data.",
+    "colWorker": "Worker",
+    "colLastHeartbeat": "Last Heartbeat",
+    "colOnlineAccounts": "Online",
+    "colLeasedAccounts": "Leased",
+    "colSource": "Source",
+    "statusStale": "No heartbeat >60s",
+    "statusHealthy": "Healthy",
+    "sourceRedis": "Redis Heartbeat"
+  },
+  "failures": {
+    "title": "Recent Failed Tasks",
+    "subtitle": "Latest 10 failures ordered by creation time",
+    "goTasks": "Task Center",
+    "emptyTitle": "No recent failed tasks",
+    "emptyDesc": "Failed tasks will appear here.",
+    "colTaskType": "Task Type",
+    "colAccount": "Account",
+    "colError": "Failure Reason",
+    "colAttempts": "Retries",
+    "colCreatedAt": "Created At"
+  },
+  "queue": {
+    "title": "Task Queue Backlog",
+    "subtitle": "Click a counter to inspect details in Task Center",
+    "pending": "Pending",
+    "running": "Running",
+    "overdue": "Overdue",
+    "stuck": "Stuck",
+    "explanation": "Overdue: past scheduled time and not yet claimed by a worker. Stuck: running past timeout and requires manual intervention."
+  },
+  "notifications": {
+    "title": "Unread Notifications",
+    "unreadSubtitle": "{{count}} unread alerts",
+    "defaultSubtitle": "Task failures / Worker offline / Account anomalies / Backup failures",
+    "markAllRead": "Mark all read",
+    "markedAllRead": "All notifications marked as read",
+    "emptyTitle": "No unread notifications",
+    "emptyDesc": "Everything looks healthy; alerts will appear here when issues occur."
+  }
+}

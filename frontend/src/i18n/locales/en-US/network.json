@@ -1,0 +1,84 @@
+{
+  "title": "Network",
+  "description": "Proxies provide fixed outbound addresses loaded when workers claim accounts. Credentials are stored encrypted; APIs only report whether auth is set.",
+  "create": "New Proxy",
+  "columns": {
+    "name": "Name",
+    "scheme": "Protocol",
+    "endpoint": "Endpoint",
+    "auth": "Auth",
+    "binding": "Bound Accounts",
+    "enabled": "Enabled",
+    "remark": "Remark",
+    "createdAt": "Created At",
+    "actions": "Actions"
+  },
+  "auth": {
+    "configured": "Configured",
+    "none": "None"
+  },
+  "binding": {
+    "count": "{{count}}",
+    "abnormalTooltip": "Some bound accounts are abnormal (needs code / frozen / invalid / dead / disabled). Inspect accounts or switch proxy.",
+    "abnormalCount": "{{count}} abnormal",
+    "allHealthy": "All healthy",
+    "unbound": "Unbound"
+  },
+  "actions": {
+    "bindAccounts": "Bind Accounts",
+    "edit": "Edit",
+    "delete": "Delete"
+  },
+  "empty": {
+    "title": "No proxies yet",
+    "description": "Create a proxy and bind accounts in bulk to route them through a fixed exit."
+  },
+  "footnote": "Health hints reflect the statuses of bound accounts; fix abnormal accounts first or switch to a more stable endpoint.",
+  "deleteConfirm": {
+    "title": "Delete proxy \"{{name}}\"?",
+    "content": "Bound accounts will not be deleted, but they will lose their outbound address until rebound.",
+    "ok": "Delete"
+  },
+  "bindModal": {
+    "title": "Bind Accounts to Proxy: {{name}}",
+    "hint": "Check to route through this proxy, uncheck to unbind and use direct connection."
+  },
+  "form": {
+    "editTitle": "Edit Proxy: {{name}}",
+    "createTitle": "New Proxy",
+    "parseHint": "Paste a full endpoint to auto-parse (socks5://user:pass@1.2.3.4:1080), or fill in the fields below manually.",
+    "parsePlaceholder": "Paste endpoint: socks5://user:pass@1.2.3.4:1080",
+    "parseButton": "Parse",
+    "parseError": "Unable to parse host. Check endpoint format (e.g. socks5://user:pass@1.2.3.4:1080).",
+    "parseSuccess": "Endpoint parsed into fields below — review and save.",
+    "nameLabel": "Name",
+    "nameRequired": "Please enter a name",
+    "nameMax": "At most 64 characters",
+    "namePlaceholder": "e.g., HK-01",
+    "schemeLabel": "Protocol",
+    "schemeRequired": "Please select a protocol",
+    "hostLabel": "Host",
+    "hostPlaceholder": "1.2.3.4 or host.example.com",
+    "hostErrRequired": "Please enter a host",
+    "hostErrWhitespace": "Host cannot contain whitespace",
+    "hostErrScheme": "Omit the protocol prefix (scheme://); choose protocol from the dropdown",
+    "hostErrPath": "Do not include a path or query string",
+    "portLabel": "Port",
+    "portRequired": "Please enter a port",
+    "usernameLabel": "Username (leave blank to keep unchanged)",
+    "passwordLabel": "Password (leave blank to keep unchanged)",
+    "optionalPlaceholder": "Optional",
+    "enabledLabel": "Enabled",
+    "remarkLabel": "Remark"
+  },
+  "toast": {
+    "deleted": "Proxy deleted",
+    "bound": "Bound {{count}} account(s)",
+    "unbound": "Unbound {{count}} account(s) (switched to direct)",
+    "noBindChange": "No changes to proxy bindings",
+    "enabled": "Proxy enabled",
+    "disabled": "Proxy disabled",
+    "updated": "Proxy updated",
+    "created": "Proxy created"
+  }
+}

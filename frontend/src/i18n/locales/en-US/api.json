@@ -1,0 +1,17 @@
+{
+  "badRequest": "Invalid request parameters",
+  "unauthorized": "Session expired, please sign in again",
+  "forbidden": "Permission denied for this operation",
+  "notFound": "Endpoint not found (404): {{path}}",
+  "conflict": "Operation not allowed in current state; please refresh and retry",
+  "unprocessable": "Parameter validation failed",
+  "tooManyRequests": "Too many requests; please try again later",
+  "serverError": "Server error ({{status}}); please try again later",
+  "requestFailed": "Request failed ({{status}})",
+  "cancelled": "Request cancelled",
+  "timeout": "Request timed out; please try again later",
+  "networkError": "Unable to reach backend API. Please verify the API service is running.",
+  "exportCancelled": "Export cancelled",
+  "exportNetworkError": "Export failed: unable to reach backend API",
+  "exportFailed": "Export failed ({{status}})"
+}
