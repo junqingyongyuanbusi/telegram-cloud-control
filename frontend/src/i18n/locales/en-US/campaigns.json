@@ -157,7 +157,7 @@
     "accountsPerWave": "Accounts per Wave",
     "accountsPerWaveTooltip": "e.g., 100 accounts per wave; 0 runs all accounts in a single wave",
     "groupsPerAccount": "Groups per Account / Wave",
-    "groupsPerAccountTooltip": "e.g., 10 groups per account per wave; 0 assigns all groups in one pass",
+    "groupsPerAccountTooltip": "e.g., 10 groups per account per wave; Rotate: 0 splits groups evenly across accounts (2 groups / 2 accounts = 1 each); Replicate: 0 gives every account all groups",
     "maxAccounts": "Max Accounts",
     "maxAccountsTooltip": "0 = unlimited; selects top N accounts by health score",
     "clear": "Clear",

@@ -177,7 +177,10 @@ class JoinAndSendRequest(BulkScopeRequest):
         default=0, ge=0, le=1000, description="每轮账号数：0 = 全部账号一轮跑完；Worker 会等上一轮结束再开下一轮"
     )
     groups_per_account: int = Field(
-        default=0, ge=0, le=100, description="每个号每轮处理多少个群：0 = 该号一次处理全部群（旧行为）"
+        default=0,
+        ge=0,
+        le=100,
+        description="每个号每轮处理多少个群：轮训下 0 = 按账号数均分，重复下 0 = 每个号跑全部群",
     )
     max_accounts: int = Field(
         default=0, ge=0, le=500, description="自动挑号上限：0 = 不限制；按健康分优先挑选"

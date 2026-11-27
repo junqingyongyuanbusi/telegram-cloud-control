@@ -157,7 +157,7 @@
     "accountsPerWave": "每轮账号数",
     "accountsPerWaveTooltip": "例如每轮 100 个号；0 = 全部账号一轮跑完",
     "groupsPerAccount": "每号每轮群数",
-    "groupsPerAccountTooltip": "例如 10 = 每个号每轮处理 10 个群；0 = 一个号一次处理全部群",
+    "groupsPerAccountTooltip": "例如 10 = 每个号每轮处理 10 个群；轮训下 0 = 按账号数均分（2 群 / 2 号 = 每号 1 个），重复下 0 = 每个号都跑全部群",
     "maxAccounts": "最多使用账号数",
     "maxAccountsTooltip": "0 = 不限制；按健康分排序取前 N 个",
     "clear": "清空",
