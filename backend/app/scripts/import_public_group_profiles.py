@@ -258,7 +258,12 @@ async def run(args: argparse.Namespace) -> int:
                     )
                     _log(f"ABORT FloodWait {exc.seconds}s @{username}")
                     break
-                except (UsernameNotOccupiedError, UsernameInvalidError, ChannelPrivateError) as exc:
+                except (
+                    UsernameNotOccupiedError,
+                    UsernameInvalidError,
+                    ChannelPrivateError,
+                    ValueError,
+                ) as exc:
                     counts["not_found"] += 1
                     results.append({"username": username, "status": "not_found", "error": type(exc).__name__})
                     continue
