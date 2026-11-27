@@ -53,6 +53,14 @@ USERNAME_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_]{3,31}$")
 LEASE_SECONDS = 7200
 
 
+class FloodWaitTooLong(RuntimeError):
+    """Telegram 要求等待的时间超过上限；继续睡会长时间占着账号租约。"""
+
+    def __init__(self, seconds: int) -> None:
+        super().__init__(f"FloodWait {seconds}s 超过上限")
+        self.seconds = seconds
+
+
 def _now() -> datetime:
     return datetime.now(tz=timezone.utc)
 
@@ -70,18 +78,24 @@ def _load_rows(source: str) -> list[dict[str, Any]]:
     return [row for row in rows if isinstance(row, dict)]
 
 
-async def _lease_account(session: Any, worker_id: str) -> TgAccount:
-    account = await session.scalar(
-        select(TgAccount)
-        .where(
-            TgAccount.status == AccountStatus.healthy,
-            TgAccount.session_enc.is_not(None),
-        )
-        .order_by(TgAccount.created_at.asc())
-        .limit(1)
+async def _lease_account(
+    session: Any, worker_id: str, account_id: str | None = None
+) -> TgAccount:
+    query = select(TgAccount).where(
+        TgAccount.status == AccountStatus.healthy,
+        TgAccount.session_enc.is_not(None),
     )
+    if account_id:
+        try:
+            wanted = uuid.UUID(account_id)
+        except ValueError as exc:
+            raise RuntimeError("--account-id 不是合法 UUID") from exc
+        query = query.where(TgAccount.id == wanted)
+    account = await session.scalar(query.order_by(TgAccount.created_at.asc()).limit(1))
     if account is None:
-        raise RuntimeError("没有 healthy 且带会话的账号，无法解析公开用户名")
+        raise RuntimeError(
+            f"没有可用的 healthy 且有会话的账号（account_id={account_id or 'auto'}）"
+        )
 
     now = _now()
     active = await session.scalar(
@@ -143,13 +157,15 @@ def _build_client(snapshot: Any) -> TelegramClient:
     )
 
 
-async def _resolve(client: TelegramClient, username: str) -> Any:
-    """只读解析；FloodWait 时等待后重试。"""
+async def _resolve(client: TelegramClient, username: str, max_flood_wait: int) -> Any:
+    """只读解析；短 FloodWait 等待后重试，超长等待直接中止整批。"""
     for attempt in range(3):
         try:
             return await client.get_entity(f"@{username}")
         except FloodWaitError as exc:
             wait = int(getattr(exc, "seconds", 0) or 30)
+            if wait > max_flood_wait:
+                raise FloodWaitTooLong(wait) from exc
             _log(f"FLOOD_WAIT {wait}s @{username}（第 {attempt + 1} 次）")
             await asyncio.sleep(wait + 2)
     raise RuntimeError("FloodWait 重试次数用尽")
@@ -213,7 +229,7 @@ async def run(args: argparse.Namespace) -> int:
 
     try:
         async with SessionFactory() as session:
-            account = await _lease_account(session, worker_id)
+            account = await _lease_account(session, worker_id, args.account_id)
             account_id = account.id
             snapshot = snapshot_from_row(account)
             client = _build_client(snapshot)
@@ -234,7 +250,14 @@ async def run(args: argparse.Namespace) -> int:
                     continue
 
                 try:
-                    entity = await _resolve(client, username)
+                    entity = await _resolve(client, username, args.max_flood_wait)
+                except FloodWaitTooLong as exc:
+                    counts["flood_abort"] += 1
+                    results.append(
+                        {"username": username, "status": "flood_abort", "seconds": exc.seconds}
+                    )
+                    _log(f"ABORT FloodWait {exc.seconds}s @{username}")
+                    break
                 except (UsernameNotOccupiedError, UsernameInvalidError, ChannelPrivateError) as exc:
                     counts["not_found"] += 1
                     results.append({"username": username, "status": "not_found", "error": type(exc).__name__})
@@ -344,6 +367,13 @@ def main() -> None:
     parser.add_argument("--target", type=int, default=100, help="目标成功群数，默认 100")
     parser.add_argument("--limit", type=int, default=0, help="最多处理多少条输入（0=全部）")
     parser.add_argument("--sleep", type=float, default=1.2, help="两条解析之间的基础间隔秒数")
+    parser.add_argument("--account-id", default=None, help="指定健康账号 UUID；默认取最早的健康账号")
+    parser.add_argument(
+        "--max-flood-wait",
+        type=int,
+        default=120,
+        help="FloodWait 超过该秒数立即中止整批，默认 120",
+    )
     parser.add_argument("--apply", action="store_true", help="真正写入；默认只 dry-run")
     args = parser.parse_args()
     raise SystemExit(asyncio.run(run(args)))
