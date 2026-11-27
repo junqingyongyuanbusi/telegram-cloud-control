@@ -1236,7 +1236,78 @@ async def test_simple_screen_flood_score_fallback() -> None:
             if getattr(stmt, "table", None) is not None and stmt.table.name == "group_search_matches"
         }
         assert saved[9201]["status"] == "accepted"
-        assert any("限流未验活，按评分保留" in reason for reason in saved[9201]["reasons"])
+        assert any("限流/预算不足未验活，按评分保留" in reason for reason in saved[9201]["reasons"])
+    finally:
+        worker_gi.sleep_human = orig_sleep
+        worker_gi.upsert_profile = orig_upsert
+
+
+async def test_simple_screen_budget_score_fallback() -> None:
+    """RPC 预算耗尽导致验活没跑完时，同样按评分兜底。"""
+    orig_sleep = worker_gi.sleep_human
+    orig_upsert = worker_gi.upsert_profile
+    worker_gi.sleep_human = _noop_sleep
+    try:
+        async def _fake_upsert(_session: Any, *, tg_chat_id: int, **_kwargs: Any):
+            return SimpleNamespace(id=uuid.uuid5(uuid.NAMESPACE_DNS, f"budget-{tg_chat_id}"))
+
+        worker_gi.upsert_profile = _fake_upsert
+
+        class _BudgetClient:
+            async def __call__(self, req: Any) -> Any:
+                if isinstance(req, functions.contacts.SearchRequest):
+                    return SimpleNamespace(
+                        chats=[
+                            Channel(id=9401, title="Forex Thailand Active", username="fx_budget_9401", participants_count=600)
+                        ]
+                    )
+                return SimpleNamespace(chats=[], messages=[])
+
+            async def iter_messages(self, _chat: Any, limit: int = 20):
+                when = datetime.now(tz=timezone.utc)
+                for _ in range(2):
+                    yield SimpleNamespace(date=when, message="hello forex thailand", sender_id=1)
+
+        account, task = _make_account_and_task(
+            {
+                "mode": "precise",
+                "keywords": ["Forex Thailand"],
+                "country": "TH",
+                "languages": ["th", "en"],
+                "max_queries": 20,
+                "contacts_query_limit": 1,
+                "rpc_budget": 20,
+                "search_messages": True,
+                "message_search_queries": 20,
+                "message_search_pages": 5,
+                "expand_short_queries": False,
+                "scan_joined_groups": False,
+                "expand_recommendations": False,
+                "expand_channel_messages": False,
+                "include_linked_groups": False,
+                "enrich_tme": False,
+                "verify_activity": True,
+                "activity_check_limit": 5,
+                "simple_screen": True,
+            }
+        )
+        session = _FakeSession()
+        res = await _Harness(_BudgetClient())._search_groups_precise(session, task, account, task.payload)
+
+        assert res["accepted"] == 1, res
+        assert res["source_stats"]["score_fallback"] == 1, res["source_stats"]
+        assert res["source_stats"]["budget_stopped"] == 1, res["source_stats"]
+        assert res["source_stats"]["flood_stopped"] == 0, res["source_stats"]
+
+        saved = {
+            {col.key: val.value for col, val in stmt._values.items()}["tg_chat_id"]: {
+                col.key: val.value for col, val in stmt._values.items()
+            }
+            for stmt in session.executed
+            if getattr(stmt, "table", None) is not None and stmt.table.name == "group_search_matches"
+        }
+        assert saved[9401]["status"] == "accepted"
+        assert any("限流/预算不足未验活，按评分保留" in reason for reason in saved[9401]["reasons"])
     finally:
         worker_gi.sleep_human = orig_sleep
         worker_gi.upsert_profile = orig_upsert
@@ -1379,6 +1450,7 @@ async def _run_all() -> None:
     await test_common_chat_graph_and_rpc_budget()
     await test_simple_screen_activity_and_speakable()
     await test_simple_screen_flood_score_fallback()
+    await test_simple_screen_budget_score_fallback()
     await test_batch_merge_and_hydration()
     print("group_precise_pipeline_check: ok")
 

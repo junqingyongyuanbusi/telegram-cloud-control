@@ -3036,17 +3036,17 @@ class GroupIntelMixin:
                     activity = entry.get("activity")
                     reasons = [r for r in reasons if not r.startswith(("近7天", "近期活跃"))]
                     if activity is None:
-                        if flood_hit:
-                            # 限流导致验活没跑完：不能把整批合格群都扔进待确认，
+                        if flood_hit or budget_hit:
+                            # 限流或 RPC 预算耗尽导致验活没跑完：不能把整批合格群都扔进待确认，
                             # 按评分兜底，至少让高分群先入库。
                             status = classify(final_score, min_score=min_score)
                             metrics["score_fallback"] = metrics.get("score_fallback", 0) + 1
                             if status == "accepted":
-                                reasons.append("限流未验活，按评分保留")
+                                reasons.append("限流/预算不足未验活，按评分保留")
                             elif status == "needs_review":
-                                reasons.append("限流未验活，评分不足待确认")
+                                reasons.append("限流/预算不足未验活，评分不足待确认")
                             else:
-                                reasons.append("限流未验活，评分不足")
+                                reasons.append("限流/预算不足未验活，评分不足")
                         else:
                             status = "needs_review"
                             reasons.append("无法读取近期消息，活跃度待确认")
@@ -3204,7 +3204,7 @@ class GroupIntelMixin:
             ]
 
             if metrics.get("score_fallback"):
-                push_note(f"限流导致验活未完成，{metrics['score_fallback']} 个候选按评分兜底判定")
+                push_note(f"限流/预算导致验活未完成，{metrics['score_fallback']} 个候选按评分兜底判定")
 
             source_stats.update(
                 {
