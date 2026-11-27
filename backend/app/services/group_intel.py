@@ -12,6 +12,7 @@
 from __future__ import annotations
 
 import logging
+import re
 import uuid
 from datetime import datetime, timezone
 from typing import Any, Optional
@@ -136,6 +137,10 @@ async def upsert_profile(
             if geo.country:
                 country = geo.country
                 country_source = country_source or "inferred"
+
+    # 泰文标题统一按 th 归类：个别来源把它标成 en，语言筛选会漏掉这些群。
+    if language == "en" and re.search(r"[฀-๿]", str(title or profile.title or "")):
+        language = "th"
 
     if language is not None:
         profile.language = language[:8]
