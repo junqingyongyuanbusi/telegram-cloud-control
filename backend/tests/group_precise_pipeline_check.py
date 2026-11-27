@@ -531,6 +531,76 @@ async def test_flood_wait_and_fatal_auth_handling() -> None:
         worker_gi.upsert_profile = orig_upsert
 
 
+async def test_flood_continue_short_wait() -> None:
+    """短限流（≤60s）等待后继续，不应把后面的查询和验活整段跳过。"""
+    orig_sleep = worker_gi.sleep_human
+    orig_upsert = worker_gi.upsert_profile
+    worker_gi.sleep_human = _noop_sleep
+    try:
+        async def _fake_upsert(_session: Any, *, tg_chat_id: int, **_kwargs: Any):
+            return SimpleNamespace(id=uuid.uuid5(uuid.NAMESPACE_DNS, f"short-flood-{tg_chat_id}"))
+
+        worker_gi.upsert_profile = _fake_upsert
+
+        class _ShortFloodClient:
+            def __init__(self) -> None:
+                self.search_calls = 0
+
+            async def __call__(self, req: Any) -> Any:
+                if isinstance(req, functions.contacts.SearchRequest):
+                    self.search_calls += 1
+                    if self.search_calls == 1:
+                        raise FloodWaitError(request=None, capture=5)
+                    return SimpleNamespace(
+                        chats=[
+                            Channel(id=9301, title="Forex Thailand Chat", username="fx_short_9301", participants_count=600)
+                        ]
+                    )
+                if isinstance(req, functions.channels.GetFullChannelRequest):
+                    return SimpleNamespace(
+                        full_chat=SimpleNamespace(about="Forex Thailand traders", participants_count=600, linked_chat_id=None),
+                        chats=[],
+                    )
+                return SimpleNamespace(chats=[])
+
+            async def iter_messages(self, _chat: Any, limit: int = 20):
+                when = datetime.now(tz=timezone.utc)
+                for _ in range(2):
+                    yield SimpleNamespace(date=when, message="hello forex thailand", sender_id=1)
+
+        account, task = _make_account_and_task(
+            {
+                "mode": "precise",
+                "keywords": ["Forex", "Gold"],
+                "country": "TH",
+                "languages": ["th", "en"],
+                "max_queries": 2,
+                "contacts_query_limit": 2,
+                "search_messages": False,
+                "expand_short_queries": False,
+                "scan_joined_groups": False,
+                "expand_recommendations": False,
+                "expand_channel_messages": False,
+                "include_linked_groups": False,
+                "enrich_tme": False,
+                "verify_activity": True,
+                "activity_check_limit": 5,
+                "simple_screen": True,
+            }
+        )
+        client = _ShortFloodClient()
+        res = await _Harness(client)._search_groups_precise(_FakeSession(), task, account, task.payload)
+
+        assert client.search_calls >= 2, "短限流后应继续执行下一条查询"
+        assert res["source_stats"]["flood_continues"] == 1, res["source_stats"]
+        assert res["source_stats"]["flood_stopped"] == 0, res["source_stats"]
+        assert res["metrics"]["activity_checked"] == 1, res["metrics"]
+        assert res["accepted"] == 1, res
+    finally:
+        worker_gi.sleep_human = orig_sleep
+        worker_gi.upsert_profile = orig_upsert
+
+
 async def test_step5_savepoint_isolation() -> None:
     orig_sleep = worker_gi.sleep_human
     orig_upsert = worker_gi.upsert_profile
@@ -1095,6 +1165,83 @@ async def test_simple_screen_activity_and_speakable() -> None:
         worker_gi.upsert_profile = orig_upsert
 
 
+async def test_simple_screen_flood_score_fallback() -> None:
+    """限流导致验活没跑完时，按评分兜底，不能把整批合格群都判成待确认。"""
+    orig_sleep = worker_gi.sleep_human
+    orig_upsert = worker_gi.upsert_profile
+    worker_gi.sleep_human = _noop_sleep
+    try:
+        async def _fake_upsert(_session: Any, *, tg_chat_id: int, **_kwargs: Any):
+            return SimpleNamespace(id=uuid.uuid5(uuid.NAMESPACE_DNS, f"fallback-{tg_chat_id}"))
+
+        worker_gi.upsert_profile = _fake_upsert
+
+        class _FloodOnActivityClient:
+            def __init__(self) -> None:
+                self.activity_calls = 0
+
+            async def __call__(self, req: Any) -> Any:
+                if isinstance(req, functions.contacts.SearchRequest):
+                    return SimpleNamespace(
+                        chats=[
+                            Channel(id=9201, title="Forex Thailand Active", username="fx_flood_9201", participants_count=600)
+                        ]
+                    )
+                if isinstance(req, functions.channels.GetFullChannelRequest):
+                    return SimpleNamespace(
+                        full_chat=SimpleNamespace(about="Forex Thailand traders", participants_count=600, linked_chat_id=None),
+                        chats=[],
+                    )
+                return SimpleNamespace(chats=[])
+
+            async def iter_messages(self, _chat: Any, limit: int = 20):
+                self.activity_calls += 1
+                raise FloodWaitError(request=None, capture=75)
+                yield  # pragma: no cover
+
+        account, task = _make_account_and_task(
+            {
+                "mode": "precise",
+                "keywords": ["Forex Thailand"],
+                "country": "TH",
+                "languages": ["th", "en"],
+                "max_queries": 1,
+                "contacts_query_limit": 1,
+                "search_messages": False,
+                "expand_short_queries": False,
+                "scan_joined_groups": False,
+                "expand_recommendations": False,
+                "expand_channel_messages": False,
+                "include_linked_groups": False,
+                "enrich_tme": False,
+                "verify_activity": True,
+                "activity_check_limit": 5,
+                "simple_screen": True,
+            }
+        )
+        session = _FakeSession()
+        client = _FloodOnActivityClient()
+        res = await _Harness(client)._search_groups_precise(session, task, account, task.payload)
+        assert client.activity_calls >= 1, "应至少尝试一次验活"
+        assert res["accepted"] == 1, res
+        assert res["needs_review"] == 0, res
+        assert res["source_stats"]["score_fallback"] == 1, res["source_stats"]
+        assert res["source_stats"]["flood_stopped"] == 1, res["source_stats"]
+
+        saved = {
+            {col.key: val.value for col, val in stmt._values.items()}["tg_chat_id"]: {
+                col.key: val.value for col, val in stmt._values.items()
+            }
+            for stmt in session.executed
+            if getattr(stmt, "table", None) is not None and stmt.table.name == "group_search_matches"
+        }
+        assert saved[9201]["status"] == "accepted"
+        assert any("限流未验活，按评分保留" in reason for reason in saved[9201]["reasons"])
+    finally:
+        worker_gi.sleep_human = orig_sleep
+        worker_gi.upsert_profile = orig_upsert
+
+
 async def test_batch_merge_and_hydration() -> None:
     hydrated = GroupSearchMatchOut.model_validate(
         {
@@ -1224,12 +1371,14 @@ async def _run_all() -> None:
     await test_expand_from_messages_tme_and_flood()
     await test_shard_ai_symmetry_and_search_global_message_hits()
     await test_flood_wait_and_fatal_auth_handling()
+    await test_flood_continue_short_wait()
     await test_step5_savepoint_isolation()
     await test_external_web_adapters()
     await test_external_web_and_unverified_pending()
     await test_channel_posts_seed_and_stars_fallback()
     await test_common_chat_graph_and_rpc_budget()
     await test_simple_screen_activity_and_speakable()
+    await test_simple_screen_flood_score_fallback()
     await test_batch_merge_and_hydration()
     print("group_precise_pipeline_check: ok")
 

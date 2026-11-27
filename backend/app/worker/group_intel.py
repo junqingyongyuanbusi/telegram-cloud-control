@@ -82,6 +82,11 @@ from app.worker.telethon_account import (
 
 logger = logging.getLogger(__name__)
 
+#: 短限流（≤ 该秒数）等待后继续跑完当前阶段；超过或连续多次才提前收敛。
+#: 不继续的话，一次 10 秒限流会让后面的验活整段跳过，候选全停在「待确认」。
+FLOOD_CONTINUE_MAX_SECONDS = 60
+FLOOD_CONTINUE_MAX_TIMES = 3
+
 
 def _now() -> datetime:
     return datetime.now(tz=timezone.utc)
@@ -1354,7 +1359,7 @@ class GroupIntelMixin:
             if flood_hit or budget_hit:
                 break
             entry = candidates[cid]
-            act, samples = await self._sample_group_activity(
+            act, samples, wait = await self._sample_group_activity(
                 client,
                 entry["chat"],
                 keywords=keywords,
@@ -1362,6 +1367,10 @@ class GroupIntelMixin:
                 on_rpc_error=handle_rpc_exc,
                 on_rpc=take_rpc,
             )
+            if wait:
+                # 回调里的 FloodWait 必须带回本函数；否则这里会继续对后面的群
+                # 一个个撞同一堵限流墙，调用方还会把外层的 flood_hit 覆盖回 None。
+                flood_hit = max(flood_hit or 0, wait)
             if act is not None:
                 entry["activity"] = act
                 entry["samples"] = samples
@@ -1381,8 +1390,11 @@ class GroupIntelMixin:
         now: datetime,
         on_rpc_error: Optional[Callable[[BaseException], Awaitable[Any]]] = None,
         on_rpc: Optional[Callable[[], bool]] = None,
-    ) -> tuple[Optional[dict[str, Any]], list[str]]:
-        """只读抽样最近 20 条消息，统计 3 个月/7 天活跃度、发言人数与广告链接占比。"""
+    ) -> tuple[Optional[dict[str, Any]], list[str], Optional[int]]:
+        """只读抽样最近 20 条消息，统计 3 个月/7 天活跃度、发言人数与广告链接占比。
+
+        第三个返回值是本次遇到的 FloodWait 秒数（没有则为 None），供调用方决定是否继续。
+        """
 
         cutoff_7d = now - timedelta(days=7)
         cutoff_90d = now - timedelta(days=90)
@@ -1406,7 +1418,7 @@ class GroupIntelMixin:
         samples: list[str] = []
         try:
             if on_rpc is not None and not on_rpc():
-                return None, []
+                return None, [], None
             async for message in client.iter_messages(chat, limit=20):
                 total_sampled += 1
                 msg_date = getattr(message, "date", None)
@@ -1436,9 +1448,10 @@ class GroupIntelMixin:
                     if len(samples) < 5:
                         samples.append(text[:120])
         except BaseException as exc:  # noqa: BLE001 - 未加群读不到历史属于正常受限，不能惩罚
+            wait = None
             if on_rpc_error is not None:
-                await on_rpc_error(exc)
-            return None, []
+                wait = await on_rpc_error(exc)
+            return None, [], wait
 
         ad_ratio = (ad_count / total_sampled) if total_sampled else 0.0
         return {
@@ -1450,7 +1463,7 @@ class GroupIntelMixin:
             "unique_senders": len(senders),
             "ad_ratio": round(ad_ratio, 2),
             "keyword_hits": keyword_hits,
-        }, samples
+        }, samples, None
 
     async def _enrich_candidates_from_tme(
         self,
@@ -1899,6 +1912,8 @@ class GroupIntelMixin:
             )
 
         flood_hit: Optional[int] = None
+        flood_continues = 0
+        flood_continue_wait = 0
         budget_hit = False
 
         def take_rpc(cost: int = 1) -> bool:
@@ -1913,7 +1928,7 @@ class GroupIntelMixin:
             metrics["rpc_used"] += cost
             return True
         async def handle_rpc_exc(exc: BaseException) -> Optional[int]:
-            nonlocal flood_hit
+            nonlocal flood_hit, flood_continues, flood_continue_wait
             mapped = map_exception_to_status(exc)
             if mapped in (
                 AccountStatus.dead,
@@ -1924,6 +1939,21 @@ class GroupIntelMixin:
                 raise exc
             wait = flood_wait_seconds(exc)
             if wait:
+                # 短限流等一等继续：一次 9 秒限流不值得把后面的验活/图扩散整段丢掉。
+                # 连续多次仍硬停，避免整批任务一直睡在限流里。
+                if wait <= FLOOD_CONTINUE_MAX_SECONDS and flood_continues < FLOOD_CONTINUE_MAX_TIMES:
+                    flood_continues += 1
+                    flood_continue_wait = max(flood_continue_wait, wait)
+                    metrics["flood_wait_seconds"] = max(int(metrics.get("flood_wait_seconds") or 0), wait)
+                    await self._apply_status(
+                        session,
+                        account,
+                        exc,
+                        status=mapped or AccountStatus.limited,
+                    )
+                    push_note(f"触发 Telegram {wait}s 限流，等待后继续（第 {flood_continues} 次）")
+                    await sleep_human(wait, wait + 2.0, rng)
+                    return None
                 flood_hit = max(flood_hit or 0, wait)
                 await self._apply_status(
                     session,
@@ -2579,7 +2609,7 @@ class GroupIntelMixin:
             # 3a) 图扩散之前先验活：这一步之后全是 GetFullChannel 批量，最容易吃 FloodWait，
             # 一旦限流会把验活整段跳过，所有讨论组只能停在「待确认」。
             if verify_activity:
-                flood_hit = await self._verify_activity_batch(
+                flood_hit = (await self._verify_activity_batch(
                     client,
                     candidates,
                     _eligible_ids(),
@@ -2594,7 +2624,7 @@ class GroupIntelMixin:
                     flood_hit=flood_hit,
                     budget_hit=budget_hit,
                     rng=rng,
-                )
+                )) or flood_hit
 
             def _on_channel_graph_chat(chat: Any, source_tag: str, seed_id: Optional[int]) -> None:
                 extra = {"seed_chat_id": seed_id} if seed_id else None
@@ -2811,7 +2841,7 @@ class GroupIntelMixin:
 
             # 4a) 验活：图扩散新增的候选也一起验（已验过的跳过），总次数仍受 activity_check_limit 约束。
             if verify_activity and metrics["activity_checked"] < activity_check_limit:
-                flood_hit = await self._verify_activity_batch(
+                flood_hit = (await self._verify_activity_batch(
                     client,
                     candidates,
                     eligible_ids,
@@ -2826,7 +2856,7 @@ class GroupIntelMixin:
                     flood_hit=flood_hit,
                     budget_hit=budget_hit,
                     rng=rng,
-                )
+                )) or flood_hit
 
             uncached_ids = [cid for cid in eligible_ids if candidates[cid]["cached"] is None]
             uncached_ids.sort(
@@ -2877,11 +2907,12 @@ class GroupIntelMixin:
                                 keyword=keywords[0],
                             )
 
-            if flood_hit and not candidates and not pending_candidates:
+            if not candidates and not pending_candidates and (flood_hit or flood_continue_wait):
+                wait = flood_hit or flood_continue_wait
                 raise TaskFailure(
-                    f"精准找群触发 Telegram 限流，{flood_hit} 秒后重试",
+                    f"精准找群触发 Telegram 限流，{wait} 秒后重试",
                     retryable=True,
-                    requeue_after=flood_hit + 1,
+                    requeue_after=wait + 1,
                 )
             if flood_hit:
                 metrics["flood_wait_seconds"] = flood_hit
@@ -3005,8 +3036,20 @@ class GroupIntelMixin:
                     activity = entry.get("activity")
                     reasons = [r for r in reasons if not r.startswith(("近7天", "近期活跃"))]
                     if activity is None:
-                        status = "needs_review"
-                        reasons.append("无法读取近期消息，活跃度待确认")
+                        if flood_hit:
+                            # 限流导致验活没跑完：不能把整批合格群都扔进待确认，
+                            # 按评分兜底，至少让高分群先入库。
+                            status = classify(final_score, min_score=min_score)
+                            metrics["score_fallback"] = metrics.get("score_fallback", 0) + 1
+                            if status == "accepted":
+                                reasons.append("限流未验活，按评分保留")
+                            elif status == "needs_review":
+                                reasons.append("限流未验活，评分不足待确认")
+                            else:
+                                reasons.append("限流未验活，评分不足")
+                        else:
+                            status = "needs_review"
+                            reasons.append("无法读取近期消息，活跃度待确认")
                     elif activity.get("recent_90d"):
                         status = "accepted"
                         days = activity.get("last_message_days")
@@ -3160,6 +3203,9 @@ class GroupIntelMixin:
                 if not (item.get("kind") == "username" and str(item.get("value") or "").casefold() in verified_usernames)
             ]
 
+            if metrics.get("score_fallback"):
+                push_note(f"限流导致验活未完成，{metrics['score_fallback']} 个候选按评分兜底判定")
+
             source_stats.update(
                 {
                     "accepted": metrics["accepted"],
@@ -3169,6 +3215,8 @@ class GroupIntelMixin:
                     "channels": metrics["channels"],
                     "readonly": metrics["readonly"],
                     "flood_stopped": 1 if flood_hit else 0,
+                    "flood_continues": flood_continues,
+                    "score_fallback": metrics.get("score_fallback", 0),
                     "budget_stopped": 1 if budget_hit else 0,
                     "rpc_used": metrics["rpc_used"],
                     "unverified_pending": len(filtered_pending),
