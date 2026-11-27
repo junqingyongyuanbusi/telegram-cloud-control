@@ -30,6 +30,7 @@ import {
 } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
 import {
+  CheckSquareOutlined,
   DeleteOutlined,
   InboxOutlined,
   PlusOutlined,
@@ -621,6 +622,7 @@ function JoinAndSendTab({ initialTargets = [] }: { initialTargets?: string[] }) 
   const [groupKeyword, setGroupKeyword] = useState('');
   const [groupCountry, setGroupCountry] = useState<string | undefined>(undefined);
   const [groupPage, setGroupPage] = useState(1);
+  const [pickingAll, setPickingAll] = useState(false);
   // 跨分页保留选择：tg_chat_id → 可直接使用的链接（邀请链接优先，公开群用 @用户名）
   const [pickedGroups, setPickedGroups] = useState<Record<string, string>>({});
 
@@ -817,6 +819,37 @@ function JoinAndSendTab({ initialTargets = [] }: { initialTargets?: string[] }) 
 
   const groupLinkOf = (item: GroupProfileOut) =>
     item.invite_link || (item.username ? `@${item.username}` : '');
+
+  // 全选当前筛选结果：表格是服务端分页，表头勾选只覆盖当前这 20 条；
+  // 这里按同一组筛选条件把所有分页取回来（每页 200，后端上限）再整体选中。
+  const pickAllFilteredGroups = async () => {
+    setPickingAll(true);
+    try {
+      const next: Record<string, string> = {};
+      for (let pageNo = 1; ; pageNo += 1) {
+        const res = await groupIntelApi.profiles({
+          q: groupKeyword || undefined,
+          speakable: true,
+          country: groupCountry,
+          page: pageNo,
+          page_size: 200,
+        });
+        for (const item of res.items) {
+          const link = groupLinkOf(item);
+          if (link) next[String(item.tg_chat_id)] = link;
+        }
+        if (!res.items.length || pageNo * 200 >= res.total) break;
+      }
+      setPickedGroups(next);
+      if (!Object.keys(next).length) {
+        toast.warning(t('campaigns:joinAndSend.pickerSelectAllEmpty'));
+      }
+    } catch {
+      /* client 已统一提示 */
+    } finally {
+      setPickingAll(false);
+    }
+  };
 
   const onPickGroups = (keys: string[]) => {
     const next = { ...pickedGroups };
@@ -1211,6 +1244,18 @@ function JoinAndSendTab({ initialTargets = [] }: { initialTargets?: string[] }) 
           <Button icon={<ReloadOutlined />} onClick={() => void groups.reload()}>
             {t('common:refresh')}
           </Button>
+          <Button
+            icon={<CheckSquareOutlined />}
+            loading={pickingAll}
+            onClick={() => void pickAllFilteredGroups()}
+          >
+            {t('campaigns:joinAndSend.pickerSelectAll', { count: groups.data?.total ?? 0 })}
+          </Button>
+          {Object.keys(pickedGroups).length ? (
+            <Button type="link" size="small" onClick={() => setPickedGroups({})}>
+              {t('campaigns:joinAndSend.pickerClearSelection')}
+            </Button>
+          ) : null}
           <span className="tg-muted">{t('campaigns:joinAndSend.pickerHint')}</span>
         </Space>
         <Table<GroupProfileOut>
