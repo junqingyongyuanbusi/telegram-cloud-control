@@ -13,6 +13,9 @@
     "searchButton": "搜索",
     "filterAll": "全部群",
     "filterSpeakable": "只看能发言的",
+    "filterCountry": "按国家筛选",
+    "filterLanguage": "按语言筛选",
+    "filterCountrySource": "按国家来源筛选",
     "totalGroups": "共 {{count}} 个群",
     "emptyText": "还没有群档案：用右上角「按关键词找群」或「精准找群」开始搜索",
     "syncEmptyWarning": "没有可同步的群：这些群既没采到邀请链接，也没有公开用户名",
@@ -21,6 +24,7 @@
     "columns": {
       "group": "群",
       "kind": "类型",
+      "region": "地区 / 语言",
       "speak": "发言",
       "memberCount": "成员数",
       "memberSampled": "已采成员",
@@ -30,6 +34,10 @@
     "sources": {
       "join_event": "入群事件",
       "profile_sync": "资料同步"
+    },
+    "countrySource": {
+      "target": "检索目标",
+      "inferred": "文本推断"
     }
   },
   "kind": {

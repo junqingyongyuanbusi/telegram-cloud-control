@@ -55,6 +55,7 @@ import { useAsyncData } from '../hooks/useAsyncData';
 import { isEnglish, resolveEnumLabel } from '../i18n';
 import { notifySuccess, toast } from '../utils/feedback';
 import { formatNumber, formatTime } from '../utils/format';
+import { regionOptions } from '../utils/region';
 import type {
   AccountOut,
   AccountStatus,
@@ -618,6 +619,7 @@ function JoinAndSendTab({ initialTargets = [] }: { initialTargets?: string[] }) 
   // 群情报选群弹窗
   const [pickerOpen, setPickerOpen] = useState(false);
   const [groupKeyword, setGroupKeyword] = useState('');
+  const [groupCountry, setGroupCountry] = useState<string | undefined>(undefined);
   const [groupPage, setGroupPage] = useState(1);
   // 跨分页保留选择：tg_chat_id → 可直接使用的链接（邀请链接优先，公开群用 @用户名）
   const [pickedGroups, setPickedGroups] = useState<Record<string, string>>({});
@@ -628,11 +630,12 @@ function JoinAndSendTab({ initialTargets = [] }: { initialTargets?: string[] }) 
         ? groupIntelApi.profiles({
             q: groupKeyword || undefined,
             speakable: true,
+            country: groupCountry,
             page: groupPage,
             page_size: 20,
           })
         : Promise.resolve(null),
-    [pickerOpen, groupKeyword, groupPage],
+    [pickerOpen, groupKeyword, groupCountry, groupPage],
   );
 
   useEffect(() => {
@@ -769,6 +772,25 @@ function JoinAndSendTab({ initialTargets = [] }: { initialTargets?: string[] }) 
           </span>
         </span>
       ),
+    },
+    {
+      title: t('campaigns:joinAndSend.colRegion'),
+      dataIndex: 'country',
+      width: 96,
+      render: (value: string | null, record) =>
+        value ? (
+          <Tooltip
+            title={
+              record.country_source === 'target'
+                ? t('campaigns:joinAndSend.regionTarget')
+                : t('campaigns:joinAndSend.regionInferred')
+            }
+          >
+            <Tag color="geekblue">{value}</Tag>
+          </Tooltip>
+        ) : (
+          <span className="tg-muted">—</span>
+        ),
     },
     {
       title: t('campaigns:joinAndSend.colMembers'),
@@ -1172,6 +1194,19 @@ function JoinAndSendTab({ initialTargets = [] }: { initialTargets?: string[] }) 
               setGroupPage(1);
               setGroupKeyword(value);
             }}
+          />
+          <Select
+            allowClear
+            value={groupCountry}
+            placeholder={t('campaigns:joinAndSend.pickerCountry')}
+            style={{ width: 170 }}
+            showSearch
+            optionFilterProp="label"
+            onChange={(value?: string) => {
+              setGroupCountry(value);
+              setGroupPage(1);
+            }}
+            options={regionOptions(groups.data?.summary.countries, groupCountry)}
           />
           <Button icon={<ReloadOutlined />} onClick={() => void groups.reload()}>
             {t('common:refresh')}

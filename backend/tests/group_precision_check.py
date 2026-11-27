@@ -5,6 +5,7 @@ from types import SimpleNamespace
 from app.services.group_precision import (
     canonical_topics,
     classify,
+    detect_country,
     detect_language,
     discussion_verdict,
     permission_verdict,
@@ -93,6 +94,24 @@ def main() -> None:
     assert detect_language("Cộng đồng Forex Việt Nam") == "vi"
     assert detect_language("Форекс чат") == "ru"
     assert detect_language("Alpha Beta Gamma") == "unknown"
+
+    # 国家判定：强地理词/语言先验能独立定归属；货币对这类跨国词只加权，证据不足就留空。
+    assert detect_country("กลุ่มเทรด Forex ไทย").country == "TH"
+    assert detect_country("FX MALAYSIA VIP").country == "MY"
+    assert detect_country("Cộng đồng Forex Việt Nam").country == "VN"
+    assert detect_country("Forex Trading Group").country is None
+    assert detect_country("USD/THB currency pair").country is None
+    assert detect_country("Forex", language="th").country == "TH"
+
+    # 来源：文本命中检索目标国 → target；没给目标国时按文本推断 → inferred。
+    assert (
+        score_group(title="กลุ่มเทรด Forex ไทย", about="พูดคุย ทองคำ", keywords=["Forex"], country="TH").country_source
+        == "target"
+    )
+    inferred_geo = score_group(title="กลุ่มเทรด Forex ไทย", keywords=["Forex"])
+    assert inferred_geo.country == "TH" and inferred_geo.country_source == "inferred"
+    no_geo = score_group(title="Forex Trading Group", about="Market talk", keywords=["Forex"])
+    assert no_geo.country is None and no_geo.country_source is None
 
     by_user = score_group(
         title="Trading Hub",

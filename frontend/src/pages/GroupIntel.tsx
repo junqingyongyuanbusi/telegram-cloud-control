@@ -32,6 +32,7 @@ import { useTranslation } from 'react-i18next';
 import { PageContainer, RelativeTime, SoftTag, CopyableText } from '../components';
 import { isEnglish } from '../i18n';
 import { toast } from '../utils/feedback';
+import { languageOptions, regionOptions } from '../utils/region';
 import { groupIntelApi } from '../api/endpoints';
 import { useAsyncData } from '../hooks/useAsyncData';
 import { notifySuccess } from '../utils/feedback';
@@ -84,6 +85,9 @@ export default function GroupIntel() {
   };
   const [keyword, setKeyword] = useState('');
   const [speakableOnly, setSpeakableOnly] = useState(false);
+  const [countryFilter, setCountryFilter] = useState<string | undefined>(undefined);
+  const [languageFilter, setLanguageFilter] = useState<string | undefined>(undefined);
+  const [countrySourceFilter, setCountrySourceFilter] = useState<string | undefined>(undefined);
   const [page, setPage] = useState(1);
   // 按关键词找群：走 Telegram 原生搜索，结果直接落进群档案
   const [findOpen, setFindOpen] = useState(false);
@@ -153,10 +157,13 @@ export default function GroupIntel() {
       groupIntelApi.profiles({
         q: keyword || undefined,
         speakable: speakableOnly || undefined,
+        country: countryFilter,
+        language: languageFilter,
+        country_source: countrySourceFilter,
         page,
         page_size: 20,
       }),
-    [keyword, page, speakableOnly],
+    [keyword, page, speakableOnly, countryFilter, languageFilter, countrySourceFilter],
   );
 
   // 把当前关键词下的可发言群链接带到「加群」页：邀请链接优先，公开群退化为 @username
@@ -169,6 +176,9 @@ export default function GroupIntel() {
         const res = await groupIntelApi.profiles({
           q: keyword || undefined,
           speakable: true,
+          country: countryFilter,
+          language: languageFilter,
+          country_source: countrySourceFilter,
           page: pageNo,
           page_size: 200,
         });
@@ -210,6 +220,37 @@ export default function GroupIntel() {
       dataIndex: 'kind',
       width: 90,
       render: (value: string) => <Tag>{kindLabel(value)}</Tag>,
+    },
+    {
+      title: t('groupIntel:profiles.columns.region'),
+      dataIndex: 'country',
+      width: 118,
+      render: (value: string | null, record) => {
+        if (!value && !record.language) return <span className="tg-muted">—</span>;
+        const sourceLabel =
+          record.country_source === 'target'
+            ? t('groupIntel:profiles.countrySource.target')
+            : record.country_source === 'inferred'
+              ? t('groupIntel:profiles.countrySource.inferred')
+              : '';
+        return (
+          <span className="tg-stack" style={{ gap: 2 }}>
+            <span>
+              {value ? <Tag color="geekblue">{value}</Tag> : <span className="tg-muted">—</span>}
+              {record.language ? (
+                <span className="tg-muted" style={{ fontSize: 'var(--tg-font-size-xs)' }}>
+                  {record.language}
+                </span>
+              ) : null}
+            </span>
+            {sourceLabel ? (
+              <span className="tg-muted" style={{ fontSize: 'var(--tg-font-size-xs)' }}>
+                {sourceLabel}
+              </span>
+            ) : null}
+          </span>
+        );
+      },
     },
     {
       title: t('groupIntel:profiles.columns.speak'),
@@ -324,6 +365,46 @@ export default function GroupIntel() {
             options={[
               { label: t('groupIntel:profiles.filterAll'), value: 'all' },
               { label: t('groupIntel:profiles.filterSpeakable'), value: 'speakable' },
+            ]}
+          />
+          <Select
+            allowClear
+            value={countryFilter}
+            placeholder={t('groupIntel:profiles.filterCountry')}
+            onChange={(value?: string) => {
+              setCountryFilter(value);
+              setPage(1);
+            }}
+            style={{ width: 148 }}
+            showSearch
+            optionFilterProp="label"
+            options={regionOptions(profiles.data?.summary.countries, countryFilter)}
+          />
+          <Select
+            allowClear
+            value={languageFilter}
+            placeholder={t('groupIntel:profiles.filterLanguage')}
+            onChange={(value?: string) => {
+              setLanguageFilter(value);
+              setPage(1);
+            }}
+            style={{ width: 148 }}
+            showSearch
+            optionFilterProp="label"
+            options={languageOptions(profiles.data?.summary.languages, languageFilter)}
+          />
+          <Select
+            allowClear
+            value={countrySourceFilter}
+            placeholder={t('groupIntel:profiles.filterCountrySource')}
+            onChange={(value?: string) => {
+              setCountrySourceFilter(value);
+              setPage(1);
+            }}
+            style={{ width: 148 }}
+            options={[
+              { label: t('groupIntel:profiles.countrySource.target'), value: 'target' },
+              { label: t('groupIntel:profiles.countrySource.inferred'), value: 'inferred' },
             ]}
           />
           <Typography.Text type="secondary" style={{ fontSize: 'var(--tg-font-size-sm)' }}>

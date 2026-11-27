@@ -71,6 +71,7 @@ class GroupProfileOut(ORMModel):
     source: str = "profile_sync"
     language: Optional[str] = None
     country: Optional[str] = None
+    country_source: Optional[str] = None
     topic: Optional[str] = None
     relevance_score: Optional[int] = None
     send_permission: Optional[str] = None

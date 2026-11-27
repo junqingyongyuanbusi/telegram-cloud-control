@@ -57,6 +57,7 @@ async def upsert_profile(
     dialog_id: Optional[uuid.UUID] = None,
     language: Optional[str] = None,
     country: Optional[str] = None,
+    country_source: Optional[str] = None,
     topic: Optional[str] = None,
     relevance_score: Optional[int] = None,
     send_permission: Optional[str] = None,
@@ -118,10 +119,30 @@ async def upsert_profile(
         profile.source = source
     if raw:
         profile.raw = {**(profile.raw or {}), **raw}
+    # 普通采集（join_event / profile_sync / t.me 富化）不传语言/地区：库里还空着时按群名+简介补一次。
+    # 已经有值就不再改写——精准检索写入的判定不能被后来的标题推断覆盖；"unknown" 当作没判断。
+    need_language = language is None and profile.language in (None, "", "unknown")
+    need_country = country is None and not profile.country
+    if need_language or need_country:
+        from app.services.group_precision import detect_country, detect_language
+
+        sample = f"{title or profile.title or ''}\n{about or profile.about or ''}".strip()
+        username_for_geo = username if username is not None else profile.username
+        sample = sample or str(username_for_geo or "")
+        if need_language:
+            language = detect_language(sample)
+        if need_country:
+            geo = detect_country(sample, username=username_for_geo, language=language or profile.language)
+            if geo.country:
+                country = geo.country
+                country_source = country_source or "inferred"
+
     if language is not None:
         profile.language = language[:8]
     if country is not None:
         profile.country = country[:8]
+    if country_source is not None:
+        profile.country_source = country_source[:16]
     if topic is not None:
         profile.topic = topic[:24]
     if relevance_score is not None:

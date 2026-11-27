@@ -505,6 +505,10 @@ export const groupIntelApi = {
   profiles: (query: {
     q?: string;
     account_id?: UUID | null;
+    country?: string;
+    language?: string;
+    /** 国家来源：target 检索目标 / inferred 文本推断 */
+    country_source?: string;
     min_members?: number;
     /** 只看能发言的讨论组/聊天室（排除频道、受限群、已禁言） */
     speakable?: boolean;

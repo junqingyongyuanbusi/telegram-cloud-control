@@ -1329,6 +1329,7 @@ export interface GroupProfileOut {
   source: string;
   language?: string | null;
   country?: string | null;
+  country_source?: string | null;
   topic?: string | null;
   relevance_score?: number | null;
   send_permission?: string | null;
@@ -1405,12 +1406,25 @@ export interface DiscoveryLeadOut {
   created_at?: ISODateTime | null;
 }
 
+/** 分面值（国家 / 语言 / 来源）：下拉选项直接用后端统计，库里有哪个值就能筛哪个。 */
+export interface RegionFacet {
+  value: string;
+  count: number;
+}
+
 export interface GroupProfileListResponse {
   items: GroupProfileOut[];
   total: number;
   page: number;
   page_size: number;
-  summary: Record<string, number>;
+  summary: {
+    groups?: number;
+    members_collected?: number;
+    events_today?: number;
+    countries?: RegionFacet[];
+    languages?: RegionFacet[];
+    country_sources?: RegionFacet[];
+  };
 }
 
 export interface GroupMemberOut {

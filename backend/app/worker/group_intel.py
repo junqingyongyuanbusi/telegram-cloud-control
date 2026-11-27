@@ -3085,6 +3085,7 @@ class GroupIntelMixin:
                                 **fields,
                                 language=score.language,
                                 country=score.country,
+                                country_source=score.country_source,
                                 topic=score.topic,
                                 relevance_score=final_score,
                                 send_permission=flags["send_permission"],

@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import re
 import unicodedata
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Iterable, Mapping, Optional, Sequence
 
 from app.services.group_sources import compute_source_trust
@@ -445,6 +445,110 @@ def detect_language(text: str) -> str:
     return "unknown"
 
 
+#: 语言到「最可能的归属国家/地区」的先验；只用于文本没有任何地理词时兜底。
+LANGUAGE_COUNTRY_PRIOR: dict[str, str] = {
+    "vi": "VN",
+    "th": "TH",
+    "ms": "MY",
+    "id": "ID",
+    "tl": "PH",
+    "zh": "CN",
+}
+
+#: 强地理词：国家名、国民、本地语言自称、本地交易所/城市。命中一次就足以定归属。
+COUNTRY_STRONG_TERMS: dict[str, tuple[str, ...]] = {
+    "VN": (
+        "viet nam", "việt nam", "vietnam", "vietnamese", "người việt",
+        "hà nội", "ha noi", "hồ chí minh", "ho chi minh", "sài gòn", "saigon",
+        "越南", "chứng khoán", "thị trường việt",
+    ),
+    "TH": (
+        "thailand", "thai", "ไทย", "ประเทศไทย", "ไทยแลนด์",
+        "bangkok", "กรุงเทพ", "chiang mai", "เชียงใหม่", "phuket", "ภูเก็ต",
+        "泰国", "泰國", "ตลาดไทย", "หุ้นไทย",
+    ),
+    "MY": (
+        "malaysia", "malaysian", "马来西亚", "馬來西亞", "大马",
+        "kuala lumpur", "selangor", "johor", "penang", "sabah", "sarawak",
+        "bursa malaysia", "klse",
+    ),
+    "ID": (
+        "indonesia", "indonesian", "indonesia", "印尼", "印度尼西亚",
+        "jakarta", "surabaya", "bandung", "ihsg",
+    ),
+    "PH": ("philippines", "filipino", "pinoy", "菲律宾", "菲律賓"),
+    "SG": ("singapore", "singaporean", "新加坡", "獅城"),
+}
+
+#: 弱地理词：货币、交易所代码、国家顶级域名。它们常出现在跨国外汇群里（USD/THB 这类货币对），
+#: 单独命中不足以把群判成某个国家，只做加权。
+COUNTRY_WEAK_TERMS: dict[str, tuple[str, ...]] = {
+    "VN": ("vnd", "hnx", "hose", ".vn"),
+    "TH": ("thb", "baht", "บาท", "tfex", ".th"),
+    "MY": ("myr", "ringgit", "klse", ".my"),
+    "ID": ("idr", "rupiah", ".id"),
+    "PH": ("php", "peso", ".ph"),
+    "SG": ("sgd", "sgx", ".sg"),
+}
+
+
+@dataclass(frozen=True)
+class GeoResult:
+    """地区判断结果：country 为空表示「没有足够证据」，不要强行猜。"""
+
+    country: Optional[str]
+    score: int
+    evidence: list[str]
+
+
+def detect_country(
+    text: str, *, username: Optional[str] = None, language: Optional[str] = None
+) -> GeoResult:
+    """按「强地理词 + 语言先验 + 弱地理词」判断群面向哪个国家/地区。
+
+    规则刻意保守：货币对、交易所代码这类跨国词只加 1 分，不足以单独定归属；
+    泰国/越南文标题即使没有地名，也能靠语言先验落到 TH/VN。
+    """
+
+    value = normalize_text(text)
+    user = str(username or "")
+    scores: dict[str, int] = {}
+    evidence: dict[str, list[str]] = {}
+
+    def hit(code: str, term: str, weight: int) -> None:
+        if _contains(value, term) or _contains_username(user, term):
+            scores[code] = scores.get(code, 0) + weight
+            evidence.setdefault(code, []).append(term)
+
+    for code, terms in REGION_TERMS.items():
+        for term in terms:
+            weight = 1 if term in COUNTRY_WEAK_TERMS.get(code, ()) else 2
+            if term in COUNTRY_STRONG_TERMS.get(code, ()):
+                weight = 3
+            hit(code, term, weight)
+    for code, terms in COUNTRY_WEAK_TERMS.items():
+        for term in terms:
+            if term not in REGION_TERMS.get(code, ()):
+                hit(code, term, 1)
+    prior = LANGUAGE_COUNTRY_PRIOR.get(str(language or "").casefold())
+    if prior:
+        scores[prior] = scores.get(prior, 0) + 2
+        evidence.setdefault(prior, []).append(f"lang:{language}")
+
+    if not scores:
+        return GeoResult(country=None, score=0, evidence=[])
+    ranked = sorted(scores.items(), key=lambda item: item[1], reverse=True)
+    top_code, top_score = ranked[0]
+    second_score = ranked[1][1] if len(ranked) > 1 else 0
+    if top_score < 2 or top_score <= second_score:
+        return GeoResult(country=None, score=top_score, evidence=evidence.get(top_code, []))
+    return GeoResult(
+        country=top_code,
+        score=top_score,
+        evidence=list(dict.fromkeys(evidence.get(top_code, [])))[:6],
+    )
+
+
 def canonical_topics(keywords: Iterable[str]) -> list[str]:
     """把用户输入映射成规范主题；未识别的词保留为自定义主题。"""
 
@@ -696,6 +800,8 @@ class ScoreResult:
     country: Optional[str]
     topic: Optional[str]
     reasons: list[str]
+    country_source: Optional[str] = None
+    country_evidence: list[str] = field(default_factory=list)
 
 
 def score_group(
@@ -871,14 +977,30 @@ def score_group(
     reasons.extend(trust_reasons)
 
     topic = topics[0] if topics else None
+    # 国家：优先用检索时指定的目标国（且文本命中地区词），否则按群自身文本独立判断。
+    # 这样即使不填目标国家，也能把「越南语/泰语 + 本地词」的群归类；判断不出来就留空。
+    geo = detect_country(combined, username=username, language=language)
+    if region_hit:
+        # 只有文本真的命中目标国地区词，才把目标国写进 country；
+        # 仅「语言与目标语言一致」不够——英文群在哪个国家都可能是英文。
+        final_country, country_source = country, "target"
+        country_evidence = list(region_hits)
+    elif geo.country:
+        final_country, country_source = geo.country, "inferred"
+        country_evidence = geo.evidence
+    else:
+        final_country, country_source = None, None
+        country_evidence = []
     return ScoreResult(
         score=score,
         breakdown=breakdown,
         matched_keywords=matched,
         language=language,
-        country=country if (region_hit or region_score > 0) else None,
+        country=final_country,
         topic=topic,
         reasons=reasons,
+        country_source=country_source,
+        country_evidence=country_evidence,
     )
 
 

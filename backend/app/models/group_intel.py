@@ -100,6 +100,8 @@ class GroupProfile(Base, TimestampMixin):
     # 精准检索的判定结果：语言/地区/主题、相关性分数、发言权限、校验状态。
     language: Mapped[Optional[str]] = mapped_column(String(8), nullable=True, index=True)
     country: Mapped[Optional[str]] = mapped_column(String(8), nullable=True, index=True)
+    # target=检索目标国回填；inferred=按群名/简介/语言独立推断；空=没有足够证据
+    country_source: Mapped[Optional[str]] = mapped_column(String(16), nullable=True)
     topic: Mapped[Optional[str]] = mapped_column(String(24), nullable=True, index=True)
     relevance_score: Mapped[Optional[int]] = mapped_column(Integer, nullable=True, index=True)
     send_permission: Mapped[Optional[str]] = mapped_column(String(16), nullable=True)

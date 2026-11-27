@@ -971,6 +971,11 @@ async def group_library(
 async def list_profiles(
     q: Optional[str] = Query(default=None, description="按群名/用户名模糊搜索"),
     account_id: Optional[uuid.UUID] = Query(default=None),
+    country: Optional[str] = Query(default=None, description="按国家/地区代码过滤，如 TH / VN"),
+    language: Optional[str] = Query(default=None, description="按语言代码过滤，如 th / vi / en"),
+    country_source: Optional[str] = Query(
+        default=None, description="按国家来源过滤：target 检索目标回填 / inferred 文本推断"
+    ),
     min_members: Optional[int] = Query(default=None, ge=0),
     public_only: bool = Query(default=False, description="只看有公开用户名的群"),
     speakable: bool = Query(
@@ -1012,6 +1017,25 @@ async def list_profiles(
         conditions.append(
             or_(GroupProfile.send_permission.is_(None), GroupProfile.send_permission != "restricted")
         )
+
+    # 国家/语言/来源筛选只收窄结果，不参与分面统计：
+    # 否则选中「TH」之后下拉只剩 TH，用户没法直接换到别的国家。
+    facet_conditions = list(conditions)
+    if country:
+        conditions.append(GroupProfile.country == country.strip().upper()[:8])
+    if language:
+        conditions.append(GroupProfile.language == language.strip().lower()[:8])
+    if country_source:
+        conditions.append(GroupProfile.country_source == country_source.strip().lower()[:16])
+
+    async def _facet(column: Any) -> list[dict[str, Any]]:
+        rows = await session.execute(
+            select(column, func.count())
+            .where(*facet_conditions, column.is_not(None), column != "")
+            .group_by(column)
+            .order_by(func.count().desc(), column)
+        )
+        return [{"value": str(value), "count": int(count or 0)} for value, count in rows.all()]
 
     total = await session.scalar(
         select(func.count(func.distinct(GroupProfile.tg_chat_id))).where(*conditions)
@@ -1066,6 +1090,10 @@ async def list_profiles(
             "groups": int(total or 0),
             "members_collected": int(members_total or 0),
             "events_today": int(events_today or 0),
+            # 分面给前端做下拉：库里有哪个国家/语言就筛哪个，不再写死一份清单。
+            "countries": await _facet(GroupProfile.country),
+            "languages": await _facet(GroupProfile.language),
+            "country_sources": await _facet(GroupProfile.country_source),
         },
     )
 

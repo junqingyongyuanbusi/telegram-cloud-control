@@ -13,6 +13,9 @@
     "searchButton": "Search",
     "filterAll": "All groups",
     "filterSpeakable": "Speakable only",
+    "filterCountry": "Filter by country",
+    "filterLanguage": "Filter by language",
+    "filterCountrySource": "Filter by country source",
     "totalGroups": "{{count}} groups",
     "emptyText": "No group profiles yet. Use Keyword Search or Precision Search above to start.",
     "syncEmptyWarning": "No groups to sync: none have an invite link or public username.",
@@ -21,6 +24,7 @@
     "columns": {
       "group": "Group",
       "kind": "Type",
+      "region": "Region / Language",
       "speak": "Posting",
       "memberCount": "Members",
       "memberSampled": "Sampled",
@@ -30,6 +34,10 @@
     "sources": {
       "join_event": "Join event",
       "profile_sync": "Profile sync"
+    },
+    "countrySource": {
+      "target": "Search target",
+      "inferred": "Inferred"
     }
   },
   "kind": {

@@ -576,6 +576,9 @@ async def test_step5_savepoint_isolation() -> None:
                 "include_linked_groups": False,
                 "enrich_tme": False,
                 "verify_activity": False,
+                # simple_screen 默认 True，会把没有活跃度数据的群压成 needs_review；
+                # 这里要验证的是「一个群写库失败不影响另一个」，必须走 accepted → upsert。
+                "simple_screen": False,
             }
         )
         res = await harness._search_groups_precise(session, task, account, task.payload)
