@@ -32,7 +32,7 @@ import { CopyableText, DataTable, FilterBar, PageContainer, RelativeTime, SoftTa
 import { isEnglish } from '../i18n';
 import { toast } from '../utils/feedback';
 import { formatNumber } from '../utils/format';
-import { languageLabel, languageOptions, regionLabel, regionOptions } from '../utils/region';
+import { languageLabel, languageOptions } from '../utils/region';
 import { groupIntelApi } from '../api/endpoints';
 import { useAsyncData } from '../hooks/useAsyncData';
 import { buildActiveFilters, useTableQuery } from '../hooks/useTableQuery';
@@ -60,9 +60,7 @@ const isDiscussionRow = (row: GroupSearchMatchOut) => {
 interface ProfileFilters extends Record<string, unknown> {
   q: string;
   speakable: boolean;
-  country: string;
   language: string;
-  country_source: string;
 }
 
 export default function GroupIntel() {
@@ -95,7 +93,7 @@ export default function GroupIntel() {
   };
   // 群档案筛选：与账号 / 任务列表同一套 useTableQuery，分页、排序、重置口径一致。
   const q = useTableQuery<ProfileFilters>({
-    filters: { q: '', speakable: false, country: '', language: '', country_source: '' },
+    filters: { q: '', speakable: false, language: '' },
     pageSize: 20,
     sort: 'member_count',
     order: 'desc',
@@ -170,9 +168,7 @@ export default function GroupIntel() {
       groupIntelApi.profiles({
         q: q.filters.q || undefined,
         speakable: q.filters.speakable || undefined,
-        country: q.filters.country || undefined,
         language: q.filters.language || undefined,
-        country_source: q.filters.country_source || undefined,
         sort: q.sort ?? undefined,
         order: q.order,
         page: q.page,
@@ -191,9 +187,7 @@ export default function GroupIntel() {
         const res = await groupIntelApi.profiles({
           q: q.filters.q || undefined,
           speakable: true,
-          country: q.filters.country || undefined,
           language: q.filters.language || undefined,
-          country_source: q.filters.country_source || undefined,
           page: pageNo,
           page_size: 200,
         });
@@ -241,35 +235,17 @@ export default function GroupIntel() {
       ),
     },
     {
-      title: t('groupIntel:profiles.columns.region'),
-      dataIndex: 'country',
-      width: 128,
-      render: (value: string | null, record) => {
-        // 国家 + 语言压成一行，行高一致；来源放进悬浮提示，不再占第二行。
-        const sourceLabel =
-          record.country_source === 'target'
-            ? t('groupIntel:profiles.countrySource.target')
-            : record.country_source === 'inferred'
-              ? t('groupIntel:profiles.countrySource.inferred')
-              : '';
-        const cell = (
-          <span className="tg-flex" style={{ alignItems: 'center', gap: 6 }}>
-            {value ? (
-              <Tag color="geekblue" style={{ marginInlineEnd: 0 }}>
-                {value}
-              </Tag>
-            ) : (
-              <span className="tg-muted">—</span>
-            )}
-            {record.language ? (
-              <span className="tg-muted" style={{ fontSize: 'var(--tg-font-size-xs)' }}>
-                {record.language}
-              </span>
-            ) : null}
-          </span>
-        );
-        return sourceLabel ? <Tooltip title={sourceLabel}>{cell}</Tooltip> : cell;
-      },
+      title: t('groupIntel:profiles.columns.language'),
+      dataIndex: 'language',
+      width: 96,
+      render: (value: string | null) =>
+        value ? (
+          <Tooltip title={languageLabel(value)}>
+            <span>{value}</span>
+          </Tooltip>
+        ) : (
+          <span className="tg-muted">—</span>
+        ),
     },
     {
       title: t('groupIntel:profiles.columns.speak'),
@@ -373,26 +349,10 @@ export default function GroupIntel() {
             clear: () => q.setFilter('speakable', false),
           },
           {
-            key: 'country',
-            label: t('groupIntel:profiles.filterCountry'),
-            display: q.filters.country ? regionLabel(q.filters.country) : '',
-            clear: () => q.setFilter('country', ''),
-          },
-          {
             key: 'language',
             label: t('groupIntel:profiles.filterLanguage'),
             display: q.filters.language ? languageLabel(q.filters.language) : '',
             clear: () => q.setFilter('language', ''),
-          },
-          {
-            key: 'country_source',
-            label: t('groupIntel:profiles.filterCountrySource'),
-            display: q.filters.country_source
-              ? t(`groupIntel:profiles.countrySource.${q.filters.country_source}`, {
-                  defaultValue: q.filters.country_source,
-                })
-              : '',
-            clear: () => q.setFilter('country_source', ''),
           },
         ])}
         primary={
@@ -417,34 +377,13 @@ export default function GroupIntel() {
         />
         <Select
           allowClear
-          value={q.filters.country || undefined}
-          placeholder={t('groupIntel:profiles.filterCountry')}
-          onChange={(value?: string) => q.setFilter('country', value ?? '')}
-          style={{ width: 160 }}
-          showSearch
-          optionFilterProp="label"
-          options={regionOptions(profiles.data?.summary.countries, q.filters.country || undefined)}
-        />
-        <Select
-          allowClear
           value={q.filters.language || undefined}
           placeholder={t('groupIntel:profiles.filterLanguage')}
           onChange={(value?: string) => q.setFilter('language', value ?? '')}
-          style={{ width: 150 }}
+          style={{ width: 180 }}
           showSearch
           optionFilterProp="label"
           options={languageOptions(profiles.data?.summary.languages, q.filters.language || undefined)}
-        />
-        <Select
-          allowClear
-          value={q.filters.country_source || undefined}
-          placeholder={t('groupIntel:profiles.filterCountrySource')}
-          onChange={(value?: string) => q.setFilter('country_source', value ?? '')}
-          style={{ width: 160 }}
-          options={[
-            { label: t('groupIntel:profiles.countrySource.target'), value: 'target' },
-            { label: t('groupIntel:profiles.countrySource.inferred'), value: 'inferred' },
-          ]}
         />
       </FilterBar>
 
@@ -464,7 +403,7 @@ export default function GroupIntel() {
         sortOrder={q.order}
         onSortChange={q.setSort}
         columnSettingsKey="group-intel-profiles"
-        scrollX={1120}
+        scrollX={1040}
         title={
           <Space size={6}>
             <span style={{ fontWeight: 'var(--tg-font-weight-medium)' }}>

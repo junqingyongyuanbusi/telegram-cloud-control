@@ -10,12 +10,9 @@
   "profiles": {
     "cardTitle": "Group Profiles",
     "searchPlaceholder": "Search by group title / username",
-    "searchButton": "Search",
     "filterAll": "All groups",
     "filterSpeakable": "Speakable only",
-    "filterCountry": "Filter by country",
     "filterLanguage": "Filter by language",
-    "filterCountrySource": "Filter by country source",
     "filterKeyword": "Keyword",
     "totalGroups": "{{count}} groups",
     "emptyTitle": "No group profiles yet",
@@ -26,7 +23,7 @@
     "columns": {
       "group": "Group",
       "kind": "Type",
-      "region": "Region / Language",
+      "language": "Language",
       "speak": "Posting",
       "memberCount": "Members",
       "memberSampled": "Sampled",
@@ -41,10 +38,6 @@
       "tme_preview": "t.me preview",
       "manual": "Manual entry",
       "collect_link": "Link collect"
-    },
-    "countrySource": {
-      "target": "Search target",
-      "inferred": "Inferred"
     }
   },
   "kind": {
