@@ -512,6 +512,8 @@ export const groupIntelApi = {
     min_members?: number;
     /** 只看能发言的讨论组/聊天室（排除频道、受限群、已禁言） */
     speakable?: boolean;
+    sort?: string;
+    order?: 'asc' | 'desc' | null;
     page?: number;
     page_size?: number;
   }) =>

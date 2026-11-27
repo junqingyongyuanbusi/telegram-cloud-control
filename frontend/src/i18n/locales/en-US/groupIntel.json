@@ -16,8 +16,10 @@
     "filterCountry": "Filter by country",
     "filterLanguage": "Filter by language",
     "filterCountrySource": "Filter by country source",
+    "filterKeyword": "Keyword",
     "totalGroups": "{{count}} groups",
-    "emptyText": "No group profiles yet. Use Keyword Search or Precision Search above to start.",
+    "emptyTitle": "No group profiles yet",
+    "emptyText": "Use Keyword Search or Precision Search above to start.",
     "syncEmptyWarning": "No groups to sync: none have an invite link or public username.",
     "unnamedGroup": "Unnamed group",
     "unsynced": "Not synced",
@@ -33,7 +35,12 @@
     },
     "sources": {
       "join_event": "Join event",
-      "profile_sync": "Profile sync"
+      "profile_sync": "Profile sync",
+      "precise_search": "Precision search",
+      "import": "Import",
+      "tme_preview": "t.me preview",
+      "manual": "Manual entry",
+      "collect_link": "Link collect"
     },
     "countrySource": {
       "target": "Search target",

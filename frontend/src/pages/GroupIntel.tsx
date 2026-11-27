@@ -7,7 +7,6 @@ import { useEffect, useState } from 'react';
 import {
   Alert,
   Button,
-  Card,
   Checkbox,
   Input,
   InputNumber,
@@ -29,12 +28,14 @@ import {
 } from '@ant-design/icons';
 import { useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
-import { PageContainer, RelativeTime, SoftTag, CopyableText } from '../components';
+import { CopyableText, DataTable, FilterBar, PageContainer, RelativeTime, SoftTag } from '../components';
 import { isEnglish } from '../i18n';
 import { toast } from '../utils/feedback';
-import { languageOptions, regionOptions } from '../utils/region';
+import { formatNumber } from '../utils/format';
+import { languageLabel, languageOptions, regionLabel, regionOptions } from '../utils/region';
 import { groupIntelApi } from '../api/endpoints';
 import { useAsyncData } from '../hooks/useAsyncData';
+import { buildActiveFilters, useTableQuery } from '../hooks/useTableQuery';
 import { notifySuccess } from '../utils/feedback';
 import type {
   GroupProfileOut,
@@ -54,6 +55,15 @@ const isDiscussionRow = (row: GroupSearchMatchOut) => {
   const reason = String(row.raw?.type_reason ?? '');
   return reason ? reason === 'ok' : row.status !== 'rejected';
 };
+
+/** 群档案筛选字段：与账号 / 任务列表共用 useTableQuery 的口径。 */
+interface ProfileFilters extends Record<string, unknown> {
+  q: string;
+  speakable: boolean;
+  country: string;
+  language: string;
+  country_source: string;
+}
 
 export default function GroupIntel() {
   const { t } = useTranslation(['groupIntel', 'common']);
@@ -83,12 +93,15 @@ export default function GroupIntel() {
     }
     return { text: t('groupIntel:sendPermission.unknown'), color: undefined };
   };
-  const [keyword, setKeyword] = useState('');
-  const [speakableOnly, setSpeakableOnly] = useState(false);
-  const [countryFilter, setCountryFilter] = useState<string | undefined>(undefined);
-  const [languageFilter, setLanguageFilter] = useState<string | undefined>(undefined);
-  const [countrySourceFilter, setCountrySourceFilter] = useState<string | undefined>(undefined);
-  const [page, setPage] = useState(1);
+  // 群档案筛选：与账号 / 任务列表同一套 useTableQuery，分页、排序、重置口径一致。
+  const q = useTableQuery<ProfileFilters>({
+    filters: { q: '', speakable: false, country: '', language: '', country_source: '' },
+    pageSize: 20,
+    sort: 'member_count',
+    order: 'desc',
+  });
+  const [draftKeyword, setDraftKeyword] = useState('');
+  const commitKeyword = () => q.setFilter('q', draftKeyword.trim());
   // 按关键词找群：走 Telegram 原生搜索，结果直接落进群档案
   const [findOpen, setFindOpen] = useState(false);
   const [findBusy, setFindBusy] = useState(false);
@@ -155,15 +168,17 @@ export default function GroupIntel() {
   const profiles = useAsyncData(
     () =>
       groupIntelApi.profiles({
-        q: keyword || undefined,
-        speakable: speakableOnly || undefined,
-        country: countryFilter,
-        language: languageFilter,
-        country_source: countrySourceFilter,
-        page,
-        page_size: 20,
+        q: q.filters.q || undefined,
+        speakable: q.filters.speakable || undefined,
+        country: q.filters.country || undefined,
+        language: q.filters.language || undefined,
+        country_source: q.filters.country_source || undefined,
+        sort: q.sort ?? undefined,
+        order: q.order,
+        page: q.page,
+        page_size: q.pageSize,
       }),
-    [keyword, page, speakableOnly, countryFilter, languageFilter, countrySourceFilter],
+    [q.paramsKey, q.sort, q.order],
   );
 
   // 把当前关键词下的可发言群链接带到「加群」页：邀请链接优先，公开群退化为 @username
@@ -174,11 +189,11 @@ export default function GroupIntel() {
       const targets = new Map<number, string>();
       for (let pageNo = 1; ; pageNo += 1) {
         const res = await groupIntelApi.profiles({
-          q: keyword || undefined,
+          q: q.filters.q || undefined,
           speakable: true,
-          country: countryFilter,
-          language: languageFilter,
-          country_source: countrySourceFilter,
+          country: q.filters.country || undefined,
+          language: q.filters.language || undefined,
+          country_source: q.filters.country_source || undefined,
           page: pageNo,
           page_size: 200,
         });
@@ -219,37 +234,41 @@ export default function GroupIntel() {
       title: t('groupIntel:profiles.columns.kind'),
       dataIndex: 'kind',
       width: 90,
-      render: (value: string) => <Tag>{kindLabel(value)}</Tag>,
+      render: (value: string) => (
+        <SoftTag tone="neutral" size="sm">
+          {kindLabel(value)}
+        </SoftTag>
+      ),
     },
     {
       title: t('groupIntel:profiles.columns.region'),
       dataIndex: 'country',
-      width: 118,
+      width: 128,
       render: (value: string | null, record) => {
-        if (!value && !record.language) return <span className="tg-muted">—</span>;
+        // 国家 + 语言压成一行，行高一致；来源放进悬浮提示，不再占第二行。
         const sourceLabel =
           record.country_source === 'target'
             ? t('groupIntel:profiles.countrySource.target')
             : record.country_source === 'inferred'
               ? t('groupIntel:profiles.countrySource.inferred')
               : '';
-        return (
-          <span className="tg-stack" style={{ gap: 2 }}>
-            <span>
-              {value ? <Tag color="geekblue">{value}</Tag> : <span className="tg-muted">—</span>}
-              {record.language ? (
-                <span className="tg-muted" style={{ fontSize: 'var(--tg-font-size-xs)' }}>
-                  {record.language}
-                </span>
-              ) : null}
-            </span>
-            {sourceLabel ? (
+        const cell = (
+          <span className="tg-flex" style={{ alignItems: 'center', gap: 6 }}>
+            {value ? (
+              <Tag color="geekblue" style={{ marginInlineEnd: 0 }}>
+                {value}
+              </Tag>
+            ) : (
+              <span className="tg-muted">—</span>
+            )}
+            {record.language ? (
               <span className="tg-muted" style={{ fontSize: 'var(--tg-font-size-xs)' }}>
-                {sourceLabel}
+                {record.language}
               </span>
             ) : null}
           </span>
         );
+        return sourceLabel ? <Tooltip title={sourceLabel}>{cell}</Tooltip> : cell;
       },
     },
     {
@@ -268,18 +287,27 @@ export default function GroupIntel() {
     {
       title: t('groupIntel:profiles.columns.memberCount'),
       dataIndex: 'member_count',
-      width: 90,
-      render: (value: number | null) => <span className="tg-num">{value ?? '—'}</span>,
+      width: 96,
+      align: 'right',
+      render: (value: number | null) => (
+        <span className="tg-num">{value == null ? '—' : formatNumber(value)}</span>
+      ),
     },
     {
       title: t('groupIntel:profiles.columns.memberSampled'),
       dataIndex: 'member_sampled',
-      width: 100,
+      width: 110,
+      align: 'right',
       render: (value: number, record) => (
-        <span>
-          <span className="tg-num">{value}</span>
+        <span className="tg-num">
+          {formatNumber(value)}
           {record.member_synced_at ? null : (
-            <Tag style={{ marginLeft: 6 }}>{t('groupIntel:profiles.unsynced')}</Tag>
+            <span
+              className="tg-muted"
+              style={{ marginLeft: 6, fontSize: 'var(--tg-font-size-xs)', fontWeight: 'normal' }}
+            >
+              {t('groupIntel:profiles.unsynced')}
+            </span>
           )}
         </span>
       ),
@@ -320,115 +348,156 @@ export default function GroupIntel() {
         </Space>
       }
     >
-      <Card
-        size="small"
-        title={t('groupIntel:profiles.cardTitle')}
-        extra={
-          <Space>
-            <Tooltip title={t('groupIntel:actions.syncToJoinTooltip')}>
-              <Button
-                size="small"
-                icon={<CloudUploadOutlined />}
-                loading={syncingJoin}
-                onClick={() => void syncSpeakableToJoin()}
-              >
-                {t('groupIntel:actions.syncToJoin')}
-              </Button>
-            </Tooltip>
-          </Space>
+      <FilterBar
+        collapsible
+        onReset={() => {
+          q.reset();
+          setDraftKeyword('');
+        }}
+        onSearch={commitKeyword}
+        loading={profiles.loading}
+        activeFilters={buildActiveFilters([
+          {
+            key: 'q',
+            label: t('groupIntel:profiles.filterKeyword'),
+            display: q.filters.q,
+            clear: () => {
+              setDraftKeyword('');
+              q.setFilter('q', '');
+            },
+          },
+          {
+            key: 'speakable',
+            label: t('groupIntel:profiles.columns.speak'),
+            display: q.filters.speakable ? t('groupIntel:profiles.filterSpeakable') : '',
+            clear: () => q.setFilter('speakable', false),
+          },
+          {
+            key: 'country',
+            label: t('groupIntel:profiles.filterCountry'),
+            display: q.filters.country ? regionLabel(q.filters.country) : '',
+            clear: () => q.setFilter('country', ''),
+          },
+          {
+            key: 'language',
+            label: t('groupIntel:profiles.filterLanguage'),
+            display: q.filters.language ? languageLabel(q.filters.language) : '',
+            clear: () => q.setFilter('language', ''),
+          },
+          {
+            key: 'country_source',
+            label: t('groupIntel:profiles.filterCountrySource'),
+            display: q.filters.country_source
+              ? t(`groupIntel:profiles.countrySource.${q.filters.country_source}`, {
+                  defaultValue: q.filters.country_source,
+                })
+              : '',
+            clear: () => q.setFilter('country_source', ''),
+          },
+        ])}
+        primary={
+          <Input
+            allowClear
+            prefix={<SearchOutlined />}
+            style={{ width: 260 }}
+            placeholder={t('groupIntel:profiles.searchPlaceholder')}
+            value={draftKeyword}
+            onChange={(event) => setDraftKeyword(event.target.value)}
+          />
         }
       >
-        <Space style={{ marginBottom: 'var(--tg-space-lg)' }} wrap>
-          <input
-            className="ant-input"
-            style={{ width: 240, height: 'var(--tg-layout-control-height)' }}
-            placeholder={t('groupIntel:profiles.searchPlaceholder')}
-            value={keyword}
-            onChange={(event) => setKeyword(event.target.value)}
-            onKeyDown={(event) => {
-              if (event.key === 'Enter') {
-                setPage(1);
-                void profiles.reload();
-              }
-            }}
-          />
-          <Button icon={<SearchOutlined />} onClick={() => { setPage(1); void profiles.reload(); }}>
-            {t('groupIntel:profiles.searchButton')}
-          </Button>
-          <Select
-            value={speakableOnly ? 'speakable' : 'all'}
-            onChange={(value) => {
-              setSpeakableOnly(value === 'speakable');
-              setPage(1);
-            }}
-            style={{ width: 168 }}
-            options={[
-              { label: t('groupIntel:profiles.filterAll'), value: 'all' },
-              { label: t('groupIntel:profiles.filterSpeakable'), value: 'speakable' },
-            ]}
-          />
-          <Select
-            allowClear
-            value={countryFilter}
-            placeholder={t('groupIntel:profiles.filterCountry')}
-            onChange={(value?: string) => {
-              setCountryFilter(value);
-              setPage(1);
-            }}
-            style={{ width: 148 }}
-            showSearch
-            optionFilterProp="label"
-            options={regionOptions(profiles.data?.summary.countries, countryFilter)}
-          />
-          <Select
-            allowClear
-            value={languageFilter}
-            placeholder={t('groupIntel:profiles.filterLanguage')}
-            onChange={(value?: string) => {
-              setLanguageFilter(value);
-              setPage(1);
-            }}
-            style={{ width: 148 }}
-            showSearch
-            optionFilterProp="label"
-            options={languageOptions(profiles.data?.summary.languages, languageFilter)}
-          />
-          <Select
-            allowClear
-            value={countrySourceFilter}
-            placeholder={t('groupIntel:profiles.filterCountrySource')}
-            onChange={(value?: string) => {
-              setCountrySourceFilter(value);
-              setPage(1);
-            }}
-            style={{ width: 148 }}
-            options={[
-              { label: t('groupIntel:profiles.countrySource.target'), value: 'target' },
-              { label: t('groupIntel:profiles.countrySource.inferred'), value: 'inferred' },
-            ]}
-          />
-          <Typography.Text type="secondary" style={{ fontSize: 'var(--tg-font-size-sm)' }}>
-            {t('groupIntel:profiles.totalGroups', { count: profiles.data?.total ?? 0 })}
-          </Typography.Text>
-        </Space>
-
-        <Table<GroupProfileOut>
-          size="small"
-          rowKey="id"
-          columns={profileColumns}
-          dataSource={profiles.data?.items ?? []}
-          loading={profiles.loading}
-          pagination={{
-            current: page,
-            pageSize: 20,
-            total: profiles.data?.total ?? 0,
-            showSizeChanger: false,
-            onChange: setPage,
-            size: 'small',
-          }}
-          locale={{ emptyText: t('groupIntel:profiles.emptyText') }}
+        <Select
+          value={q.filters.speakable ? 'speakable' : 'all'}
+          onChange={(value) => q.setFilter('speakable', value === 'speakable')}
+          style={{ width: 168 }}
+          options={[
+            { label: t('groupIntel:profiles.filterAll'), value: 'all' },
+            { label: t('groupIntel:profiles.filterSpeakable'), value: 'speakable' },
+          ]}
         />
-      </Card>
+        <Select
+          allowClear
+          value={q.filters.country || undefined}
+          placeholder={t('groupIntel:profiles.filterCountry')}
+          onChange={(value?: string) => q.setFilter('country', value ?? '')}
+          style={{ width: 160 }}
+          showSearch
+          optionFilterProp="label"
+          options={regionOptions(profiles.data?.summary.countries, q.filters.country || undefined)}
+        />
+        <Select
+          allowClear
+          value={q.filters.language || undefined}
+          placeholder={t('groupIntel:profiles.filterLanguage')}
+          onChange={(value?: string) => q.setFilter('language', value ?? '')}
+          style={{ width: 150 }}
+          showSearch
+          optionFilterProp="label"
+          options={languageOptions(profiles.data?.summary.languages, q.filters.language || undefined)}
+        />
+        <Select
+          allowClear
+          value={q.filters.country_source || undefined}
+          placeholder={t('groupIntel:profiles.filterCountrySource')}
+          onChange={(value?: string) => q.setFilter('country_source', value ?? '')}
+          style={{ width: 160 }}
+          options={[
+            { label: t('groupIntel:profiles.countrySource.target'), value: 'target' },
+            { label: t('groupIntel:profiles.countrySource.inferred'), value: 'inferred' },
+          ]}
+        />
+      </FilterBar>
+
+      <DataTable<GroupProfileOut>
+        rowKey="id"
+        columns={profileColumns}
+        dataSource={profiles.data?.items ?? []}
+        total={profiles.data?.total}
+        page={q.page}
+        pageSize={q.pageSize}
+        onPageChange={q.setPage}
+        loading={profiles.loading}
+        error={profiles.error}
+        onRetry={() => void profiles.reload()}
+        sortableColumns={{ title: 'title', member_count: 'member_count', collected_at: 'collected_at' }}
+        sortField={q.sort}
+        sortOrder={q.order}
+        onSortChange={q.setSort}
+        columnSettingsKey="group-intel-profiles"
+        scrollX={1120}
+        title={
+          <Space size={6}>
+            <span style={{ fontWeight: 'var(--tg-font-weight-medium)' }}>
+              {t('groupIntel:profiles.cardTitle')}
+            </span>
+            <Typography.Text type="secondary" style={{ fontSize: 'var(--tg-font-size-sm)' }}>
+              {t('groupIntel:profiles.totalGroups', { count: profiles.data?.total ?? 0 })}
+            </Typography.Text>
+          </Space>
+        }
+        extra={
+          <Tooltip title={t('groupIntel:actions.syncToJoinTooltip')}>
+            <Button
+              size="small"
+              icon={<CloudUploadOutlined />}
+              loading={syncingJoin}
+              onClick={() => void syncSpeakableToJoin()}
+            >
+              {t('groupIntel:actions.syncToJoin')}
+            </Button>
+          </Tooltip>
+        }
+        empty={{
+          art: 'search',
+          title: t('groupIntel:profiles.emptyTitle'),
+          description: t('groupIntel:profiles.emptyText'),
+          action: (
+            <Button type="primary" onClick={() => setFindOpen(true)}>
+              {t('groupIntel:actions.keywordSearch')}
+            </Button>
+          ),
+        }}
+      />
 
 
       <Modal

@@ -16,8 +16,10 @@
     "filterCountry": "按国家筛选",
     "filterLanguage": "按语言筛选",
     "filterCountrySource": "按国家来源筛选",
+    "filterKeyword": "关键词",
     "totalGroups": "共 {{count}} 个群",
-    "emptyText": "还没有群档案：用右上角「按关键词找群」或「精准找群」开始搜索",
+    "emptyTitle": "还没有群档案",
+    "emptyText": "用右上角「按关键词找群」或「精准找群」开始搜索",
     "syncEmptyWarning": "没有可同步的群：这些群既没采到邀请链接，也没有公开用户名",
     "unnamedGroup": "未命名群",
     "unsynced": "未同步",
@@ -33,7 +35,12 @@
     },
     "sources": {
       "join_event": "入群事件",
-      "profile_sync": "资料同步"
+      "profile_sync": "资料同步",
+      "precise_search": "精准检索",
+      "import": "导入",
+      "tme_preview": "t.me 公开页",
+      "manual": "人工补录",
+      "collect_link": "按链接采集"
     },
     "countrySource": {
       "target": "检索目标",
